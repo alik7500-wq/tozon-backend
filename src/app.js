@@ -14,6 +14,13 @@ import visualMapsRouter from './modules/visual-maps/visual-maps.router.js';
 import leadsRouter from './modules/leads/leads.router.js';
 import dealsRouter from './modules/deals/deals.router.js';
 import dashboardRouter from './modules/dashboard/dashboard.router.js';
+import usersRouter from './modules/users/users.router.js';
+import tasksRouter from './modules/tasks/tasks.router.js';
+import contractsRouter from './modules/contracts/contracts.router.js';
+import financeRouter from './modules/finance/finance.router.js';
+import reportsRouter from './modules/reports/reports.router.js';
+import notificationsRouter from './modules/notifications/notifications.router.js';
+import apartmentsRouter from './modules/apartments/apartments.router.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,6 +59,13 @@ app.use('/api/visual-maps', visualMapsRouter);
 app.use('/api/leads', leadsRouter);
 app.use('/api/deals', dealsRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/users', usersRouter);
+app.use('/api/tasks', tasksRouter);
+app.use('/api/contracts', contractsRouter);
+app.use('/api/finance', financeRouter);
+app.use('/api/reports', reportsRouter);
+app.use('/api/notifications', notificationsRouter);
+app.use('/api/apartments', apartmentsRouter);
 
 // Global Error Handler
 app.use(errorHandler);
