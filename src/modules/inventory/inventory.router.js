@@ -41,30 +41,38 @@ router.post('/floors', restrictTo('ADMIN'), async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-router.get('/projects/:projectId/layout-types', async (req, res, next) => {
+router.get(['/projects/:projectId/layout-types', '/projects/:projectId/layouts'], async (req, res, next) => {
   try {
     const layoutTypes = await InventoryRepository.getLayoutTypes(req.params.projectId);
-    res.status(200).json({ status: 'success', data: { layoutTypes } });
+    res.status(200).json({ status: 'success', data: { layoutTypes, layouts: layoutTypes } });
   } catch (error) { next(error); }
 });
 
-router.post('/layout-types', restrictTo('ADMIN'), async (req, res, next) => {
+router.post(['/layout-types', '/projects/:projectId/layouts'], restrictTo('ADMIN'), async (req, res, next) => {
   try {
-    const layoutType = await InventoryRepository.createLayoutType(req.body);
-    res.status(201).json({ status: 'success', data: { layoutType } });
+    const payload = { ...req.body };
+    if (req.params.projectId && !payload.project_id) {
+      payload.project_id = req.params.projectId;
+    }
+    const layoutType = await InventoryRepository.createLayoutType(payload);
+    res.status(201).json({ status: 'success', data: { layoutType, layout: layoutType } });
   } catch (error) { next(error); }
 });
 
-router.delete('/layout-types/:id', restrictTo('ADMIN'), async (req, res, next) => {
+router.delete(['/layout-types/:id', '/layouts/:id'], restrictTo('ADMIN'), async (req, res, next) => {
   try {
     await InventoryRepository.deleteLayoutType(req.params.id);
     res.status(204).json({ status: 'success', data: null });
   } catch (error) { next(error); }
 });
 
-router.post('/units/batch-generate', restrictTo('ADMIN'), async (req, res, next) => {
+router.post(['/units/batch-generate', '/projects/:projectId/batch-generate'], restrictTo('ADMIN'), async (req, res, next) => {
   try {
-    const result = await InventoryRepository.batchGenerateUnits(req.body);
+    const payload = { ...req.body };
+    if (req.params.projectId && !payload.projectId) {
+      payload.projectId = req.params.projectId;
+    }
+    const result = await InventoryRepository.batchGenerateUnits(payload);
     res.status(201).json({ status: 'success', data: result });
   } catch (error) { next(error); }
 });

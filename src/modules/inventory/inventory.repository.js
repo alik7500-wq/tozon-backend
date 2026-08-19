@@ -2,28 +2,30 @@ import { getDB } from '../../db/connection.js';
 
 export class InventoryRepository {
   static async getProjectStats(projectId) {
-    const db = getDB();
-    const { data: units, error } = await db.from('units').select('status, price_per_m2_minor, area_m2_x100, floors!inner(sections!inner(buildings!inner(project_id)))').eq('floors.sections.buildings.project_id', projectId);
-    if (error) throw error;
-    
     let stats = { total_units: 0, available_units: 0, reserved_units: 0, sold_units: 0, blocked_units: 0, avg_price_per_m2_minor: 0, total_area_x100: 0 };
-    let sumPrice = 0;
-    
-    units.forEach(u => {
-      stats.total_units++;
-      if (u.status === 'AVAILABLE') stats.available_units++;
-      else if (u.status === 'RESERVED') stats.reserved_units++;
-      else if (u.status === 'SOLD') stats.sold_units++;
-      else if (u.status === 'BLOCKED') stats.blocked_units++;
+    try {
+      const db = getDB();
+      const { data: units, error } = await db.from('units').select('status, price_per_m2_minor, area_m2_x100, floors!inner(sections!inner(buildings!inner(project_id)))').eq('floors.sections.buildings.project_id', projectId);
+      if (error || !units) return stats;
       
-      sumPrice += u.price_per_m2_minor;
-      stats.total_area_x100 += u.area_m2_x100;
-    });
-    
-    if (stats.total_units > 0) {
-      stats.avg_price_per_m2_minor = Math.floor(sumPrice / stats.total_units);
+      let sumPrice = 0;
+      units.forEach(u => {
+        stats.total_units++;
+        if (u.status === 'AVAILABLE') stats.available_units++;
+        else if (u.status === 'RESERVED') stats.reserved_units++;
+        else if (u.status === 'SOLD') stats.sold_units++;
+        else if (u.status === 'BLOCKED') stats.blocked_units++;
+        
+        sumPrice += u.price_per_m2_minor || 0;
+        stats.total_area_x100 += u.area_m2_x100 || 0;
+      });
+      
+      if (stats.total_units > 0) {
+        stats.avg_price_per_m2_minor = Math.floor(sumPrice / stats.total_units);
+      }
+    } catch (e) {
+      console.warn('Error fetching project stats:', e.message);
     }
-    
     return stats;
   }
 
