@@ -1,4 +1,5 @@
 import { getDB } from '../../db/connection.js';
+import { DealsRepository } from '../deals/deals.repository.js';
 
 export class InventoryRepository {
   static async getProjectStats(projectId) {
@@ -90,7 +91,27 @@ export class InventoryRepository {
 
   static async getUnitById(id) {
     const db = getDB();
-    const { data: unit } = await db.from('units').select('*, floors(floor_number, name, sections(name, code, buildings(name, code, projects(name, currency)))), layout_types(name, code, image_path)').eq('id', id).single();
+    const { data: unit, error } = await db.from('units').select('*, floors(floor_number, name, sections(name, code, buildings(name, code, projects(id, name, currency, developer_name)))), layout_types(name, code, image_path)').eq('id', id).single();
+    if (error || !unit) return null;
+
+    try {
+      const { data: deals } = await db.from('deals').select('id, status').eq('unit_id', id).neq('status', 'CANCELLED').order('created_at', { ascending: false }).limit(1);
+      if (deals && deals.length > 0) {
+        const fullDeal = await DealsRepository.getDealById(deals[0].id);
+        if (fullDeal) {
+          unit.active_deal = fullDeal;
+          unit.contract_number = fullDeal.contract_number;
+          unit.client_name = fullDeal.lead_name;
+          unit.client_phone = fullDeal.lead_phone;
+          unit.deal_final_price_minor = fullDeal.final_price_minor;
+          unit.paid_amount_minor = fullDeal.total_paid_minor;
+          unit.remaining_debt_minor = fullDeal.remaining_debt_minor;
+        }
+      }
+    } catch (e) {
+      console.warn('Error fetching unit deal details:', e.message);
+    }
+
     return unit;
   }
 
