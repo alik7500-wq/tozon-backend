@@ -15,9 +15,9 @@ export const createSendToken = (user, statusCode, res) => {
   const cookieOptions = {
     expires: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000), // 90 days
     httpOnly: true,
+    sameSite: 'none',
+    secure: true
   };
-  
-  if (process.env.NODE_ENV === 'production') cookieOptions.secure = true;
 
   res.cookie('jwt', token, cookieOptions);
 
@@ -54,7 +54,9 @@ export const login = async (email, password, res) => {
 export const logout = (res) => {
   res.cookie('jwt', 'loggedout', {
     expires: new Date(Date.now() + 10 * 1000), // 10 seconds
-    httpOnly: true
+    httpOnly: true,
+    sameSite: 'none',
+    secure: true
   });
   res.status(200).json({ status: 'success' });
 };
