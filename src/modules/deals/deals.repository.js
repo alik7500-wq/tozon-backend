@@ -236,9 +236,8 @@ export class DealsRepository {
     // 2. Contract Number
     const { count, error: countErr } = await db.from('deals').select('*', { count: 'exact', head: true });
     if (countErr) throw countErr;
-    const pCode = unit.floors?.sections?.buildings?.projects?.code || 'PRJ';
     const pCur = unit.floors?.sections?.buildings?.projects?.currency || 'TJS';
-    const contractNumber = `${pCode}-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
+    const contractNumber = String((count || 0) + 1).padStart(4, '0');
 
     const finalStatus = data.status || 'SIGNED';
     let reservationExpiresAt = data.reservation_expires_at || null;
