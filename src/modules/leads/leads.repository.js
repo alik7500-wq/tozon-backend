@@ -34,28 +34,29 @@ export class LeadsRepository {
 
   static async findById(id) {
     const db = getDB();
-    const { data: lead, error } = await db.from('leads').select('*, users!responsible_user_id(name), projects!interested_project_id(name), lead_notes(*, users!author_user_id(name)), deals(*, units(unit_number, floors(sections(buildings(projects(name))))))').eq('id', id).is('archived_at', null).single();
-    if (error && error.code !== 'PGRST116') throw error;
+    const { data: lead, error } = await db
+      .from('leads')
+      .select('*, users!responsible_user_id(name), projects!interested_project_id(name), lead_notes(*), deals(*)')
+      .eq('id', id)
+      .is('archived_at', null)
+      .maybeSingle();
+
+    if (error) throw error;
     if (!lead) return null;
 
-    const notes_list = (lead.lead_notes || []).map(n => ({
-      ...n, author_name: n.users?.name, users: undefined
-    })).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-    const deals_list = (lead.deals || []).map(d => ({
-      ...d,
-      unit_number: d.units?.unit_number,
-      project_name: d.units?.floors?.sections?.buildings?.projects?.name,
-      units: undefined
-    })).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const notes_list = (lead.lead_notes || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const deals_list = (lead.deals || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     return {
       ...lead,
-      responsible_user_name: lead.users?.name,
-      interested_project_name: lead.projects?.name,
+      responsible_user_name: lead.users?.name || 'Admin',
+      interested_project_name: lead.projects?.name || null,
       notes_list,
       deals_list,
-      users: undefined, projects: undefined, lead_notes: undefined, deals: undefined
+      users: undefined,
+      projects: undefined,
+      lead_notes: undefined,
+      deals: undefined
     };
   }
 
