@@ -57,6 +57,8 @@ export class LeadsRepository {
       deals_list,
       users: undefined, projects: undefined, lead_notes: undefined, deals: undefined
     };
+  }
+
   static _prepareLeadData(data) {
     const payload = {};
     
