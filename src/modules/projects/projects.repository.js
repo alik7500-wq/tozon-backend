@@ -58,4 +58,17 @@ export class ProjectsRepository {
     if (error) throw error;
     return data;
   }
+
+  static async delete(id) {
+    const db = getDB();
+    const { data, error } = await db
+      .from('projects')
+      .delete()
+      .eq('id', id)
+      .select()
+      .single();
+      
+    if (error) throw error;
+    return data;
+  }
 }

@@ -66,4 +66,26 @@ router.post('/', restrictTo('ADMIN'), async (req, res, next) => {
   }
 });
 
+// Only ADMIN can delete projects
+router.delete('/:id', restrictTo('ADMIN'), async (req, res, next) => {
+  try {
+    const project = await ProjectsRepository.findById(req.params.id);
+    if (!project) {
+      return next(new AppError('No project found with that ID', 404));
+    }
+
+    await ProjectsRepository.delete(req.params.id);
+
+    res.status(204).json({
+      status: 'success',
+      data: null
+    });
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+      return next(new AppError('Невозможно удалить ЖК: к нему привязаны сделки или другие защищенные данные.', 400));
+    }
+    next(error);
+  }
+});
+
 export default router;
