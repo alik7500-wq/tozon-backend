@@ -1,5 +1,5 @@
 import express from 'express';
-import { requireAuth, requireRole } from '../../shared/middleware/auth.middleware.js';
+import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 
 const router = express.Router();
 
@@ -115,7 +115,7 @@ let dispatchLogs = [
 ];
 
 // GET /api/automation/settings
-router.get('/settings', requireAuth, (req, res) => {
+router.get('/settings', protect, (req, res) => {
   res.json({
     status: 'success',
     data: {
@@ -127,7 +127,7 @@ router.get('/settings', requireAuth, (req, res) => {
 });
 
 // POST /api/automation/settings
-router.post('/settings', requireAuth, (req, res) => {
+router.post('/settings', protect, (req, res) => {
   if (req.body.settings) {
     automationSettings = { ...automationSettings, ...req.body.settings };
   }
@@ -144,7 +144,7 @@ router.post('/settings', requireAuth, (req, res) => {
 });
 
 // POST /api/automation/test-send
-router.post('/test-send', requireAuth, (req, res) => {
+router.post('/test-send', protect, (req, res) => {
   const { channel, recipient, message } = req.body;
   
   const newLog = {
@@ -167,7 +167,7 @@ router.post('/test-send', requireAuth, (req, res) => {
 });
 
 // PATCH /api/automation/rules/:id/toggle
-router.patch('/rules/:id/toggle', requireAuth, (req, res) => {
+router.patch('/rules/:id/toggle', protect, (req, res) => {
   const ruleId = parseInt(req.params.id, 10);
   const rule = automationRules.find(r => r.id === ruleId);
   if (rule) {
