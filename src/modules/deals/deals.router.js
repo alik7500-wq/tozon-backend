@@ -1,5 +1,6 @@
 import express from 'express';
 import { DealsRepository } from './deals.repository.js';
+import { TasksService } from '../tasks/tasks.service.js';
 import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
@@ -60,6 +61,8 @@ router.post('/', async (req, res, next) => {
     }
 
     const deal = await DealsRepository.createDeal(req.body, req.user.id);
+    // Auto-generate task for reservation control
+    await TasksService.onDealCreated(deal, req.user.id);
     res.status(201).json({ status: 'success', data: { deal } });
   } catch (error) {
     next(error);
@@ -69,6 +72,8 @@ router.post('/', async (req, res, next) => {
 router.post('/:id/sign', async (req, res, next) => {
   try {
     const deal = await DealsRepository.signDeal(req.params.id, req.user.id);
+    // Auto-generate task for payment control
+    await TasksService.onDealSigned(deal, req.user.id);
     res.status(200).json({ status: 'success', data: { deal } });
   } catch (error) {
     next(error);

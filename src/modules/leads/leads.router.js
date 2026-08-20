@@ -1,5 +1,6 @@
 import express from 'express';
 import { LeadsRepository } from './leads.repository.js';
+import { TasksService } from '../tasks/tasks.service.js';
 import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
@@ -30,6 +31,8 @@ router.get('/:id', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const lead = await LeadsRepository.create(req.body);
+    // Auto-generate task for responsible manager
+    await TasksService.onLeadCreated(lead, req.user.id);
     res.status(201).json({ status: 'success', data: { lead } });
   } catch (error) { next(error); }
 });
@@ -44,6 +47,8 @@ router.put('/:id', async (req, res, next) => {
 router.patch('/:id/status', async (req, res, next) => {
   try {
     const lead = await LeadsRepository.updateStatus(req.params.id, req.body.status, req.body.lost_reason);
+    // Auto-generate task on status change
+    await TasksService.onLeadStatusChanged(lead, req.body.status, req.user.id);
     res.status(200).json({ status: 'success', data: { lead } });
   } catch (error) { next(error); }
 });
