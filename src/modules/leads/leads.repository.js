@@ -57,19 +57,53 @@ export class LeadsRepository {
       deals_list,
       users: undefined, projects: undefined, lead_notes: undefined, deals: undefined
     };
+  static _prepareLeadData(data) {
+    const payload = {};
+    
+    if (data.full_name !== undefined) payload.full_name = data.full_name ? String(data.full_name).trim() : '';
+    if (data.phone !== undefined) payload.phone = data.phone ? String(data.phone).trim() : '';
+    if (data.secondary_phone !== undefined) payload.secondary_phone = data.secondary_phone ? String(data.secondary_phone).trim() : null;
+    if (data.source !== undefined) payload.source = data.source || 'DIRECT';
+    if (data.status !== undefined) payload.status = data.status || 'NEW';
+    
+    if (data.responsible_user_id !== undefined) {
+      payload.responsible_user_id = data.responsible_user_id ? parseInt(data.responsible_user_id, 10) : null;
+    }
+    if (data.interested_project_id !== undefined) {
+      payload.interested_project_id = data.interested_project_id ? parseInt(data.interested_project_id, 10) : null;
+    }
+    if (data.desired_rooms !== undefined) {
+      payload.desired_rooms = data.desired_rooms !== '' && data.desired_rooms !== null ? parseInt(data.desired_rooms, 10) : null;
+    }
+    if (data.budget_min_minor !== undefined) {
+      payload.budget_min_minor = data.budget_min_minor !== '' && data.budget_min_minor !== null ? parseInt(data.budget_min_minor, 10) : null;
+    }
+    if (data.budget_max_minor !== undefined) {
+      payload.budget_max_minor = data.budget_max_minor !== '' && data.budget_max_minor !== null ? parseInt(data.budget_max_minor, 10) : null;
+    } else if (data.budget_max) {
+      payload.budget_max_minor = Math.round(parseFloat(data.budget_max) * 100);
+    }
+    
+    if (data.passport_series !== undefined) payload.passport_series = data.passport_series || null;
+    if (data.passport_number !== undefined) payload.passport_number = data.passport_number || null;
+    if (data.passport_issued_by !== undefined) payload.passport_issued_by = data.passport_issued_by || null;
+    if (data.passport_issue_date !== undefined) payload.passport_issue_date = data.passport_issue_date || null;
+    if (data.birth_date !== undefined) payload.birth_date = data.birth_date || null;
+    if (data.registration_address !== undefined) payload.registration_address = data.registration_address || null;
+    if (data.notes !== undefined) payload.notes = data.notes || null;
+    if (data.lost_reason !== undefined) payload.lost_reason = data.lost_reason || null;
+
+    return payload;
   }
 
   static async create(data) {
     const db = getDB();
     const now = new Date().toISOString();
-    const { data: lead, error } = await db.from('leads').insert([{
-      ...data,
-      source: data.source || 'DIRECT',
-      status: data.status || 'NEW',
-      desired_rooms: data.desired_rooms ? parseInt(data.desired_rooms, 10) : null,
-      created_at: now,
-      updated_at: now
-    }]).select().single();
+    const prepared = this._prepareLeadData(data);
+    prepared.created_at = now;
+    prepared.updated_at = now;
+
+    const { data: lead, error } = await db.from('leads').insert([prepared]).select().single();
     if (error) throw error;
     return this.findById(lead.id);
   }
@@ -77,11 +111,11 @@ export class LeadsRepository {
   static async update(id, data) {
     const db = getDB();
     const now = new Date().toISOString();
-    await db.from('leads').update({
-      ...data,
-      desired_rooms: data.desired_rooms ? parseInt(data.desired_rooms, 10) : null,
-      updated_at: now
-    }).eq('id', id);
+    const prepared = this._prepareLeadData(data);
+    prepared.updated_at = now;
+
+    const { error } = await db.from('leads').update(prepared).eq('id', id);
+    if (error) throw error;
     return this.findById(id);
   }
 

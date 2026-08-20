@@ -22,17 +22,10 @@ export const errorHandler = (err, req, res, next) => {
     });
   } else {
     // Production
-    if (err.isOperational) {
-      res.status(err.statusCode).json({
-        status: err.status,
-        message: err.message,
-      });
-    } else {
-      console.error('ERROR 💥', err);
-      res.status(500).json({
-        status: 'error',
-        message: 'Something went very wrong!',
-      });
-    }
+    console.error('ERROR 💥', err);
+    res.status(err.statusCode || 500).json({
+      status: err.status || 'error',
+      message: err.message || 'Произошла ошибка при обработке запроса',
+    });
   }
 };
