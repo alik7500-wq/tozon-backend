@@ -5,6 +5,41 @@ import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 const router = express.Router();
+
+// Public Webhook for external websites, landing pages, Telegram bots and Social Ads (Instagram / Facebook / WhatsApp)
+router.post('/webhook', async (req, res, next) => {
+  try {
+    const { full_name, phone, secondary_phone, source, notes, project_name, rooms, budget } = req.body;
+
+    if (!full_name || !phone) {
+      return next(new AppError('Поля ФИО (full_name) и Телефон (phone) обязательны', 400));
+    }
+
+    const leadPayload = {
+      full_name,
+      phone,
+      secondary_phone: secondary_phone || null,
+      source: source || 'WEBSITE',
+      status: 'NEW',
+      notes: notes || `Заявка с онлайн-источника (${source || 'Сайт'}).`,
+      responsible_user_id: 1, // Default to admin / queue
+    };
+
+    const lead = await LeadsRepository.create(leadPayload);
+
+    // Auto-generate high-priority call task for manager
+    await TasksService.onLeadCreated(lead, 1);
+
+    res.status(201).json({
+      status: 'success',
+      message: 'Заявка успешно принята в Tozon CRM',
+      data: { leadId: lead.id, client: lead.full_name, status: lead.status }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.use(protect);
 
 router.get('/', async (req, res, next) => {
