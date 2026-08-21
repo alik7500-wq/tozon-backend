@@ -81,8 +81,12 @@ router.delete('/:id', restrictTo('ADMIN'), async (req, res, next) => {
       data: null
     });
   } catch (error) {
-    if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
-      return next(new AppError('Невозможно удалить ЖК: к нему привязаны сделки или другие защищенные данные.', 400));
+    if (
+      error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY' || 
+      error.code === '23503' ||
+      (error.message && error.message.includes('violates foreign key constraint'))
+    ) {
+      return next(new AppError('Невозможно удалить ЖК: к нему привязаны сделки (или другие данные). Сначала необходимо удалить связанные сделки.', 400));
     }
     next(error);
   }

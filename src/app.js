@@ -22,6 +22,7 @@ import reportsRouter from './modules/reports/reports.router.js';
 import notificationsRouter from './modules/notifications/notifications.router.js';
 import apartmentsRouter from './modules/apartments/apartments.router.js';
 import { automationRouter } from './modules/automation/automation.router.js';
+import uploadRouter from './modules/upload/upload.routes.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,6 +69,7 @@ app.use('/api/reports', reportsRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/apartments', apartmentsRouter);
 app.use('/api/automation', automationRouter);
+app.use('/api/upload', uploadRouter);
 
 // Global Error Handler
 app.use(errorHandler);
