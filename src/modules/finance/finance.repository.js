@@ -71,6 +71,7 @@ export class FinanceRepository {
    */
   static async getIncome(filters = {}) {
     const db = getDB();
+    await this.autoHarmonizeConversions();
     const currentYear = Number(filters.year) || new Date().getFullYear();
     const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
     const availableYears = await this.getAvailableYears();
@@ -225,8 +226,10 @@ export class FinanceRepository {
     }
     const db = getDB();
     const now = new Date().toISOString();
-    const updatePayload = {};
 
+    const { data: originalRecord } = await db.from('payments').select('*').eq('id', id).maybeSingle();
+
+    const updatePayload = {};
     if (data.amount !== undefined) updatePayload.amount_minor = Math.round(Number(data.amount) * 100);
     if (data.currency) updatePayload.currency = String(data.currency).toUpperCase();
     if (data.date || data.payment_date) updatePayload.payment_date = data.date || data.payment_date;
@@ -258,6 +261,11 @@ export class FinanceRepository {
       }
     }
 
+    // Sync paired conversion expense if this was a conversion
+    if (originalRecord) {
+      await this.syncPairedConversion('INCOME', originalRecord, data);
+    }
+
     return updated || { success: true };
   }
 
@@ -273,7 +281,6 @@ export class FinanceRepository {
 
     const { data: payment, error: getErr } = await db.from('payments').select('*').eq('id', id).maybeSingle();
     if (getErr || !payment) {
-      // Still try to delete
       await db.from('payments').delete().eq('id', id);
       return { success: true };
     }
@@ -293,6 +300,9 @@ export class FinanceRepository {
       }
     }
 
+    // Delete paired conversion expense
+    await this.deletePairedConversion('INCOME', payment);
+
     return { success: true };
   }
 
@@ -301,6 +311,7 @@ export class FinanceRepository {
    */
   static async getExpenses(filters = {}) {
     const db = getDB();
+    await this.autoHarmonizeConversions();
     const currentYear = Number(filters.year) || new Date().getFullYear();
     const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
     const availableYears = await this.getAvailableYears();
@@ -470,8 +481,10 @@ export class FinanceRepository {
       throw new Error('Только администратор имеет право редактировать финансовые записи');
     }
     const db = getDB();
-    const updatePayload = {};
 
+    const { data: originalRecord } = await db.from('expenses').select('*').eq('id', id).maybeSingle();
+
+    const updatePayload = {};
     if (data.amount !== undefined) updatePayload.amount_minor = Math.round(Number(data.amount) * 100);
     if (data.currency) updatePayload.currency = String(data.currency).toUpperCase();
     if (data.date || data.expense_date) updatePayload.expense_date = data.date || data.expense_date;
@@ -489,6 +502,12 @@ export class FinanceRepository {
       throw error;
     }
     const updated = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
+
+    // Sync paired conversion income in payments table
+    if (originalRecord) {
+      await this.syncPairedConversion('EXPENSE', originalRecord, data);
+    }
+
     return updated || { success: true };
   }
 
@@ -500,12 +519,203 @@ export class FinanceRepository {
       throw new Error('Только администратор имеет право удалять финансовые записи');
     }
     const db = getDB();
+    const { data: originalRecord } = await db.from('expenses').select('*').eq('id', id).maybeSingle();
     const { error } = await db.from('expenses').delete().eq('id', id);
     if (error) {
       console.error('Error deleting expense in DB:', error);
       throw error;
     }
+
+    // Delete paired conversion income
+    if (originalRecord) {
+      await this.deletePairedConversion('EXPENSE', originalRecord);
+    }
+
     return { success: true };
+  }
+
+  /**
+   * Синхронизация парной операции конвертации (Expense <-> Income)
+   */
+  static async syncPairedConversion(type, originalRecord, updatedData) {
+    try {
+      const db = getDB();
+      if (!originalRecord) return;
+
+      const isExp = type === 'EXPENSE';
+      const ref = originalRecord.reference || '';
+      const desc = (isExp ? originalRecord.description : originalRecord.comment) || '';
+      const isConv = (originalRecord.category === 'Конвертация валюты') ||
+                     ref.includes('КОНВ') || ref.includes('ОБМЕН') ||
+                     (originalRecord.recipient && originalRecord.recipient.includes('Касса')) ||
+                     (originalRecord.payer_name && originalRecord.payer_name.includes('Касса')) ||
+                     desc.toLowerCase().includes('обмен') || desc.toLowerCase().includes('конвертаци');
+
+      if (!isConv) return;
+
+      // Extract exchange rate from description/comment or default to 10.90
+      let rate = 10.90;
+      const rateMatch = desc.match(/курсу\s*([\d\.,]+)/i);
+      if (rateMatch && rateMatch[1]) {
+        rate = parseFloat(rateMatch[1].replace(',', '.'));
+      }
+
+      const newAmount = Number(updatedData.amount !== undefined ? updatedData.amount : ((originalRecord.amount_minor || 0) / 100));
+      const newDate = updatedData.date || updatedData.expense_date || updatedData.payment_date || originalRecord.expense_date || originalRecord.payment_date;
+      const refSuffix = ref.replace(/^(ПКО-|ОБМЕН-|КОНВ-)/, '');
+
+      if (isExp) {
+        // Find paired payment in payments table
+        const { data: allPayments } = await db.from('payments').select('*');
+        const paired = (allPayments || []).filter(p => {
+          const pRef = p.reference || '';
+          const pComment = p.comment || '';
+          return (refSuffix && pRef.includes(refSuffix)) ||
+                 pComment.includes(ref) ||
+                 (p.payer_name && p.payer_name.includes('Касса') && p.payment_date === originalRecord.expense_date);
+        });
+
+        for (const p of paired) {
+          const isTargetTjs = (p.currency || 'TJS').toUpperCase() === 'TJS';
+          const targetAmount = isTargetTjs ? (newAmount * rate) : (newAmount / rate);
+          const targetMinor = Math.round(targetAmount * 100);
+
+          await db.from('payments').update({
+            amount_minor: targetMinor,
+            payment_date: newDate,
+            comment: `Поступление от обмена ${newAmount} ${originalRecord.currency || 'USD'} по курсу ${rate}`
+          }).eq('id', p.id);
+        }
+      } else {
+        // Find paired expense in expenses table
+        const { data: allExpenses } = await db.from('expenses').select('*');
+        const paired = (allExpenses || []).filter(e => {
+          const eRef = e.reference || '';
+          const eDesc = e.description || '';
+          return (refSuffix && eRef.includes(refSuffix)) ||
+                 eDesc.includes(ref) ||
+                 (e.recipient && e.recipient.includes('Касса') && e.expense_date === originalRecord.payment_date);
+        });
+
+        for (const e of paired) {
+          const isSourceUsd = (e.currency || 'USD').toUpperCase() === 'USD';
+          const sourceAmount = isSourceUsd ? (newAmount / rate) : (newAmount * rate);
+          const sourceMinor = Math.round(sourceAmount * 100);
+
+          await db.from('expenses').update({
+            amount_minor: sourceMinor,
+            expense_date: newDate,
+            description: `Обмен ${sourceAmount.toFixed(2)} ${e.currency || 'USD'} в ${originalRecord.currency || 'TJS'} по курсу ${rate}`
+          }).eq('id', e.id);
+        }
+      }
+    } catch (err) {
+      console.warn('syncPairedConversion warning:', err.message);
+    }
+  }
+
+  /**
+   * Синхронное удаление парной операции конвертации
+   */
+  static async deletePairedConversion(type, record) {
+    try {
+      const db = getDB();
+      if (!record) return;
+
+      const isExp = type === 'EXPENSE';
+      const ref = record.reference || '';
+      const desc = (isExp ? record.description : record.comment) || '';
+      const isConv = (record.category === 'Конвертация валюты') ||
+                     ref.includes('КОНВ') || ref.includes('ОБМЕН') ||
+                     (record.recipient && record.recipient.includes('Касса')) ||
+                     (record.payer_name && record.payer_name.includes('Касса')) ||
+                     desc.toLowerCase().includes('обмен') || desc.toLowerCase().includes('конвертаци');
+
+      if (!isConv) return;
+
+      const refSuffix = ref.replace(/^(ПКО-|ОБМЕН-|КОНВ-)/, '');
+
+      if (isExp) {
+        const { data: allPayments } = await db.from('payments').select('id, reference, comment, payer_name, payment_date');
+        const paired = (allPayments || []).filter(p => {
+          const pRef = p.reference || '';
+          const pComment = p.comment || '';
+          return (refSuffix && pRef.includes(refSuffix)) ||
+                 pComment.includes(ref) ||
+                 (p.payer_name && p.payer_name.includes('Касса') && p.payment_date === record.expense_date);
+        });
+        for (const p of paired) {
+          await db.from('payments').delete().eq('id', p.id);
+        }
+      } else {
+        const { data: allExpenses } = await db.from('expenses').select('id, reference, description, recipient, expense_date');
+        const paired = (allExpenses || []).filter(e => {
+          const eRef = e.reference || '';
+          const eDesc = e.description || '';
+          return (refSuffix && eRef.includes(refSuffix)) ||
+                 eDesc.includes(ref) ||
+                 (e.recipient && e.recipient.includes('Касса') && e.expense_date === record.payment_date);
+        });
+        for (const e of paired) {
+          await db.from('expenses').delete().eq('id', e.id);
+        }
+      }
+    } catch (err) {
+      console.warn('deletePairedConversion warning:', err.message);
+    }
+  }
+
+  /**
+   * Автоматическая гармонизация существующих парных конвертаций
+   */
+  static async autoHarmonizeConversions() {
+    try {
+      const db = getDB();
+      const { data: expenses } = await db.from('expenses')
+        .select('*')
+        .or('category.eq.Конвертация валюты,reference.ilike.%ОБМЕН%,reference.ilike.%КОНВ%');
+
+      const { data: payments } = await db.from('payments')
+        .select('*')
+        .or('reference.ilike.%ОБМЕН%,reference.ilike.%КОНВ%,comment.ilike.%обмен%,comment.ilike.%конвертаци%');
+
+      if (!expenses || !payments) return;
+
+      for (const e of expenses) {
+        const eRef = e.reference || '';
+        const eDesc = e.description || '';
+        const eAmount = (e.amount_minor || 0) / 100;
+        const refSuffix = eRef.replace(/^(ПКО-|ОБМЕН-|КОНВ-)/, '');
+
+        let rate = 10.90;
+        const rateMatch = eDesc.match(/курсу\s*([\d\.,]+)/i);
+        if (rateMatch && rateMatch[1]) {
+          rate = parseFloat(rateMatch[1].replace(',', '.'));
+        }
+
+        // Find matching payment
+        const matched = payments.filter(p => {
+          const pRef = p.reference || '';
+          const pComment = p.comment || '';
+          return (refSuffix && pRef.includes(refSuffix)) ||
+                 (p.payment_date === e.expense_date && (p.payer_name?.includes('Касса') || pComment.includes('обмен')));
+        });
+
+        for (const p of matched) {
+          const expectedTargetAmount = eAmount * rate;
+          const expectedMinor = Math.round(expectedTargetAmount * 100);
+          if (p.amount_minor !== expectedMinor) {
+            await db.from('payments').update({
+              amount_minor: expectedMinor,
+              comment: `Поступление от обмена ${eAmount} ${e.currency || 'USD'} по курсу ${rate}`
+            }).eq('id', p.id);
+            p.amount_minor = expectedMinor;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('autoHarmonizeConversions warning:', err.message);
+    }
   }
 
   /**
@@ -524,6 +734,10 @@ export class FinanceRepository {
     const fromAmountMinor = Math.round(fromAmount * 100);
     const toAmountMinor = Math.round(toAmount * 100);
 
+    const convId = Date.now().toString().slice(-5);
+    const expRef = data.reference || `ОБМЕН-${convId}`;
+    const incRef = `ПКО-${expRef}`;
+
     // 1. Списание с кассы-источника (USD)
     const { data: exp, error: expErr } = await db.from('expenses').insert([{
       amount_minor: fromAmountMinor,
@@ -531,7 +745,7 @@ export class FinanceRepository {
       expense_date: date,
       category: 'Конвертация валюты',
       method: data.method || 'CASH',
-      reference: data.reference || `ОБМЕН-${Date.now().toString().slice(-5)}`,
+      reference: expRef,
       recipient: `Касса ${toCurrency}`,
       description: `Обмен ${fromAmount.toLocaleString()} ${fromCurrency} в ${toCurrency} по курсу ${rate}. Назначение: ${data.comment || 'Пополнение кассы'}`,
       created_by_user_id: userId || null,
@@ -545,7 +759,7 @@ export class FinanceRepository {
       currency: toCurrency,
       payment_date: date,
       method: data.method || 'CASH',
-      reference: `ПКО-ОБМЕН-${Date.now().toString().slice(-5)}`,
+      reference: incRef,
       payer_name: `Касса ${fromCurrency}`,
       comment: `Поступление от обмена ${fromAmount.toLocaleString()} ${fromCurrency} по курсу ${rate}`,
       created_by_user_id: userId || null,
@@ -561,6 +775,7 @@ export class FinanceRepository {
    */
   static async getCashflow(filters = {}) {
     const db = getDB();
+    await this.autoHarmonizeConversions();
     const currentYear = Number(filters.year) || new Date().getFullYear();
     const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
     const availableYears = await this.getAvailableYears();
