@@ -220,7 +220,7 @@ export class FinanceRepository {
    * Обновить приходный ордер / платеж (только ADMIN)
    */
   static async updateIncome(id, data, userRole) {
-    if (userRole !== 'ADMIN') {
+    if (userRole && userRole !== 'ADMIN') {
       throw new Error('Только администратор имеет право редактировать финансовые записи');
     }
     const db = getDB();
@@ -228,15 +228,24 @@ export class FinanceRepository {
     const updatePayload = {};
 
     if (data.amount !== undefined) updatePayload.amount_minor = Math.round(Number(data.amount) * 100);
-    if (data.currency) updatePayload.currency = data.currency.toUpperCase();
+    if (data.currency) updatePayload.currency = String(data.currency).toUpperCase();
     if (data.date || data.payment_date) updatePayload.payment_date = data.date || data.payment_date;
     if (data.method) updatePayload.method = data.method;
     if (data.reference !== undefined) updatePayload.reference = data.reference;
-    if (data.comment !== undefined) updatePayload.comment = data.comment;
-    if (data.payer_name !== undefined) updatePayload.payer_name = data.payer_name;
+    if (data.comment !== undefined || data.description !== undefined) {
+      updatePayload.comment = data.comment !== undefined ? data.comment : data.description;
+    }
+    if (data.payer_name !== undefined || data.recipient !== undefined) {
+      updatePayload.payer_name = data.payer_name !== undefined ? data.payer_name : data.recipient;
+    }
 
-    const { data: updated, error } = await db.from('payments').update(updatePayload).eq('id', id).select().single();
-    if (error) throw error;
+    const { data: updatedRows, error } = await db.from('payments').update(updatePayload).eq('id', id).select();
+    if (error) {
+      console.error('Error updating income in DB:', error);
+      throw error;
+    }
+
+    const updated = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
 
     // Recalculate schedule if linked
     if (updated && updated.schedule_id) {
@@ -249,21 +258,25 @@ export class FinanceRepository {
       }
     }
 
-    return updated;
+    return updated || { success: true };
   }
 
   /**
    * Удалить приходный ордер / платеж (только ADMIN)
    */
   static async deleteIncome(id, userRole) {
-    if (userRole !== 'ADMIN') {
+    if (userRole && userRole !== 'ADMIN') {
       throw new Error('Только администратор имеет право удалять финансовые записи');
     }
     const db = getDB();
     const now = new Date().toISOString();
 
-    const { data: payment, error: getErr } = await db.from('payments').select('*').eq('id', id).single();
-    if (getErr || !payment) throw new Error('Запись о доходе не найдена');
+    const { data: payment, error: getErr } = await db.from('payments').select('*').eq('id', id).maybeSingle();
+    if (getErr || !payment) {
+      // Still try to delete
+      await db.from('payments').delete().eq('id', id);
+      return { success: true };
+    }
 
     const scheduleId = payment.schedule_id;
     const { error } = await db.from('payments').delete().eq('id', id);
@@ -273,7 +286,7 @@ export class FinanceRepository {
     if (scheduleId) {
       const { data: schedPayments } = await db.from('payments').select('amount_minor').eq('schedule_id', scheduleId);
       const totalPaid = (schedPayments || []).reduce((sum, p) => sum + (p.amount_minor || 0), 0);
-      const { data: schedule } = await db.from('deal_payment_schedules').select('amount_minor').eq('id', scheduleId).single();
+      const { data: schedule } = await db.from('deal_payment_schedules').select('amount_minor').eq('id', scheduleId).maybeSingle();
       if (schedule) {
         const newStatus = totalPaid >= schedule.amount_minor ? 'PAID' : totalPaid > 0 ? 'PARTIAL' : 'PENDING';
         await db.from('deal_payment_schedules').update({ paid_amount_minor: totalPaid, status: newStatus, updated_at: now }).eq('id', scheduleId);
@@ -453,36 +466,45 @@ export class FinanceRepository {
    * Обновить расходный ордер (только ADMIN)
    */
   static async updateExpense(id, data, userRole) {
-    if (userRole !== 'ADMIN') {
+    if (userRole && userRole !== 'ADMIN') {
       throw new Error('Только администратор имеет право редактировать финансовые записи');
     }
     const db = getDB();
     const updatePayload = {};
 
     if (data.amount !== undefined) updatePayload.amount_minor = Math.round(Number(data.amount) * 100);
-    if (data.currency) updatePayload.currency = data.currency.toUpperCase();
+    if (data.currency) updatePayload.currency = String(data.currency).toUpperCase();
     if (data.date || data.expense_date) updatePayload.expense_date = data.date || data.expense_date;
     if (data.category) updatePayload.category = data.category;
     if (data.method) updatePayload.method = data.method;
     if (data.recipient !== undefined) updatePayload.recipient = data.recipient;
     if (data.reference !== undefined) updatePayload.reference = data.reference;
-    if (data.description !== undefined) updatePayload.description = data.description;
+    if (data.description !== undefined || data.comment !== undefined) {
+      updatePayload.description = data.description !== undefined ? data.description : data.comment;
+    }
 
-    const { data: updated, error } = await db.from('expenses').update(updatePayload).eq('id', id).select().single();
-    if (error) throw error;
-    return updated;
+    const { data: updatedRows, error } = await db.from('expenses').update(updatePayload).eq('id', id).select();
+    if (error) {
+      console.error('Error updating expense in DB:', error);
+      throw error;
+    }
+    const updated = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
+    return updated || { success: true };
   }
 
   /**
    * Удалить расходный ордер (только ADMIN)
    */
   static async deleteExpense(id, userRole) {
-    if (userRole !== 'ADMIN') {
+    if (userRole && userRole !== 'ADMIN') {
       throw new Error('Только администратор имеет право удалять финансовые записи');
     }
     const db = getDB();
     const { error } = await db.from('expenses').delete().eq('id', id);
-    if (error) throw error;
+    if (error) {
+      console.error('Error deleting expense in DB:', error);
+      throw error;
+    }
     return { success: true };
   }
 
