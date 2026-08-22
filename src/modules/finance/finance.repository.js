@@ -319,7 +319,7 @@ export class FinanceRepository {
     const amountMinor = Math.round(Number(data.amount) * 100);
     const expenseDate = data.date || data.expense_date || now.split('T')[0];
     const currency = (data.currency || 'USD').toUpperCase();
-    const autoConvert = Boolean(data.auto_convert);
+    const autoConvert = data.auto_convert !== undefined ? Boolean(data.auto_convert) : (currency === 'TJS');
     const exchangeRate = Number(data.exchange_rate) || 10.90;
     const sourceCurrency = (data.source_currency || 'USD').toUpperCase();
 
@@ -345,7 +345,7 @@ export class FinanceRepository {
         method: data.method || 'CASH',
         reference: `КОНВ-${Date.now().toString().slice(-5)}`,
         recipient: `Касса ${currency} (Автоконвертация)`,
-        description: `Автоконвертация $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} в ${currency} для расхода: ${data.description || data.category || 'РКО'}`,
+        description: `Автоконвертация $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} в ${currency} для расхода: ${data.description || data.category || data.recipient || 'РКО'}`,
         created_by_user_id: userId || null,
         created_at: now
       }]);
@@ -358,7 +358,7 @@ export class FinanceRepository {
         method: data.method || 'CASH',
         reference: `ПКО-КОНВ-${Date.now().toString().slice(-5)}`,
         payer_name: `Касса ${sourceCurrency} (Автоконвертация)`,
-        comment: `Поступление от автоконвертации $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} для расхода: ${data.description || data.category}`,
+        comment: `Поступление от автоконвертации $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} для расхода: ${data.description || data.category || data.recipient || 'РКО'}`,
         created_by_user_id: userId || null,
         created_at: now
       }]);
@@ -497,6 +497,36 @@ export class FinanceRepository {
       s.netCashflow = Number((s.totalIncome - s.totalExpense).toFixed(2));
     });
 
+    // Conversions statistics for the year
+    let totalConvertedFromUsd = 0;
+    let totalConvertedToTjs = 0;
+    let conversionOperationsCount = 0;
+
+    (expensesData || []).forEach(e => {
+      const isConv = e.category === 'Конвертация валюты' || (e.reference && e.reference.startsWith('КОНВ-')) || (e.reference && e.reference.startsWith('ОБМЕН-'));
+      const d = new Date(e.expense_date);
+      if (isConv && d.getFullYear() === currentYear) {
+        const cur = (e.currency || 'USD').toUpperCase();
+        const amt = (e.amount_minor || 0) / 100;
+        if (cur === 'USD') {
+          totalConvertedFromUsd += amt;
+          conversionOperationsCount++;
+        }
+      }
+    });
+
+    (paymentsData || []).forEach(p => {
+      const isConv = (p.reference && p.reference.includes('КОНВ')) || (p.reference && p.reference.includes('ОБМЕН')) || (p.comment && p.comment.includes('конвертаци'));
+      const d = new Date(p.payment_date);
+      if (isConv && d.getFullYear() === currentYear) {
+        const cur = (p.currency || 'TJS').toUpperCase();
+        const amt = (p.amount_minor || 0) / 100;
+        if (cur === 'TJS') {
+          totalConvertedToTjs += amt;
+        }
+      }
+    });
+
     // Monthly Data
     const chartCurrency = selectedCurrency || (availableCurrencies[0] || 'USD');
     const monthNames = [
@@ -533,6 +563,7 @@ export class FinanceRepository {
     (paymentsData || []).forEach(p => {
       const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
       const amt = (p.amount_minor || 0) / 100;
+      const isConv = (p.reference && p.reference.includes('КОНВ')) || (p.reference && p.reference.includes('ОБМЕН')) || (p.comment && p.comment.includes('конвертаци'));
       transactions.push({
         id: `inc-${p.id}`,
         rawId: p.id,
@@ -540,8 +571,8 @@ export class FinanceRepository {
         date: p.payment_date,
         amount: amt,
         currency: cur,
-        category: 'Поступления по сделкам',
-        title: p.deals?.contract_number ? `Оплата по договору ${p.deals.contract_number}` : 'Приходный кассовый ордер',
+        category: isConv ? 'Конвертация валюты' : 'Поступления по сделкам',
+        title: isConv ? 'Поступление от конвертации' : (p.deals?.contract_number ? `Оплата по договору ${p.deals.contract_number}` : 'Приходный кассовый ордер'),
         counterparty: p.payer_name || p.deals?.leads?.full_name || 'Клиент',
         method: p.method || 'CASH',
         reference: p.reference || `ПКО-${p.id}`,
@@ -554,6 +585,7 @@ export class FinanceRepository {
     (expensesData || []).forEach(e => {
       const cur = (e.currency || 'USD').toUpperCase();
       const amt = (e.amount_minor || 0) / 100;
+      const isConv = e.category === 'Конвертация валюты' || (e.reference && e.reference.startsWith('КОНВ-')) || (e.reference && e.reference.startsWith('ОБМЕН-'));
       transactions.push({
         id: `exp-${e.id}`,
         rawId: e.id,
@@ -562,7 +594,7 @@ export class FinanceRepository {
         amount: amt,
         currency: cur,
         category: e.category || 'Прочее',
-        title: `Расход: ${e.category || 'Прочее'}`,
+        title: isConv ? 'Списание на конвертацию' : `Расход: ${e.category || 'Прочее'}`,
         counterparty: e.recipient || 'Контрагент',
         method: e.method || 'CASH',
         reference: e.reference || `РКО-${e.id}`,
@@ -597,6 +629,11 @@ export class FinanceRepository {
       summaryByCurrency,
       availableCurrencies,
       availableYears,
+      conversionsSummary: {
+        totalConvertedFromUsd: Number(totalConvertedFromUsd.toFixed(2)),
+        totalConvertedToTjs: Number(totalConvertedToTjs.toFixed(2)),
+        conversionOperationsCount
+      },
       monthlyData,
       chartCurrency,
       transactions: filteredTransactions
