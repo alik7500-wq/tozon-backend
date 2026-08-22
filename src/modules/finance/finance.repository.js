@@ -438,4 +438,172 @@ export class FinanceRepository {
       transactions: filteredTransactions
     };
   }
+
+  /**
+   * План-Факт матрица платежей по каждому клиенту и месяцам года
+   */
+  static async getPlanFactReport(filters = {}) {
+    const db = getDB();
+    const currentYear = Number(filters.year) || new Date().getFullYear();
+    const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
+    const selectedProject = filters.project_id && filters.project_id !== 'ALL' ? filters.project_id : null;
+    const selectedPaymentType = filters.payment_type && filters.payment_type !== 'ALL' ? filters.payment_type : null;
+    const selectedLeadId = filters.lead_id && filters.lead_id !== 'ALL' ? filters.lead_id : null;
+
+    // Fetch deals with schedules, payments, leads, and units hierarchy
+    const { data: dealsData, error: dErr } = await db.from('deals').select(`
+      id, contract_number, status, payment_type, currency, final_price_minor, base_price_minor,
+      discount_minor, down_payment_minor, installment_months, deal_date, created_at,
+      leads ( id, full_name, phone ),
+      units (
+        id, unit_number,
+        floors ( sections ( buildings ( projects ( id, name, currency ) ) ) )
+      ),
+      deal_payment_schedules (
+        id, payment_number, due_date, amount_minor, paid_amount_minor, status
+      ),
+      payments (
+        id, amount_minor, currency, payment_date, method, reference, comment
+      )
+    `).order('id', { ascending: true });
+
+    if (dErr) throw dErr;
+
+    let deals = dealsData || [];
+
+    // Filter deals
+    if (selectedCurrency) {
+      deals = deals.filter(d => (d.currency || d.units?.floors?.sections?.buildings?.projects?.currency || 'USD') === selectedCurrency);
+    }
+    if (selectedProject) {
+      deals = deals.filter(d => {
+        const p = d.units?.floors?.sections?.buildings?.projects;
+        return p && (String(p.id) === String(selectedProject) || p.name === selectedProject);
+      });
+    }
+    if (selectedPaymentType) {
+      deals = deals.filter(d => d.payment_type === selectedPaymentType);
+    }
+    if (selectedLeadId) {
+      deals = deals.filter(d => String(d.leads?.id) === String(selectedLeadId));
+    }
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      deals = deals.filter(d =>
+        (d.contract_number && d.contract_number.toLowerCase().includes(q)) ||
+        (d.leads?.full_name && d.leads?.full_name.toLowerCase().includes(q)) ||
+        (d.units?.floors?.sections?.buildings?.projects?.name && d.units?.floors?.sections?.buildings?.projects?.name.toLowerCase().includes(q))
+      );
+    }
+
+    const monthNames = [
+      'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+      'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
+    ];
+
+    const monthsHeader = monthNames.map((name, idx) => ({
+      index: idx,
+      name: `${name} ${currentYear}`,
+      shortName: name,
+      key: `${currentYear}-${String(idx + 1).padStart(2, '0')}`
+    }));
+
+    const monthTotals = Array(12).fill(0).map(() => ({ planned: 0, actual: 0 }));
+    let grandTotalContract = 0;
+    let grandTotalPaid = 0;
+    let grandTotalDebt = 0;
+
+    const rows = deals.map(d => {
+      const proj = d.units?.floors?.sections?.buildings?.projects;
+      const currency = d.currency || proj?.currency || 'USD';
+      const contractAmount = (d.final_price_minor || 0) / 100;
+      
+      const schedules = d.deal_payment_schedules || [];
+      const payments = d.payments || [];
+
+      const paymentsTotal = payments.reduce((sum, p) => sum + ((p.amount_minor || 0) / 100), 0);
+      const schedulesPaidTotal = schedules.reduce((sum, s) => sum + ((s.paid_amount_minor || 0) / 100), 0);
+      const downPayment = (d.down_payment_minor || 0) / 100;
+      const totalPaid = Math.max(paymentsTotal, schedulesPaidTotal, downPayment);
+      const remainingDebt = Math.max(0, contractAmount - totalPaid);
+
+      grandTotalContract += contractAmount;
+      grandTotalPaid += totalPaid;
+      grandTotalDebt += remainingDebt;
+
+      const monthlyValues = Array(12).fill(0).map(() => ({ planned: 0, actual: 0 }));
+
+      // Plan from schedules
+      schedules.forEach(s => {
+        if (s.due_date) {
+          const sDate = new Date(s.due_date);
+          if (sDate.getFullYear() === currentYear) {
+            const m = sDate.getMonth();
+            const planAmt = (s.amount_minor || 0) / 100;
+            monthlyValues[m].planned += planAmt;
+          }
+        }
+      });
+
+      // Fact from payments
+      payments.forEach(p => {
+        if (p.payment_date) {
+          const pDate = new Date(p.payment_date);
+          if (pDate.getFullYear() === currentYear) {
+            const m = pDate.getMonth();
+            const factAmt = (p.amount_minor || 0) / 100;
+            monthlyValues[m].actual += factAmt;
+          }
+        }
+      });
+
+      // If deal down payment was on deal_date and in this year, add to fact if not already in payments
+      if (d.deal_date && downPayment > 0 && payments.length === 0) {
+        const dDate = new Date(d.deal_date);
+        if (dDate.getFullYear() === currentYear) {
+          const m = dDate.getMonth();
+          monthlyValues[m].actual += downPayment;
+        }
+      }
+
+      monthlyValues.forEach((mv, mIdx) => {
+        monthTotals[mIdx].planned += mv.planned;
+        monthTotals[mIdx].actual += mv.actual;
+      });
+
+      return {
+        id: d.id,
+        contractNumber: d.contract_number ? `№ ${d.contract_number}` : `№ ${d.id}`,
+        dealId: d.id,
+        clientName: d.leads?.full_name || 'Не указан',
+        clientPhone: d.leads?.phone || '',
+        projectName: proj?.name || 'TOZON PLAZA',
+        unitNumber: d.units?.unit_number || '-',
+        paymentType: d.payment_type || 'INSTALLMENT',
+        currency,
+        contractAmount: Number(contractAmount.toFixed(2)),
+        totalPaid: Number(totalPaid.toFixed(2)),
+        remainingDebt: Number(remainingDebt.toFixed(2)),
+        months: monthlyValues.map(mv => ({
+          planned: Number(mv.planned.toFixed(2)),
+          actual: Number(mv.actual.toFixed(2))
+        }))
+      };
+    });
+
+    return {
+      monthsHeader,
+      rows,
+      summary: {
+        totalDeals: rows.length,
+        grandTotalContract: Number(grandTotalContract.toFixed(2)),
+        grandTotalPaid: Number(grandTotalPaid.toFixed(2)),
+        grandTotalDebt: Number(grandTotalDebt.toFixed(2)),
+        monthTotals: monthTotals.map(mt => ({
+          planned: Number(mt.planned.toFixed(2)),
+          actual: Number(mt.actual.toFixed(2))
+        }))
+      }
+    };
+  }
 }

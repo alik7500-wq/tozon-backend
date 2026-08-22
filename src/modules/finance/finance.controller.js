@@ -56,3 +56,14 @@ export const getCashflow = async (req, res) => {
     res.status(500).json({ success: false, error: { message: error.message || 'Failed to fetch cashflow' } });
   }
 };
+
+export const getPlanFactReport = async (req, res) => {
+  try {
+    const filters = req.query || {};
+    const data = await FinanceRepository.getPlanFactReport(filters);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error fetching plan-fact report:', error);
+    res.status(500).json({ success: false, error: { message: error.message || 'Failed to fetch plan-fact report' } });
+  }
+};
