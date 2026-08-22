@@ -43,3 +43,19 @@ export const restrictTo = (...roles) => {
     next();
   };
 };
+
+export const checkPermission = (requiredPermission) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return next(new AppError('You are not logged in', 401));
+    }
+    if (req.user.role === 'ADMIN') {
+      return next();
+    }
+    const permissions = Array.isArray(req.user.permissions) ? req.user.permissions : [];
+    if (permissions.includes('*') || permissions.includes(requiredPermission)) {
+      return next();
+    }
+    return next(new AppError(`Недостаточно прав доступа (${requiredPermission})`, 403));
+  };
+};

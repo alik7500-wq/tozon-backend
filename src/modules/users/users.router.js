@@ -37,10 +37,47 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
+export const ROLE_PRESET_PERMISSIONS = {
+  ADMIN: ['*'],
+  DIRECTOR: [
+    'analytics.view', 'analytics.reports',
+    'inventory.view', 'inventory.manage',
+    'leads.view', 'leads.manage',
+    'deals.view', 'deals.manage',
+    'contracts.view', 'contracts.manage',
+    'finance.view', 'finance.payments', 'finance.expenses', 'finance.debtors', 'finance.cashflow',
+    'tasks.manage', 'automation.manage', 'settings.manage'
+  ],
+  SALES_MANAGER: [
+    'inventory.view',
+    'leads.view', 'leads.manage',
+    'deals.view', 'deals.manage',
+    'contracts.view',
+    'finance.view',
+    'tasks.manage'
+  ],
+  MANAGER: [
+    'inventory.view',
+    'leads.view', 'leads.manage',
+    'deals.view', 'deals.manage',
+    'contracts.view',
+    'finance.view',
+    'tasks.manage'
+  ],
+  FINANCE_MANAGER: [
+    'analytics.view', 'analytics.reports',
+    'inventory.view',
+    'deals.view',
+    'contracts.view', 'contracts.manage',
+    'finance.view', 'finance.payments', 'finance.expenses', 'finance.debtors', 'finance.cashflow',
+    'tasks.manage'
+  ]
+};
+
 // POST /api/users - Create new user (ADMIN or DIRECTOR)
 router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, permissions } = req.body;
 
     if (!name || !email || !password) {
       return next(new AppError('Имя, Email и Пароль обязательны для заполнения', 400));
@@ -55,12 +92,17 @@ router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
     const validRoles = ['ADMIN', 'DIRECTOR', 'SALES_MANAGER', 'FINANCE_MANAGER', 'MANAGER'];
     const userRole = validRoles.includes(role) ? role : 'SALES_MANAGER';
 
+    const userPermissions = Array.isArray(permissions) && permissions.length > 0
+      ? permissions
+      : (ROLE_PRESET_PERMISSIONS[userRole] || []);
+
     const password_hash = await bcrypt.hash(password, 10);
     const newUser = await UsersRepository.create({
       name: name.trim(),
       email: cleanEmail,
       password_hash,
       role: userRole,
+      permissions: userPermissions,
       is_active: 1
     });
 
@@ -77,11 +119,12 @@ router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
 // PATCH /api/users/:id - Update user
 router.patch('/:id', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
   try {
-    const { name, email, password, role, is_active } = req.body;
+    const { name, email, password, role, permissions, is_active } = req.body;
     const updates = {};
     if (name) updates.name = name.trim();
     if (email) updates.email = email.trim().toLowerCase();
     if (role) updates.role = role;
+    if (Array.isArray(permissions)) updates.permissions = permissions;
     if (typeof is_active !== 'undefined') updates.is_active = is_active ? 1 : 0;
     if (password) {
       updates.password_hash = await bcrypt.hash(password, 10);

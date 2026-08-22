@@ -5,7 +5,7 @@ export class UsersRepository {
     const db = getDB();
     const { data, error } = await db
       .from('users')
-      .select('id, name, email, role, is_active, created_at, updated_at')
+      .select('id, name, email, role, permissions, is_active, created_at, updated_at')
       .order('id', { ascending: true });
       
     if (error) throw error;
@@ -28,7 +28,7 @@ export class UsersRepository {
     const db = getDB();
     const { data, error } = await db
       .from('users')
-      .select('id, name, email, role, is_active, created_at, updated_at')
+      .select('id, name, email, role, permissions, is_active, created_at, updated_at')
       .eq('id', id)
       .single();
       
@@ -64,7 +64,7 @@ export class UsersRepository {
       .from('users')
       .update(payload)
       .eq('id', id)
-      .select('id, name, email, role, is_active, created_at, updated_at')
+      .select('id, name, email, role, permissions, is_active, created_at, updated_at')
       .single();
 
     if (error) throw error;
