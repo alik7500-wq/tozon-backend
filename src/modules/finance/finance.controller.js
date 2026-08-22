@@ -46,6 +46,18 @@ export const addExpense = async (req, res) => {
   }
 };
 
+export const convertCurrency = async (req, res) => {
+  try {
+    const convertData = req.body;
+    const userId = req.user?.id;
+    const data = await FinanceRepository.convertCurrency(convertData, userId);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error converting currency:', error);
+    res.status(500).json({ success: false, error: { message: error.message || 'Failed to convert currency' } });
+  }
+};
+
 export const getCashflow = async (req, res) => {
   try {
     const filters = req.query || {};

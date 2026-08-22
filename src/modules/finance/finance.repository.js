@@ -311,7 +311,7 @@ export class FinanceRepository {
   }
 
   /**
-   * Добавить расходный кассовый ордер
+   * Добавить расходный кассовый ордер (с поддержкой автоконвертации)
    */
   static async addExpense(data, userId) {
     const db = getDB();
@@ -319,7 +319,52 @@ export class FinanceRepository {
     const amountMinor = Math.round(Number(data.amount) * 100);
     const expenseDate = data.date || data.expense_date || now.split('T')[0];
     const currency = (data.currency || 'USD').toUpperCase();
+    const autoConvert = Boolean(data.auto_convert);
+    const exchangeRate = Number(data.exchange_rate) || 10.90;
+    const sourceCurrency = (data.source_currency || 'USD').toUpperCase();
 
+    // Если включена автоконвертация (например, расход в TJS, а средства списываются с USD)
+    if (autoConvert && currency !== sourceCurrency) {
+      let convertedSourceAmount = 0;
+      if (currency === 'TJS' && sourceCurrency === 'USD') {
+        convertedSourceAmount = Number(data.amount) / exchangeRate;
+      } else if (currency === 'USD' && sourceCurrency === 'TJS') {
+        convertedSourceAmount = Number(data.amount) * exchangeRate;
+      } else {
+        convertedSourceAmount = Number(data.amount) / exchangeRate;
+      }
+
+      const sourceMinor = Math.round(convertedSourceAmount * 100);
+
+      // 1. Списание сконвертированной суммы с исходной кассы (USD)
+      await db.from('expenses').insert([{
+        amount_minor: sourceMinor,
+        currency: sourceCurrency,
+        expense_date: expenseDate,
+        category: 'Конвертация валюты',
+        method: data.method || 'CASH',
+        reference: `КОНВ-${Date.now().toString().slice(-5)}`,
+        recipient: `Касса ${currency} (Автоконвертация)`,
+        description: `Автоконвертация $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} в ${currency} для расхода: ${data.description || data.category || 'РКО'}`,
+        created_by_user_id: userId || null,
+        created_at: now
+      }]);
+
+      // 2. Зачисление сконвертированных средств в кассу назначения (TJS)
+      await db.from('payments').insert([{
+        amount_minor: amountMinor,
+        currency: currency,
+        payment_date: expenseDate,
+        method: data.method || 'CASH',
+        reference: `ПКО-КОНВ-${Date.now().toString().slice(-5)}`,
+        payer_name: `Касса ${sourceCurrency} (Автоконвертация)`,
+        comment: `Поступление от автоконвертации $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} для расхода: ${data.description || data.category}`,
+        created_by_user_id: userId || null,
+        created_at: now
+      }]);
+    }
+
+    // 3. Регистрация самого расхода в кассе (TJS / USD)
     const { data: newExpense, error } = await db.from('expenses').insert([{
       amount_minor: amountMinor,
       currency,
@@ -335,6 +380,54 @@ export class FinanceRepository {
 
     if (error) throw error;
     return newExpense;
+  }
+
+  /**
+   * Ручная конвертация / валютообмен между кассами
+   */
+  static async convertCurrency(data, userId) {
+    const db = getDB();
+    const now = new Date().toISOString();
+    const fromCurrency = (data.from_currency || 'USD').toUpperCase();
+    const toCurrency = (data.to_currency || 'TJS').toUpperCase();
+    const fromAmount = Number(data.from_amount);
+    const rate = Number(data.exchange_rate) || 10.90;
+    const toAmount = Number(data.to_amount) || (fromAmount * rate);
+    const date = data.date || now.split('T')[0];
+
+    const fromAmountMinor = Math.round(fromAmount * 100);
+    const toAmountMinor = Math.round(toAmount * 100);
+
+    // 1. Списание с кассы-источника (USD)
+    const { data: exp, error: expErr } = await db.from('expenses').insert([{
+      amount_minor: fromAmountMinor,
+      currency: fromCurrency,
+      expense_date: date,
+      category: 'Конвертация валюты',
+      method: data.method || 'CASH',
+      reference: data.reference || `ОБМЕН-${Date.now().toString().slice(-5)}`,
+      recipient: `Касса ${toCurrency}`,
+      description: `Обмен ${fromAmount.toLocaleString()} ${fromCurrency} в ${toCurrency} по курсу ${rate}. Назначение: ${data.comment || 'Пополнение кассы'}`,
+      created_by_user_id: userId || null,
+      created_at: now
+    }]).select().single();
+    if (expErr) throw expErr;
+
+    // 2. Приход в кассу-получатель (TJS)
+    const { data: inc, error: incErr } = await db.from('payments').insert([{
+      amount_minor: toAmountMinor,
+      currency: toCurrency,
+      payment_date: date,
+      method: data.method || 'CASH',
+      reference: `ПКО-ОБМЕН-${Date.now().toString().slice(-5)}`,
+      payer_name: `Касса ${fromCurrency}`,
+      comment: `Поступление от обмена ${fromAmount.toLocaleString()} ${fromCurrency} по курсу ${rate}`,
+      created_by_user_id: userId || null,
+      created_at: now
+    }]).select().single();
+    if (incErr) throw incErr;
+
+    return { expense: exp, income: inc };
   }
 
   /**
