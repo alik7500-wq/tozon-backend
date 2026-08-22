@@ -50,6 +50,10 @@ app.use(pino({
 app.use('/uploads', express.static(uploadDir));
 
 // Routes
+app.get('/', (req, res) => {
+  res.status(200).send('API is running');
+});
+
 app.get('/api/health', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
