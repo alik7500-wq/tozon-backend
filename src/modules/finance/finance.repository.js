@@ -598,6 +598,49 @@ export class FinanceRepository {
     }
     const fxGainLossTjs = fxGainLossUsd * avgExpenseRate;
 
+    // 3. Sales & Contracts KPI (Реализованные м², скидки, ожидаемый остаток рассрочки)
+    const { data: allDealsData } = await db.from('deals').select(`
+      id, status, base_price_minor, discount_minor, final_price_minor, down_payment_minor, currency,
+      units ( area_m2_x100, rooms ),
+      deal_payment_schedules ( amount_minor, paid_amount_minor, status )
+    `);
+
+    let totalSoldAreaM2 = 0;
+    let totalDealsCount = 0;
+    let totalContractSumUsd = 0;
+    let totalDiscountSumUsd = 0;
+    let totalReceivedSumUsd = 0;
+
+    (allDealsData || []).forEach(d => {
+      if (d.status !== 'CANCELLED') {
+        totalDealsCount++;
+        const area = (d.units?.area_m2_x100 || 0) / 100;
+        totalSoldAreaM2 += area;
+
+        const contractAmt = (d.final_price_minor || 0) / 100;
+        const discountAmt = (d.discount_minor || 0) / 100;
+        totalContractSumUsd += contractAmt;
+        totalDiscountSumUsd += discountAmt;
+
+        const schedules = d.deal_payment_schedules || [];
+        const schedPaid = schedules.reduce((acc, s) => acc + ((s.paid_amount_minor || 0) / 100), 0);
+        const downPaid = (d.down_payment_minor || 0) / 100;
+        const paid = Math.max(schedPaid, downPaid);
+        totalReceivedSumUsd += paid;
+      }
+    });
+
+    const totalReceivableSumUsd = Math.max(0, totalContractSumUsd - totalReceivedSumUsd);
+
+    const salesSummary = {
+      totalSoldAreaM2: Number(totalSoldAreaM2.toFixed(1)),
+      totalDealsCount,
+      totalContractSumUsd: Number(totalContractSumUsd.toFixed(2)),
+      totalDiscountSumUsd: Number(totalDiscountSumUsd.toFixed(2)),
+      totalReceivedSumUsd: Number(totalReceivedSumUsd.toFixed(2)),
+      totalReceivableSumUsd: Number(totalReceivableSumUsd.toFixed(2)),
+    };
+
     // Monthly Data
     const chartCurrency = selectedCurrency || (availableCurrencies[0] || 'USD');
     const monthNames = [
@@ -714,6 +757,7 @@ export class FinanceRepository {
         fxGainLossTjs: Number(fxGainLossTjs.toFixed(2)),
         isProfit: fxGainLossUsd >= 0
       },
+      salesSummary,
       monthlyData,
       chartCurrency,
       transactions: filteredTransactions
