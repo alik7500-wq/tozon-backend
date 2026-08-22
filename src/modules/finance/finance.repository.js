@@ -2,12 +2,78 @@ import { getDB } from '../../db/connection.js';
 
 export class FinanceRepository {
   /**
+   * Определение динамического диапазона лет на основе данных в БД
+   */
+  static async getAvailableYears() {
+    const db = getDB();
+    const currentYear = new Date().getFullYear();
+    let minYear = currentYear;
+    let maxYear = currentYear;
+
+    // 1. Deals dates
+    const { data: deals } = await db.from('deals').select('deal_date, created_at');
+    (deals || []).forEach(d => {
+      const dateStr = d.deal_date || d.created_at;
+      if (dateStr) {
+        const y = new Date(dateStr).getFullYear();
+        if (y && !isNaN(y) && y > 2000 && y < 2100) {
+          minYear = Math.min(minYear, y);
+          maxYear = Math.max(maxYear, y);
+        }
+      }
+    });
+
+    // 2. Installment schedules dates (могут быть на 2-5 лет вперед)
+    const { data: schedules } = await db.from('deal_payment_schedules').select('due_date');
+    (schedules || []).forEach(s => {
+      if (s.due_date) {
+        const y = new Date(s.due_date).getFullYear();
+        if (y && !isNaN(y) && y > 2000 && y < 2100) {
+          minYear = Math.min(minYear, y);
+          maxYear = Math.max(maxYear, y);
+        }
+      }
+    });
+
+    // 3. Payments dates
+    const { data: payments } = await db.from('payments').select('payment_date');
+    (payments || []).forEach(p => {
+      if (p.payment_date) {
+        const y = new Date(p.payment_date).getFullYear();
+        if (y && !isNaN(y) && y > 2000 && y < 2100) {
+          minYear = Math.min(minYear, y);
+          maxYear = Math.max(maxYear, y);
+        }
+      }
+    });
+
+    // 4. Expenses dates
+    const { data: expenses } = await db.from('expenses').select('expense_date');
+    (expenses || []).forEach(e => {
+      if (e.expense_date) {
+        const y = new Date(e.expense_date).getFullYear();
+        if (y && !isNaN(y) && y > 2000 && y < 2100) {
+          minYear = Math.min(minYear, y);
+          maxYear = Math.max(maxYear, y);
+        }
+      }
+    });
+
+    const years = [];
+    for (let y = minYear; y <= maxYear; y++) {
+      years.push(y);
+    }
+    return years;
+  }
+
+  /**
    * Получить список доходов (приходных ордеров и платежей)
    */
   static async getIncome(filters = {}) {
     const db = getDB();
     const currentYear = Number(filters.year) || new Date().getFullYear();
     const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
+    const availableYears = await this.getAvailableYears();
 
     const { data: paymentsData, error } = await db.from('payments').select(`
       id, deal_id, schedule_id, amount_minor, currency, payment_date, method, reference, comment, payer_name, created_at,
@@ -74,7 +140,7 @@ export class FinanceRepository {
       );
     }
 
-    // Monthly Chart Data (for currentYear and selectedCurrency or primary currency)
+    // Monthly Chart Data
     const chartCurrency = selectedCurrency || (availableCurrencies[0] || 'USD');
     const monthNames = [
       'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -99,6 +165,7 @@ export class FinanceRepository {
       list: filteredList,
       totalsByCurrency,
       availableCurrencies,
+      availableYears,
       chartData,
       chartCurrency
     };
@@ -156,6 +223,7 @@ export class FinanceRepository {
     const db = getDB();
     const currentYear = Number(filters.year) || new Date().getFullYear();
     const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
+    const availableYears = await this.getAvailableYears();
 
     const { data: expensesData, error } = await db.from('expenses').select(`
       id, amount_minor, currency, expense_date, category, method, reference, recipient, description, created_at,
@@ -217,7 +285,7 @@ export class FinanceRepository {
       );
     }
 
-    // Categories Breakdown Chart for chartCurrency
+    // Categories Breakdown Chart
     const chartCurrency = selectedCurrency || (availableCurrencies[0] || 'USD');
     const categoryTotals = {};
     normalizedList.forEach(item => {
@@ -236,6 +304,7 @@ export class FinanceRepository {
       list: filteredList,
       totalsByCurrency,
       availableCurrencies,
+      availableYears,
       categoriesChart,
       chartCurrency
     };
@@ -269,12 +338,13 @@ export class FinanceRepository {
   }
 
   /**
-   * Получить ДДС (Движение Денежных Средств) со сводкой по валютам и полным журналом
+   * Получить ДДС (Движение Денежных Средств)
    */
   static async getCashflow(filters = {}) {
     const db = getDB();
     const currentYear = Number(filters.year) || new Date().getFullYear();
     const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
+    const availableYears = await this.getAvailableYears();
 
     const { data: paymentsData, error: pErr } = await db.from('payments').select(`
       id, deal_id, amount_minor, currency, payment_date, method, reference, comment, payer_name, created_at,
@@ -334,7 +404,7 @@ export class FinanceRepository {
       s.netCashflow = Number((s.totalIncome - s.totalExpense).toFixed(2));
     });
 
-    // Monthly Data for chartCurrency
+    // Monthly Data
     const chartCurrency = selectedCurrency || (availableCurrencies[0] || 'USD');
     const monthNames = [
       'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -433,6 +503,7 @@ export class FinanceRepository {
     return {
       summaryByCurrency,
       availableCurrencies,
+      availableYears,
       monthlyData,
       chartCurrency,
       transactions: filteredTransactions
@@ -449,6 +520,7 @@ export class FinanceRepository {
     const selectedProject = filters.project_id && filters.project_id !== 'ALL' ? filters.project_id : null;
     const selectedPaymentType = filters.payment_type && filters.payment_type !== 'ALL' ? filters.payment_type : null;
     const selectedLeadId = filters.lead_id && filters.lead_id !== 'ALL' ? filters.lead_id : null;
+    const availableYears = await this.getAvailableYears();
 
     // Fetch deals with schedules, payments, leads, and units hierarchy
     const { data: dealsData, error: dErr } = await db.from('deals').select(`
@@ -594,6 +666,7 @@ export class FinanceRepository {
     return {
       monthsHeader,
       rows,
+      availableYears,
       summary: {
         totalDeals: rows.length,
         grandTotalContract: Number(grandTotalContract.toFixed(2)),
