@@ -527,6 +527,77 @@ export class FinanceRepository {
       }
     });
 
+    // FX Gain / Loss (Курсовая разница)
+    // 1. Поступления в сомони (TJS inflow)
+    let totalTjsInflow = 0;
+    let totalTjsInflowUsdEquiv = 0;
+
+    (paymentsData || []).forEach(p => {
+      const d = new Date(p.payment_date);
+      if (d.getFullYear() === currentYear) {
+        const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
+        const amt = (p.amount_minor || 0) / 100;
+        let rate = 10.80;
+        if (p.comment && p.comment.includes('Курс:')) {
+          const match = p.comment.match(/Курс:\s*([\d\.]+)/);
+          if (match && match[1]) rate = parseFloat(match[1]);
+        }
+        
+        if (cur === 'TJS') {
+          totalTjsInflow += amt;
+          totalTjsInflowUsdEquiv += (amt / rate);
+        } else if (p.comment && p.comment.includes('Внесено в кассу:') && p.comment.includes('TJS')) {
+          const tjsMatch = p.comment.match(/Внесено в кассу:\s*([\d\s\.,]+)\s*TJS/);
+          if (tjsMatch && tjsMatch[1]) {
+            const rawTjs = parseFloat(tjsMatch[1].replace(/\s/g, '').replace(',', '.'));
+            if (rawTjs > 0) {
+              totalTjsInflow += rawTjs;
+              totalTjsInflowUsdEquiv += amt; // amt is credited USD
+            }
+          }
+        }
+      }
+    });
+
+    const avgIncomeRate = totalTjsInflowUsdEquiv > 0 ? (totalTjsInflow / totalTjsInflowUsdEquiv) : 10.80;
+
+    // 2. Расходы / конвертации в сомони (TJS outflow)
+    let totalTjsOutflow = 0;
+    let totalTjsOutflowUsdEquiv = 0;
+
+    (expensesData || []).forEach(e => {
+      const d = new Date(e.expense_date);
+      if (d.getFullYear() === currentYear) {
+        const cur = (e.currency || 'USD').toUpperCase();
+        const amt = (e.amount_minor || 0) / 100;
+        let rate = 10.90;
+        if (e.description && e.description.includes('курсу')) {
+          const match = e.description.match(/курсу\s*([\d\.]+)/);
+          if (match && match[1]) rate = parseFloat(match[1]);
+        }
+
+        if (cur === 'TJS') {
+          totalTjsOutflow += amt;
+          totalTjsOutflowUsdEquiv += (amt / rate);
+        } else if (cur === 'USD' && (e.category === 'Конвертация валюты' || e.recipient?.includes('TJS'))) {
+          totalTjsOutflowUsdEquiv += amt;
+          totalTjsOutflow += (amt * rate);
+        }
+      }
+    });
+
+    const avgExpenseRate = totalTjsOutflowUsdEquiv > 0 ? (totalTjsOutflow / totalTjsOutflowUsdEquiv) : 10.90;
+
+    // Курсовая разница в USD:
+    // Сколько бы стоил этот расход по среднему курсу поступлений vs сколько фактически списано в USD
+    let fxGainLossUsd = 0;
+    if (totalTjsOutflow > 0 && avgIncomeRate > 0) {
+      const costAtIncomeRate = totalTjsOutflow / avgIncomeRate;
+      const actualCostUsd = totalTjsOutflowUsdEquiv;
+      fxGainLossUsd = costAtIncomeRate - actualCostUsd;
+    }
+    const fxGainLossTjs = fxGainLossUsd * avgExpenseRate;
+
     // Monthly Data
     const chartCurrency = selectedCurrency || (availableCurrencies[0] || 'USD');
     const monthNames = [
@@ -633,6 +704,15 @@ export class FinanceRepository {
         totalConvertedFromUsd: Number(totalConvertedFromUsd.toFixed(2)),
         totalConvertedToTjs: Number(totalConvertedToTjs.toFixed(2)),
         conversionOperationsCount
+      },
+      fxSummary: {
+        avgIncomeRate: Number(avgIncomeRate.toFixed(2)),
+        avgExpenseRate: Number(avgExpenseRate.toFixed(2)),
+        totalTjsInflow: Number(totalTjsInflow.toFixed(2)),
+        totalTjsOutflow: Number(totalTjsOutflow.toFixed(2)),
+        fxGainLossUsd: Number(fxGainLossUsd.toFixed(2)),
+        fxGainLossTjs: Number(fxGainLossTjs.toFixed(2)),
+        isProfit: fxGainLossUsd >= 0
       },
       monthlyData,
       chartCurrency,
