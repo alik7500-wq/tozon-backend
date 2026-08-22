@@ -1,4 +1,4 @@
-import { getDB } from '../../db/supabase.js';
+import { getDB } from '../../db/connection.js';
 
 export class DictionariesRepository {
   /**
