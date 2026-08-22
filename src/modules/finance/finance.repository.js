@@ -142,7 +142,8 @@ export class FinanceRepository {
     }
 
     // Monthly Chart Data
-    const chartCurrency = selectedCurrency || (availableCurrencies[0] || 'USD');
+    const eskhataRate = 9.27;
+    const chartCurrency = selectedCurrency || 'USD';
     const monthNames = [
       'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
       'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
@@ -151,8 +152,19 @@ export class FinanceRepository {
     const monthlyIncome = Array(12).fill(0);
     normalizedList.forEach(item => {
       const d = new Date(item.date);
-      if (d.getFullYear() === currentYear && item.currency === chartCurrency) {
-        monthlyIncome[d.getMonth()] += item.amount;
+      if (d.getFullYear() === currentYear) {
+        if (selectedCurrency && item.currency !== selectedCurrency) {
+          return;
+        }
+        const isInternalTransfer = (item.reference && item.reference.includes('КОНВ')) || (item.payerName && item.payerName.includes('Касса') && item.payerName.includes('Автоконвертация'));
+        if (!selectedCurrency && isInternalTransfer) {
+          return;
+        }
+        let amt = item.amount;
+        if (!selectedCurrency) {
+          amt = item.currency === 'USD' ? item.amount : (item.amount / eskhataRate);
+        }
+        monthlyIncome[d.getMonth()] += amt;
       }
     });
 
@@ -377,18 +389,43 @@ export class FinanceRepository {
     }
 
     // Categories Breakdown Chart
-    const chartCurrency = selectedCurrency || (availableCurrencies[0] || 'USD');
+    const eskhataRate = 9.27;
+    const chartCurrency = selectedCurrency || 'USD';
     const categoryTotals = {};
+    const categoryCurrencies = {};
+
     normalizedList.forEach(item => {
       const d = new Date(item.date);
-      if (d.getFullYear() === currentYear && item.currency === chartCurrency) {
-        categoryTotals[item.category] = (categoryTotals[item.category] || 0) + item.amount;
+      if (d.getFullYear() === currentYear) {
+        if (selectedCurrency && item.currency !== selectedCurrency) {
+          return;
+        }
+
+        // If 'ALL' is selected, ignore internal cashdesk conversion transfers ('Конвертация валюты') from operational category structure
+        const isInternalTransfer = item.category === 'Конвертация валюты' || 
+          (item.recipient && item.recipient.includes('Касса') && item.recipient.includes('Автоконвертация')) ||
+          (item.reference && item.reference.startsWith('КОНВ-'));
+
+        if (!selectedCurrency && isInternalTransfer) {
+          return;
+        }
+
+        const cat = item.category || 'Прочее';
+        let amountInChartCur = item.amount;
+        if (!selectedCurrency) {
+          amountInChartCur = item.currency === 'USD' ? item.amount : (item.amount / eskhataRate);
+        }
+
+        categoryTotals[cat] = (categoryTotals[cat] || 0) + amountInChartCur;
+        if (!categoryCurrencies[cat]) categoryCurrencies[cat] = {};
+        categoryCurrencies[cat][item.currency] = (categoryCurrencies[cat][item.currency] || 0) + item.amount;
       }
     });
 
     const categoriesChart = Object.keys(categoryTotals).map(cat => ({
       name: cat,
-      amount: Number(categoryTotals[cat].toFixed(2))
+      amount: Number(categoryTotals[cat].toFixed(2)),
+      breakdown: categoryCurrencies[cat]
     }));
 
     return {
@@ -983,7 +1020,8 @@ export class FinanceRepository {
     };
 
     // Monthly Data
-    const chartCurrency = selectedCurrency || (availableCurrencies[0] || 'USD');
+    const eskhataRate = 9.27;
+    const chartCurrency = selectedCurrency || 'USD';
     const monthNames = [
       'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
       'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
@@ -993,16 +1031,32 @@ export class FinanceRepository {
     (paymentsData || []).forEach(p => {
       const c = (p.currency || p.deals?.currency || 'USD').toUpperCase();
       const d = new Date(p.payment_date);
-      if (d.getFullYear() === currentYear && c === chartCurrency) {
-        monthlyData[d.getMonth()].income += (p.amount_minor || 0) / 100;
+      if (d.getFullYear() === currentYear) {
+        if (selectedCurrency && c !== selectedCurrency) return;
+        const isInternal = (p.reference && p.reference.includes('КОНВ')) || (p.payer_name && p.payer_name.includes('Касса') && p.payer_name.includes('Автоконвертация'));
+        if (!selectedCurrency && isInternal) return;
+
+        let amt = (p.amount_minor || 0) / 100;
+        if (!selectedCurrency) {
+          amt = c === 'USD' ? amt : (amt / eskhataRate);
+        }
+        monthlyData[d.getMonth()].income += amt;
       }
     });
 
     (expensesData || []).forEach(e => {
       const c = (e.currency || 'USD').toUpperCase();
       const d = new Date(e.expense_date);
-      if (d.getFullYear() === currentYear && c === chartCurrency) {
-        monthlyData[d.getMonth()].expense += (e.amount_minor || 0) / 100;
+      if (d.getFullYear() === currentYear) {
+        if (selectedCurrency && c !== selectedCurrency) return;
+        const isInternal = e.category === 'Конвертация валюты' || (e.recipient && e.recipient.includes('Касса') && e.recipient.includes('Автоконвертация')) || (e.reference && e.reference.startsWith('КОНВ-'));
+        if (!selectedCurrency && isInternal) return;
+
+        let amt = (e.amount_minor || 0) / 100;
+        if (!selectedCurrency) {
+          amt = c === 'USD' ? amt : (amt / eskhataRate);
+        }
+        monthlyData[d.getMonth()].expense += amt;
       }
     });
 
