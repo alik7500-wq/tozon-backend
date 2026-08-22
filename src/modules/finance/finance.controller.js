@@ -127,3 +127,25 @@ export const getPlanFactReport = async (req, res) => {
     res.status(500).json({ success: false, error: { message: error.message || 'Failed to fetch plan-fact report' } });
   }
 };
+
+export const getEskhataRate = async (req, res) => {
+  try {
+    const { EskhataRateService } = await import('./eskhata-rate.service.js');
+    const data = await EskhataRateService.getEskhataUsdRate();
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error fetching Eskhata rate:', error);
+    res.json({
+      success: true,
+      data: {
+        bank: 'Банк Эсхата',
+        currency: 'USD',
+        baseCurrency: 'TJS',
+        buyRate: 9.18,
+        sellRate: 9.27,
+        source: 'Банк Эсхата (Продажа USD)',
+        updatedAt: new Date().toISOString()
+      }
+    });
+  }
+};

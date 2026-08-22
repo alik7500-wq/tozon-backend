@@ -10,10 +10,13 @@ import {
   deleteExpense,
   convertCurrency, 
   getCashflow, 
-  getPlanFactReport 
+  getPlanFactReport,
+  getEskhataRate
 } from './finance.controller.js';
 
 const router = Router();
+
+router.get('/rates/eskhata', getEskhataRate);
 
 router.get('/income', getIncome);
 router.post('/income', addIncome);
