@@ -297,7 +297,7 @@ export class DealsRepository {
         amount_minor: data.down_payment_minor,
         payment_date: dealDate,
         method: 'CASH',
-        reference: 'ПВ при подписании',
+        reference: 'ПКО-ПВ',
         comment: 'Первоначальный взнос по договору',
         created_by_user_id: responsibleUserId,
         created_at: now
