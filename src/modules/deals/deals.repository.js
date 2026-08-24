@@ -292,13 +292,17 @@ export class DealsRepository {
 
     // 7. Initial Payment
     if (finalStatus === 'SIGNED' && data.record_initial_payment && data.down_payment_minor > 0) {
+      const pkoRef = data.initial_payment_reference 
+        ? (data.initial_payment_reference.trim().toUpperCase().startsWith('ПКО') ? data.initial_payment_reference.trim() : `ПКО-${data.initial_payment_reference.trim()}`)
+        : `ПКО-${contractNumber}`;
+
       await db.from('payments').insert([{
         deal_id: newDeal.id,
         amount_minor: data.down_payment_minor,
-        payment_date: dealDate,
-        method: 'CASH',
-        reference: 'ПКО-ПВ',
-        comment: 'Первоначальный взнос по договору',
+        payment_date: data.initial_payment_date || dealDate,
+        method: data.initial_payment_method || 'CASH',
+        reference: pkoRef,
+        comment: data.initial_payment_comment || `Первоначальный взнос по договору №${contractNumber}`,
         created_by_user_id: responsibleUserId,
         created_at: now
       }]);
