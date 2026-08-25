@@ -100,7 +100,7 @@ router.patch('/units/:id/status', restrictTo('ADMIN'), async (req, res, next) =>
   } catch (error) { next(error); }
 });
 
-router.patch('/units/:id/price', async (req, res, next) => {
+router.patch('/units/:id/price', restrictTo('ADMIN'), async (req, res, next) => {
   try {
     const { price_per_m2_minor, scope, scopeOptions } = req.body;
     const unit = await InventoryRepository.updateUnitPrice(req.params.id, price_per_m2_minor, scope, scopeOptions);
