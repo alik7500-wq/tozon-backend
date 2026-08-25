@@ -122,6 +122,25 @@ export class InventoryRepository {
     return this.getUnitById(id);
   }
 
+  static async updateUnitsBatchPrice(unitIds, pricePerM2Minor) {
+    const db = getDB();
+    const now = new Date().toISOString();
+    
+    if (!Array.isArray(unitIds) || unitIds.length === 0) {
+      throw new Error('Не выбраны квартиры для обновления цены');
+    }
+
+    const pMinor = parseInt(pricePerM2Minor, 10);
+    if (isNaN(pMinor) || pMinor <= 0) throw new Error('Некорректная цена за м²');
+
+    await db.from('units').update({
+      price_per_m2_minor: pMinor,
+      updated_at: now
+    }).in('id', unitIds);
+
+    return { updatedCount: unitIds.length };
+  }
+
   static async updateUnitPrice(id, pricePerM2Minor, scope = 'UNIT', scopeOptions = {}) {
     const db = getDB();
     const now = new Date().toISOString();
@@ -132,7 +151,12 @@ export class InventoryRepository {
     const pMinor = parseInt(pricePerM2Minor, 10);
     if (isNaN(pMinor) || pMinor <= 0) throw new Error('Некорректная цена за м²');
 
-    if (scope === 'UNIT' || !scope) {
+    if (scopeOptions?.unit_ids && Array.isArray(scopeOptions.unit_ids) && scopeOptions.unit_ids.length > 0) {
+      await db.from('units').update({
+        price_per_m2_minor: pMinor,
+        updated_at: now
+      }).in('id', scopeOptions.unit_ids);
+    } else if (scope === 'UNIT' || !scope) {
       await db.from('units').update({
         price_per_m2_minor: pMinor,
         updated_at: now

@@ -100,10 +100,19 @@ router.patch('/units/:id/status', restrictTo('ADMIN'), async (req, res, next) =>
   } catch (error) { next(error); }
 });
 
+router.patch('/units/batch-price', restrictTo('ADMIN'), async (req, res, next) => {
+  try {
+    const { unit_ids, price_per_m2_minor } = req.body;
+    const result = await InventoryRepository.updateUnitsBatchPrice(unit_ids, price_per_m2_minor);
+    res.status(200).json({ status: 'success', data: result });
+  } catch (error) { next(error); }
+});
+
 router.patch('/units/:id/price', restrictTo('ADMIN'), async (req, res, next) => {
   try {
-    const { price_per_m2_minor, scope, scopeOptions } = req.body;
-    const unit = await InventoryRepository.updateUnitPrice(req.params.id, price_per_m2_minor, scope, scopeOptions);
+    const { price_per_m2_minor, scope, scopeOptions, unit_ids } = req.body;
+    const targetScopeOptions = scopeOptions || (unit_ids ? { unit_ids } : {});
+    const unit = await InventoryRepository.updateUnitPrice(req.params.id, price_per_m2_minor, scope, targetScopeOptions);
     res.status(200).json({ status: 'success', data: { unit } });
   } catch (error) { next(error); }
 });
