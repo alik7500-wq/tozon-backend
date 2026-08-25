@@ -121,4 +121,67 @@ export class InventoryRepository {
     await db.from('units').update({ status, block_reason: blockReason, updated_at: now }).eq('id', id);
     return this.getUnitById(id);
   }
+
+  static async updateUnitPrice(id, pricePerM2Minor, scope = 'UNIT', scopeOptions = {}) {
+    const db = getDB();
+    const now = new Date().toISOString();
+    
+    const targetUnit = await this.getUnitById(id);
+    if (!targetUnit) throw new Error('Квартира не найдена');
+
+    const pMinor = parseInt(pricePerM2Minor, 10);
+    if (isNaN(pMinor) || pMinor <= 0) throw new Error('Некорректная цена за м²');
+
+    if (scope === 'UNIT' || !scope) {
+      await db.from('units').update({
+        price_per_m2_minor: pMinor,
+        updated_at: now
+      }).eq('id', id);
+    } else if (scope === 'FLOOR') {
+      await db.from('units').update({
+        price_per_m2_minor: pMinor,
+        updated_at: now
+      }).eq('floor_id', targetUnit.floor_id);
+    } else if (scope === 'ROOMS' || scope === 'LAYOUT_TYPE') {
+      if (targetUnit.layout_type_id) {
+        await db.from('units').update({
+          price_per_m2_minor: pMinor,
+          updated_at: now
+        }).eq('layout_type_id', targetUnit.layout_type_id);
+      } else {
+        await db.from('units').update({
+          price_per_m2_minor: pMinor,
+          updated_at: now
+        }).eq('rooms', targetUnit.rooms);
+      }
+    } else if (scope === 'ALL') {
+      const projectId = targetUnit.floors?.sections?.buildings?.projects?.id || scopeOptions.projectId;
+      if (projectId) {
+        // Fetch all units in project
+        const { data: bldgs } = await db.from('buildings').select('id, sections(id, floors(id))').eq('project_id', projectId);
+        const floorIds = [];
+        for (const b of bldgs || []) {
+          for (const s of b.sections || []) {
+            for (const f of s.floors || []) {
+              floorIds.push(f.id);
+            }
+          }
+        }
+        if (floorIds.length > 0) {
+          await db.from('units').update({
+            price_per_m2_minor: pMinor,
+            updated_at: now
+          }).in('floor_id', floorIds);
+        }
+      } else {
+        await db.from('units').update({
+          price_per_m2_minor: pMinor,
+          updated_at: now
+        }).eq('id', id);
+      }
+    }
+
+    return this.getUnitById(id);
+  }
 }
+
