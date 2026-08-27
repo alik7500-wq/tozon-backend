@@ -71,6 +71,7 @@ export class Tour360Repository {
     let query = db.from('tours_360')
       .select('*, panorama_360(id, name, thumbnail_path)')
       .eq('project_id', projectId)
+      .order('is_active', { ascending: false })
       .order('created_at', { ascending: false });
 
     if (filters.is_active !== undefined) {

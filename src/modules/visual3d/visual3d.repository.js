@@ -29,6 +29,7 @@ export class Visual3DRepository {
     let query = db.from('scene_3d')
       .select('*, buildings(name, code)')
       .eq('project_id', projectId)
+      .order('is_active', { ascending: false })
       .order('created_at', { ascending: false });
 
     if (filters.is_active !== undefined) {
