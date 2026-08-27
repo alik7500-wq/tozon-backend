@@ -27,6 +27,7 @@ import dictionariesRouter from './modules/dictionaries/dictionaries.router.js';
 import visual3dRouter from './modules/visual3d/visual3d.router.js';
 import tour360Router from './modules/tour360/tour360.router.js';
 import projectMediaRouter from './modules/projectMedia/projectMedia.router.js';
+import searchRouter from './modules/search/search.router.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,6 +83,7 @@ app.use('/api/dictionaries', dictionariesRouter);
 app.use('/api', visual3dRouter);
 app.use('/api', tour360Router);
 app.use('/api', projectMediaRouter);
+app.use('/api/search', searchRouter);
 
 // Global Error Handler
 app.use(errorHandler);
