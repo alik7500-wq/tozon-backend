@@ -84,8 +84,10 @@ describe('Passport OCR End-to-End & Deep Cross-Validation', () => {
 
     expect(result.status).toBe('SUCCESS');
     expect(result.has_critical_conflict).toBe(false);
+    expect(result.has_missing_required).toBe(false);
     expect(result.confirmation_blocked).toBe(false);
-    expect(result.confidence).toBeGreaterThanOrEqual(0.90);
+    expect(result.is_fully_agreed).toBe(true);
+    expect(result.confidence).toBeGreaterThanOrEqual(0.88);
 
     // Verify all core fields
     expect(result.fields.last_name.value).toBe('Мачидов');
@@ -102,7 +104,6 @@ describe('Passport OCR End-to-End & Deep Cross-Validation', () => {
   });
 
   it('detects critical conflict and blocks confirmation when visual text mismatches valid MRZ', async () => {
-    // Visual text with mismatched document number and birth date
     const corruptedFront = `
       ШИНОСНОМА
       Насаб: Муҳаммадизода
@@ -111,7 +112,6 @@ describe('Passport OCR End-to-End & Deep Cross-Validation', () => {
       Санаи таваллуд: 14.05.1990
     `;
 
-    // Valid MRZ of Majidov Dilshod
     const validMRZBack = `
       IDTJKA0474788353500119825806<<
       9701078M3301292TJK<<<<<<<<<<<0
@@ -123,9 +123,64 @@ describe('Passport OCR End-to-End & Deep Cross-Validation', () => {
     expect(result.status).toBe('CRITICAL_CONFLICT');
     expect(result.has_critical_conflict).toBe(true);
     expect(result.confirmation_blocked).toBe(true);
+    expect(result.is_fully_agreed).toBe(false);
     expect(result.fields.passport_number.conflict).toBe(true);
     expect(result.fields.birth_date.conflict).toBe(true);
-    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.confidence).toBeLessThanOrEqual(0.40);
     expect(result.warnings.some(w => w.includes('критические несовпадения') || w.includes('Критический конфликт'))).toBe(true);
+  });
+
+  it('hard-blocks confirmation and sets CRITICAL_MISSING_FIELD when document number is missing', async () => {
+    const textWithoutDocNumber = `
+      ШИНОСНОМАИ ШАҲРВАНДИ ҶУМҲУРИИ ТОҶИКИСТОН
+      Насаб: МАЧИДОВ
+      Ном: ДИЛШОД
+      Санаи таваллуд: 07.01.1997
+    `;
+
+    const result = await PassportOCRService.recognizePassport(textWithoutDocNumber, null);
+
+    expect(result.status).toBe('CRITICAL_MISSING_FIELD');
+    expect(result.has_missing_required).toBe(true);
+    expect(result.confirmation_blocked).toBe(true);
+    expect(result.fields.passport_number.value).toBeNull();
+    expect(result.confidence).toBeLessThanOrEqual(0.40);
+    expect(result.is_fully_agreed).toBe(false);
+    expect(result.warnings.some(w => w.includes('номер паспорта'))).toBe(true);
+  });
+
+  it('hard-blocks confirmation and sets CRITICAL_MISSING_FIELD when surname or first name is missing', async () => {
+    const textWithoutNames = `
+      ШИНОСНОМА
+      Рақами шиноснома: A04747883
+      Санаи таваллуд: 07.01.1997
+    `;
+
+    const result = await PassportOCRService.recognizePassport(textWithoutNames, null);
+
+    expect(result.status).toBe('CRITICAL_MISSING_FIELD');
+    expect(result.has_missing_required).toBe(true);
+    expect(result.confirmation_blocked).toBe(true);
+    expect(result.confidence).toBeLessThanOrEqual(0.40);
+  });
+
+  it('detects internal MRZ inconsistency if MRZ is marked valid but document number is absent', async () => {
+    // Inconsistent MRZ without document number
+    const corruptMRZ = `
+      IDTJK<<<<<<<<<53500119825806<<
+      9701078M3301292TJK<<<<<<<<<<<0
+      MAJIDOV<<DILSHOD<<<<<<<<<<<<
+    `;
+
+    const result = await PassportOCRService.recognizePassport('', corruptMRZ);
+    expect(result.status).not.toBe('SUCCESS');
+    expect(result.confirmation_blocked).toBe(true);
+  });
+
+  it('returns OCR_FAILED for non-document or empty input', async () => {
+    const result = await PassportOCRService.recognizePassport('', '');
+    expect(result.status).toBe('OCR_FAILED');
+    expect(result.confirmation_blocked).toBe(true);
+    expect(result.confidence).toBe(0);
   });
 });

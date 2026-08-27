@@ -57,7 +57,8 @@ export function normalizeName(name) {
 
 export function normalizePassportNumber(num) {
   if (!num) return null;
-  return String(num).toUpperCase().replace(/[^A-Z0-9А-Я]/g, '');
+  const clean = String(num).toUpperCase().replace(/[^A-Z0-9А-Я]/g, '');
+  return clean.length >= 5 ? clean : null;
 }
 
 export function normalizeINN(inn) {
@@ -180,7 +181,7 @@ export function extractFieldsFromText(text) {
 
   // 3. Dates (Санаи таваллуд, Санаи додани шиноснома, Муҳлати эътибор)
   const birthDateRegexes = [
-    /(?:санаи\s*таваллуд|дата\s*рождения|т[ао]валлуд|date\s*of\s*birth)\s*[:.]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})/i,
+    /(?:санаи\s*таваллуд(?:\s*[/\\|]\s*date\s*of\s*birth)?|дата\s*рождения|date\s*of\s*birth|т[ао]валлуд)\s*[:.]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})/i,
     /(?:таваллуд\s*шудааст)\s*[:.]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4})/i
   ];
   for (const reg of birthDateRegexes) {
@@ -189,7 +190,7 @@ export function extractFieldsFromText(text) {
   }
 
   const issueDateRegexes = [
-    /(?:санаи\s*додани(?:\s*шиноснома)?|дата\s*выдачи(?:\s*паспорта)?|дода\s*шудааст|date\s*of\s*issue)\s*[:.]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})/i,
+    /(?:санаи\s*додани(?:\s*шиноснома)?(?:\s*[/\\|]\s*date\s*of\s*issue)?|дата\s*выдачи|date\s*of\s*issue)\s*[:.]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})/i,
     /(?:санаи\s*додани|дата\s*выдачи)[^\n\r:.]*[:.]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})/i
   ];
   for (const reg of issueDateRegexes) {
@@ -198,7 +199,7 @@ export function extractFieldsFromText(text) {
   }
 
   const expiryDateRegexes = [
-    /(?:муҳлати\s*эътибор|срок\s*действия|действителен\s*до|date\s*of\s*expiry|expiry\s*date)\s*[:.]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})/i
+    /(?:муҳлати\s*эътибор(?:\s*[/\\|]\s*date\s*of\s*expiry)?|срок\s*действия|date\s*of\s*expiry|expiry\s*date)\s*[:.]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})/i
   ];
   for (const reg of expiryDateRegexes) {
     const m = fullText.match(reg);
@@ -280,18 +281,23 @@ export class PassportOCRService {
     // 3. Run visual regex pattern extraction
     const visualFields = extractFieldsFromText(rawText);
 
+    // --- Check for internal MRZ parser inconsistency ---
+    if (isMrzValid && (!mrzResult.document_number || mrzResult.document_number.length < 5)) {
+      warnings.push('Внутренняя несогласованность MRZ: контрольные суммы валидны, но номер документа не извлечен');
+    }
+
     // 4. Merge and cross-validate MRZ + Visual fields
 
     // --- A. Passport Number / Series ---
     let finalDocNumber = null;
     let docNumberSeries = 'A';
     let docNumberVal = null;
-    let docNumberConfidence = 0.5;
+    let docNumberConfidence = 0.0;
     let docNumberSource = 'NONE';
     let docNumberConflict = false;
     let visualDocNum = visualFields.passport_series_number || visualFields.passport_number || null;
 
-    if (mrzResult && mrzResult.document_number) {
+    if (mrzResult && mrzResult.document_number && mrzResult.document_number.length >= 5) {
       finalDocNumber = mrzResult.document_number;
       docNumberConfidence = mrzResult.check_digits?.document_number ? 0.99 : 0.88;
       docNumberSource = 'MRZ';
@@ -299,20 +305,22 @@ export class PassportOCRService {
       if (visualDocNum) {
         const normVisual = normalizePassportNumber(visualDocNum);
         const normMrz = normalizePassportNumber(finalDocNumber);
-        if (normVisual === normMrz) {
+        if (normVisual && normMrz && normVisual === normMrz) {
           docNumberConfidence = 0.99;
           docNumberSource = 'CROSS_VALIDATED';
-        } else {
+        } else if (normVisual && normMrz) {
           docNumberConflict = true;
           hasCriticalConflict = true;
-          docNumberConfidence = 0.40;
-          warnings.push(`Критический конфликт номера паспорта: MRZ (${normMrz}) отличается от визуального текста (${normVisual})`);
+          docNumberConfidence = 0.30;
+          warnings.push(`Критический конфликт номера паспорта: MRZ (${normMrz}) отличается от текста (${normVisual})`);
         }
       }
     } else if (visualDocNum) {
-      finalDocNumber = visualDocNum;
-      docNumberConfidence = 0.85;
-      docNumberSource = 'VISUAL_OCR';
+      finalDocNumber = normalizePassportNumber(visualDocNum);
+      if (finalDocNumber) {
+        docNumberConfidence = 0.85;
+        docNumberSource = 'VISUAL_OCR';
+      }
     }
 
     if (finalDocNumber) {
@@ -332,18 +340,26 @@ export class PassportOCRService {
         conflict: docNumberConflict
       };
     } else {
-      fieldsWithConfidence.passport_number = { value: null, confidence: 0.0, source: 'NONE', conflict: false };
+      fieldsWithConfidence.passport_number = {
+        value: null,
+        series: null,
+        full: null,
+        confidence: 0.0,
+        source: 'NONE',
+        conflict: false,
+        mrz_value: null,
+        ocr_value: null
+      };
       warnings.push('Не удалось распознать номер паспорта');
     }
 
     // --- B. Last Name / Surname ---
     let lastName = null;
-    let lastNameConfidence = 0.5;
+    let lastNameConfidence = 0.0;
     let lastNameSource = 'NONE';
     let lastNameConflict = false;
 
     if (mrzResult && (mrzResult.surname || mrzResult.surname_cyrillic)) {
-      // MRZ is trusted source of truth
       const mrzCyr = mrzResult.surname_cyrillic || transliterateLatinToCyrillic(mrzResult.surname);
       lastName = visualFields.last_name && areNamesEquivalent(visualFields.last_name, mrzCyr)
         ? visualFields.last_name
@@ -359,7 +375,7 @@ export class PassportOCRService {
         } else {
           lastNameConflict = true;
           hasCriticalConflict = true;
-          lastNameConfidence = 0.40;
+          lastNameConfidence = 0.30;
           warnings.push(`Критический конфликт фамилии: MRZ (${mrzResult.surname}) отличается от текста (${visualFields.last_name})`);
         }
       }
@@ -380,7 +396,7 @@ export class PassportOCRService {
 
     // --- C. First Name ---
     let firstName = null;
-    let firstNameConfidence = 0.5;
+    let firstNameConfidence = 0.0;
     let firstNameSource = 'NONE';
     let firstNameConflict = false;
 
@@ -400,7 +416,7 @@ export class PassportOCRService {
         } else {
           firstNameConflict = true;
           hasCriticalConflict = true;
-          firstNameConfidence = 0.40;
+          firstNameConfidence = 0.30;
           warnings.push(`Критический конфликт имени: MRZ (${mrzResult.given_names}) отличается от текста (${visualFields.first_name})`);
         }
       }
@@ -421,7 +437,7 @@ export class PassportOCRService {
 
     // --- D. Middle Name / Father Name ---
     let middleName = null;
-    let middleNameConfidence = 0.5;
+    let middleNameConfidence = 0.0;
     let middleNameSource = 'NONE';
 
     if (visualFields.middle_name) {
@@ -449,14 +465,14 @@ export class PassportOCRService {
     const fullName = fullNameParts.join(' ');
     fieldsWithConfidence.full_name = {
       value: fullName || null,
-      confidence: lastName && firstName ? Math.min(lastNameConfidence, firstNameConfidence) : 0.4,
+      confidence: lastName && firstName ? Math.min(lastNameConfidence, firstNameConfidence) : 0.0,
       source: lastNameSource,
       conflict: lastNameConflict || firstNameConflict
     };
 
     // --- E. Birth Date ---
     let birthDate = null;
-    let birthDateConfidence = 0.5;
+    let birthDateConfidence = 0.0;
     let birthDateSource = 'NONE';
     let birthDateConflict = false;
 
@@ -472,7 +488,7 @@ export class PassportOCRService {
         } else {
           birthDateConflict = true;
           hasCriticalConflict = true;
-          birthDateConfidence = 0.40;
+          birthDateConfidence = 0.30;
           warnings.push(`Критический конфликт даты рождения: MRZ (${birthDate}) отличается от текста (${visualFields.birth_date})`);
         }
       }
@@ -518,10 +534,13 @@ export class PassportOCRService {
 
     // --- I. INN / Tax ID ---
     let inn = visualFields.inn;
-    let innConfidence = 0.90;
-    let innSource = 'VISUAL_OCR';
+    let innConfidence = 0.0;
+    let innSource = 'NONE';
 
-    if (!inn && mrzResult && mrzResult.personal_number && /^\d{9,12}$/.test(mrzResult.personal_number)) {
+    if (inn) {
+      innConfidence = 0.90;
+      innSource = 'VISUAL_OCR';
+    } else if (mrzResult && mrzResult.personal_number && /^\d{9,12}$/.test(mrzResult.personal_number)) {
       inn = mrzResult.personal_number;
       innConfidence = 0.95;
       innSource = 'MRZ';
@@ -542,28 +561,80 @@ export class PassportOCRService {
       conflict: false
     };
 
-    // Calculate Overall Confidence Score
-    const scoredFields = Object.values(fieldsWithConfidence).filter(f => f.value !== null);
-    const overallConfidence = scoredFields.length > 0
-      ? scoredFields.reduce((acc, cur) => acc + cur.confidence, 0) / scoredFields.length
-      : 0.0;
+    // --- 5. Mandatory Required Fields Check ---
+    const requiredKeys = ['passport_number', 'last_name', 'first_name', 'birth_date'];
+    const missingRequiredFields = requiredKeys.filter(key => {
+      const f = fieldsWithConfidence[key];
+      return !f || !f.value || f.confidence < 0.70;
+    });
 
-    // Status Determination
+    const hasMissingRequired = missingRequiredFields.length > 0;
+
+    // Calculate Overall Confidence Score (Denominator MUST include all core fields)
+    const coreKeys = ['passport_number', 'last_name', 'first_name', 'birth_date', 'issue_date', 'expiry_date', 'inn', 'issuing_authority', 'address'];
+    const totalScore = coreKeys.reduce((acc, key) => acc + (fieldsWithConfidence[key]?.confidence || 0), 0);
+    let overallConfidence = totalScore / coreKeys.length;
+
+    // Hard penalize confidence if critical fields are missing or conflicting
+    if (hasCriticalConflict || hasMissingRequired) {
+      overallConfidence = Math.min(overallConfidence, 0.40);
+    }
+
+    // --- 6. Authoritative State Machine Determination ---
+    // Priority: OCR_FAILED > CRITICAL_CONFLICT > CRITICAL_MISSING_FIELD > REVIEW_REQUIRED > SUCCESS
     let status = 'SUCCESS';
-    if (hasCriticalConflict) {
+    let confirmationBlocked = false;
+
+    const hasAnyRecognizedContent = Boolean(
+      (rawText && rawText.trim().length >= 10) ||
+      mrzResult ||
+      Object.keys(visualFields).length > 0
+    );
+
+    if (!hasAnyRecognizedContent) {
+      status = 'OCR_FAILED';
+      confirmationBlocked = true;
+      warnings.push('Не удалось извлечь текст документа или строки MRZ');
+    } else if (hasCriticalConflict) {
       status = 'CRITICAL_CONFLICT';
+      confirmationBlocked = true;
+      warnings.unshift('ВНИМАНИЕ: Обнаружены критические несовпадения между строками MRZ и текстом. Подтверждение заблокировано.');
+    } else if (hasMissingRequired) {
+      status = 'CRITICAL_MISSING_FIELD';
+      confirmationBlocked = true;
+      const missingLabels = missingRequiredFields.map(k => {
+        if (k === 'passport_number') return 'номер паспорта';
+        if (k === 'last_name') return 'фамилия';
+        if (k === 'first_name') return 'имя';
+        if (k === 'birth_date') return 'дата рождения';
+        return k;
+      }).join(', ');
+      warnings.unshift(`Обязательные данные отсутствуют (${missingLabels}). Подтверждение заблокировано до ручного заполнения.`);
     } else if (warnings.length > 0 || overallConfidence < 0.85 || !isMrzValid) {
       status = 'REVIEW_REQUIRED';
+      confirmationBlocked = false;
+    } else {
+      status = 'SUCCESS';
+      confirmationBlocked = false;
     }
 
-    if (hasCriticalConflict) {
-      warnings.unshift('ВНИМАНИЕ: Обнаружены критические несовпадения между строками MRZ и распознанным текстом. Подтверждение заблокировано до ручной проверки.');
-    }
+    // Is MRZ and Visual OCR fully agreement verified?
+    const isFullyAgreed = Boolean(
+      status === 'SUCCESS' &&
+      isMrzValid &&
+      fieldsWithConfidence.passport_number.source === 'CROSS_VALIDATED' &&
+      fieldsWithConfidence.last_name.source === 'CROSS_VALIDATED' &&
+      fieldsWithConfidence.first_name.source === 'CROSS_VALIDATED' &&
+      fieldsWithConfidence.birth_date.source === 'CROSS_VALIDATED'
+    );
 
     return {
       status,
       has_critical_conflict: hasCriticalConflict,
-      confirmation_blocked: hasCriticalConflict,
+      has_missing_required: hasMissingRequired,
+      missing_required_fields: missingRequiredFields,
+      confirmation_blocked: confirmationBlocked,
+      is_fully_agreed: isFullyAgreed,
       raw: rawText,
       fields: fieldsWithConfidence,
       mrz: mrzResult,

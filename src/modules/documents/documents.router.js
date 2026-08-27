@@ -131,6 +131,19 @@ router.post('/passport/:docId/verify', async (req, res, next) => {
       return next(new AppError('Данные для верификации обязательны', 400));
     }
 
+    const docNum = (verifiedData.passport_number || verifiedData.document_number || '').trim();
+    const lastName = (verifiedData.last_name || '').trim();
+    const firstName = (verifiedData.first_name || '').trim();
+    const fullName = (verifiedData.full_name || `${lastName} ${firstName}`).trim();
+
+    if (!docNum || docNum.length < 5) {
+      return next(new AppError('Невозможно верифицировать паспорт: номер паспорта обязателен (минимум 5 символов)', 400));
+    }
+
+    if (!lastName || !firstName || !fullName) {
+      return next(new AppError('Невозможно верифицировать паспорт: ФИО покупателя обязательно', 400));
+    }
+
     const verifiedDoc = await DocumentsRepository.verify(cleanDocId, verifiedData, parseOptionalBigInt(req.user?.id) || 1);
 
     res.status(200).json({
