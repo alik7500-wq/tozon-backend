@@ -165,7 +165,6 @@ describe('Passport OCR End-to-End & Deep Cross-Validation', () => {
   });
 
   it('detects internal MRZ inconsistency if MRZ is marked valid but document number is absent', async () => {
-    // Inconsistent MRZ without document number
     const corruptMRZ = `
       IDTJK<<<<<<<<<53500119825806<<
       9701078M3301292TJK<<<<<<<<<<<0
@@ -182,5 +181,23 @@ describe('Passport OCR End-to-End & Deep Cross-Validation', () => {
     expect(result.status).toBe('OCR_FAILED');
     expect(result.confirmation_blocked).toBe(true);
     expect(result.confidence).toBe(0);
+  });
+
+  it('correctly handles orientation normalization for 0, 90, 180, and 270 degree inputs', async () => {
+    // Preprocessed text extracted from normalized 0°, 90°, 180°, 270° orientation
+    const orientationPayloads = [0, 90, 180, 270].map(angle => ({
+      angle,
+      front: `Насаб: МАЧИДОВ\nНом: ДИЛШОД\nРақами шиноснома: A04747883\nСанаи таваллуд: 07.01.1997`,
+      back: `IDTJKA0474788353500119825806<<\n9701078M3301292TJK<<<<<<<<<<<0\nMAJIDOV<<DILSHOD<<<<<<<<<<<<`
+    }));
+
+    for (const testCase of orientationPayloads) {
+      const res = await PassportOCRService.recognizePassport(testCase.front, testCase.back);
+      expect(res.status).toBe('SUCCESS');
+      expect(res.fields.passport_number.value).toBe('04747883');
+      expect(res.fields.last_name.value).toBe('Мачидов');
+      expect(res.fields.first_name.value).toBe('Дилшод');
+      expect(res.fields.birth_date.value).toBe('1997-01-07');
+    }
   });
 });

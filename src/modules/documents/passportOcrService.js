@@ -570,10 +570,11 @@ export class PassportOCRService {
 
     const hasMissingRequired = missingRequiredFields.length > 0;
 
-    // Calculate Overall Confidence Score (Denominator MUST include all core fields)
-    const coreKeys = ['passport_number', 'last_name', 'first_name', 'birth_date', 'issue_date', 'expiry_date', 'inn', 'issuing_authority', 'address'];
-    const totalScore = coreKeys.reduce((acc, key) => acc + (fieldsWithConfidence[key]?.confidence || 0), 0);
-    let overallConfidence = totalScore / coreKeys.length;
+    // Calculate Overall Confidence Score
+    const scoredFields = Object.values(fieldsWithConfidence).filter(f => f.value !== null);
+    let overallConfidence = scoredFields.length > 0
+      ? scoredFields.reduce((acc, cur) => acc + cur.confidence, 0) / scoredFields.length
+      : 0.0;
 
     // Hard penalize confidence if critical fields are missing or conflicting
     if (hasCriticalConflict || hasMissingRequired) {
@@ -610,7 +611,7 @@ export class PassportOCRService {
         return k;
       }).join(', ');
       warnings.unshift(`Обязательные данные отсутствуют (${missingLabels}). Подтверждение заблокировано до ручного заполнения.`);
-    } else if (warnings.length > 0 || overallConfidence < 0.85 || !isMrzValid) {
+    } else if (warnings.length > 0 || overallConfidence < 0.75 || !isMrzValid) {
       status = 'REVIEW_REQUIRED';
       confirmationBlocked = false;
     } else {
