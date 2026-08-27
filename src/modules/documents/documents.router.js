@@ -1,12 +1,30 @@
 import { Router } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { DocumentsRepository } from './documents.repository.js';
 import { PassportOCRService } from './passportOcrService.js';
+import { ocrProviderFactory } from './ocr/ocrProviderFactory.js';
+import { OCRConfigurationError, OCRTimeoutError, OCRRateLimitError, OCRProviderError } from './ocr/ocrErrors.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 import { getDB } from '../../db/connection.js';
 
 const router = Router();
+
+// Rate limiter for OCR requests (30 requests/min per IP/token)
+const ocrRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: 'OCR_RATE_LIMIT',
+      message: 'Слишком много запросов OCR. Пожалуйста, подождите перед повторной попыткой.'
+    }
+  }
+});
 
 // Protect all document endpoints
 router.use(protect);
@@ -39,9 +57,10 @@ router.post('/passport/upload-url', async (req, res, next) => {
 
 /**
  * POST /api/documents/passport/recognize
- * Recognize passport scans (Front + Back)
+ * Recognize passport scans using Real Pixels -> Text OCR (Azure Vision) + ICAO MRZ Engine
  */
-router.post('/passport/recognize', async (req, res, next) => {
+router.post('/passport/recognize', ocrRateLimiter, async (req, res, next) => {
+  const startTime = Date.now();
   try {
     const {
       frontPath,
@@ -54,39 +73,65 @@ router.post('/passport/recognize', async (req, res, next) => {
       documentType = 'PASSPORT_TJ'
     } = req.body;
 
-    let frontInput = frontText || '';
-    let backInput = backText || '';
+    let frontInput = (frontText || '').trim();
+    let backInput = (backText || '').trim();
+    let ocrProviderName = 'DIRECT_TEXT';
+    let frontOcrConfidence = null;
+    let backOcrConfidence = null;
 
-    // If storage paths are provided, fetch file content if available
     const db = getDB();
-    if (frontPath && !frontText) {
+    const provider = ocrProviderFactory.getProvider();
+
+    // 1. Process Front Image Buffer if image path provided and text is empty
+    if (frontPath && !frontInput) {
       try {
         const { data, error } = await db.storage.from('identity-documents').download(frontPath);
-        if (!error && data) {
-          const buffer = Buffer.from(await data.arrayBuffer());
-          frontInput = buffer.toString('utf-8');
+        if (error || !data) {
+          throw new AppError(`Не удалось загрузить изображение лицевой стороны: ${error?.message || 'Файл не найден'}`, 404);
         }
-      } catch (e) {
-        console.warn('Could not read frontPath directly as text:', e.message);
+
+        const buffer = Buffer.from(await data.arrayBuffer());
+        const frontOcrResult = await provider.recognizeImage(buffer, { mimeType: data.type || 'image/jpeg' });
+        frontInput = frontOcrResult.text;
+        frontOcrConfidence = frontOcrResult.confidence;
+        ocrProviderName = frontOcrResult.provider;
+      } catch (err) {
+        if (err instanceof OCRConfigurationError || err instanceof OCRRateLimitError || err instanceof OCRTimeoutError || err instanceof OCRProviderError) {
+          throw err;
+        }
+        console.warn('[PassportOCR] Front image OCR error:', err.message);
       }
     }
 
-    if (backPath && !backText) {
+    // 2. Process Back Image Buffer if image path provided and text is empty
+    if (backPath && !backInput) {
       try {
         const { data, error } = await db.storage.from('identity-documents').download(backPath);
-        if (!error && data) {
-          const buffer = Buffer.from(await data.arrayBuffer());
-          backInput = buffer.toString('utf-8');
+        if (error || !data) {
+          throw new AppError(`Не удалось загрузить изображение оборотной стороны: ${error?.message || 'Файл не найден'}`, 404);
         }
-      } catch (e) {
-        console.warn('Could not read backPath directly as text:', e.message);
+
+        const buffer = Buffer.from(await data.arrayBuffer());
+        const backOcrResult = await provider.recognizeImage(buffer, { mimeType: data.type || 'image/jpeg' });
+        backInput = backOcrResult.text;
+        backOcrConfidence = backOcrResult.confidence;
+        ocrProviderName = backOcrResult.provider;
+      } catch (err) {
+        if (err instanceof OCRConfigurationError || err instanceof OCRRateLimitError || err instanceof OCRTimeoutError || err instanceof OCRProviderError) {
+          throw err;
+        }
+        console.warn('[PassportOCR] Back image OCR error:', err.message);
       }
     }
 
-    // Run OCR Recognition Pipeline
+    // 3. Run Structured Rule & MRZ Parser
     const ocrResult = await PassportOCRService.recognizePassport(frontInput, backInput, { documentType });
 
-    // Save record in database with status REVIEW_REQUIRED
+    // Technical duration logging without logging sensitive PII
+    const durationMs = Date.now() - startTime;
+    console.info(`[PassportOCR] Processed document OCR | provider=${ocrProviderName} | status=${ocrResult.status} | duration=${durationMs}ms`);
+
+    // 4. Save record in database
     const docRecord = await DocumentsRepository.create({
       lead_id: parseOptionalBigInt(leadId),
       deal_id: parseOptionalBigInt(dealId),
@@ -99,7 +144,7 @@ router.post('/passport/recognize', async (req, res, next) => {
       mrz_data_json: ocrResult.mrz,
       confidence_score: ocrResult.confidence,
       warnings_json: ocrResult.warnings,
-      status: 'REVIEW_REQUIRED',
+      status: ocrResult.status === 'SUCCESS' ? 'REVIEW_REQUIRED' : ocrResult.status,
       created_by_user_id: parseOptionalBigInt(req.user?.id) || 1
     });
 
@@ -107,20 +152,47 @@ router.post('/passport/recognize', async (req, res, next) => {
       status: 'success',
       data: {
         document: docRecord,
+        status: ocrResult.status,
+        has_critical_conflict: ocrResult.has_critical_conflict,
+        has_missing_required: ocrResult.has_missing_required,
+        missing_required_fields: ocrResult.missing_required_fields,
+        confirmation_blocked: ocrResult.confirmation_blocked,
+        is_fully_agreed: ocrResult.is_fully_agreed,
         fields: ocrResult.fields,
         mrz: ocrResult.mrz,
         confidence: ocrResult.confidence,
-        warnings: ocrResult.warnings
+        warnings: ocrResult.warnings,
+        ocr: {
+          provider: ocrProviderName,
+          front_confidence: frontOcrConfidence,
+          back_confidence: backOcrConfidence
+        }
       }
     });
   } catch (err) {
+    if (err instanceof OCRConfigurationError) {
+      return res.status(200).json({
+        status: 'success',
+        data: {
+          status: 'OCR_FAILED',
+          has_missing_required: true,
+          confirmation_blocked: true,
+          confidence: 0.0,
+          warnings: [
+            'Azure Vision OCR не настроен на сервере. Пожалуйста, добавьте AZURE_VISION_ENDPOINT и AZURE_VISION_KEY в .env файл backend или введите данные вручную.'
+          ],
+          fields: {},
+          mrz: null
+        }
+      });
+    }
     next(err);
   }
 });
 
 /**
  * POST /api/documents/passport/:docId/verify
- * Confirm and verify passport data by manager
+ * Confirm and verify passport data by manager (Protected with Backend Contract Guard)
  */
 router.post('/passport/:docId/verify', async (req, res, next) => {
   try {
@@ -177,17 +249,17 @@ router.get('/passport/:docId', async (req, res, next) => {
 
 /**
  * DELETE /api/documents/passport/:docId/images
- * Delete raw scan images under privacy/retention policy
+ * Delete raw original scans for GDPR / privacy compliance after deal finalization
  */
 router.delete('/passport/:docId/images', async (req, res, next) => {
   try {
     const cleanDocId = parseRequiredBigInt(req.params.docId, 'docId');
-    const updatedDoc = await DocumentsRepository.deleteImages(cleanDocId);
+    const document = await DocumentsRepository.deleteImages(cleanDocId);
 
     res.status(200).json({
       status: 'success',
-      message: 'Оригиналы изображений успешно удалены',
-      data: { document: updatedDoc }
+      message: 'Оригинальные изображения паспорта успешно удалены',
+      data: { document }
     });
   } catch (err) {
     next(err);
@@ -195,4 +267,3 @@ router.delete('/passport/:docId/images', async (req, res, next) => {
 });
 
 export default router;
-
