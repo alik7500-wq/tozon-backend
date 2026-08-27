@@ -77,7 +77,94 @@ export class InventoryRepository {
   }
 
   static async batchGenerateUnits(data) {
-    return { totalCreated: 0 }; // Simplified for MVP migration to save token space
+    const db = getDB();
+    const {
+      projectId,
+      buildingName = 'Блок А',
+      buildingCode = 'БЛОК-А',
+      sectionName = 'Секция 1',
+      floorFrom = 1,
+      floorTo = 10,
+      numberPrefix = '',
+      numberStart = 1,
+      floorSlots = []
+    } = data;
+
+    if (!projectId) throw new Error('projectId обязателен');
+    if (!floorSlots || floorSlots.length === 0) throw new Error('Не заданы слоты квартир на этаже');
+
+    const now = new Date().toISOString();
+
+    // 1. Find or create building
+    let { data: building } = await db.from('buildings').select('*').eq('project_id', projectId).eq('name', buildingName).maybeSingle();
+    if (!building) {
+      const { data: newBuilding, error: bErr } = await db.from('buildings').insert([{
+        project_id: projectId,
+        name: buildingName,
+        code: buildingCode || buildingName,
+        sort_order: 1,
+        created_at: now,
+        updated_at: now
+      }]).select().single();
+      if (bErr) throw bErr;
+      building = newBuilding;
+    }
+
+    // 2. Find or create section
+    let { data: section } = await db.from('sections').select('*').eq('building_id', building.id).eq('name', sectionName).maybeSingle();
+    if (!section) {
+      const { data: newSection, error: sErr } = await db.from('sections').insert([{
+        building_id: building.id,
+        name: sectionName,
+        code: sectionName,
+        sort_order: 1,
+        created_at: now,
+        updated_at: now
+      }]).select().single();
+      if (sErr) throw sErr;
+      section = newSection;
+    }
+
+    let currentNumber = parseInt(numberStart, 10) || 1;
+    let totalCreated = 0;
+
+    for (let fNum = parseInt(floorFrom, 10); fNum <= parseInt(floorTo, 10); fNum++) {
+      let { data: floor } = await db.from('floors').select('*').eq('section_id', section.id).eq('floor_number', fNum).maybeSingle();
+      if (!floor) {
+        const { data: newFloor, error: fErr } = await db.from('floors').insert([{
+          section_id: section.id,
+          floor_number: fNum,
+          name: `${fNum} этаж`,
+          sort_order: fNum,
+          created_at: now,
+          updated_at: now
+        }]).select().single();
+        if (fErr) throw fErr;
+        floor = newFloor;
+      }
+
+      for (const slot of floorSlots) {
+        const unitNumber = `${numberPrefix || ''}${currentNumber++}`;
+        const { error: uErr } = await db.from('units').insert([{
+          floor_id: floor.id,
+          layout_type_id: slot.layoutTypeId || null,
+          unit_number: unitNumber,
+          rooms: slot.rooms,
+          area_m2_x100: slot.area_m2_x100,
+          price_per_m2_minor: slot.price_per_m2_minor || 0,
+          status: 'AVAILABLE',
+          created_at: now,
+          updated_at: now
+        }]);
+        if (uErr) {
+          console.warn('Error inserting unit in batch generate:', uErr.message);
+        } else {
+          totalCreated++;
+        }
+      }
+    }
+
+    return { totalCreated };
   }
 
   static async getChessboard(projectId, filters = {}) {
