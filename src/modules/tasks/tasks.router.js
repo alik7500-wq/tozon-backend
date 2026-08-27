@@ -2,6 +2,7 @@ import express from 'express';
 import { TasksRepository } from './tasks.repository.js';
 import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 
 const router = express.Router();
 
@@ -15,7 +16,7 @@ router.get('/', async (req, res, next) => {
       status: req.query.status,
       type: req.query.type,
       priority: req.query.priority,
-      assignedUserId: req.query.assignedUserId,
+      assignedUserId: parseOptionalBigInt(req.query.assignedUserId),
       dateFilter: req.query.dateFilter,
     };
     const tasks = await TasksRepository.findAll(filters);
@@ -28,7 +29,8 @@ router.get('/', async (req, res, next) => {
 // GET /api/tasks/:id
 router.get('/:id', async (req, res, next) => {
   try {
-    const task = await TasksRepository.findById(req.params.id);
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const task = await TasksRepository.findById(cleanId);
     if (!task) return next(new AppError('Задача не найдена', 404));
     res.status(200).json({ status: 'success', data: { task } });
   } catch (error) {
@@ -41,8 +43,10 @@ router.post('/', async (req, res, next) => {
   try {
     const task = await TasksRepository.create({
       ...req.body,
-      created_by: req.user.id,
-      assigned_user_id: req.body.assigned_user_id || req.user.id,
+      lead_id: parseOptionalBigInt(req.body.lead_id),
+      deal_id: parseOptionalBigInt(req.body.deal_id),
+      created_by: parseOptionalBigInt(req.user.id) || 1,
+      assigned_user_id: parseOptionalBigInt(req.body.assigned_user_id) || parseOptionalBigInt(req.user.id) || 1,
     });
     res.status(201).json({ status: 'success', data: { task } });
   } catch (error) {
@@ -53,7 +57,13 @@ router.post('/', async (req, res, next) => {
 // PUT /api/tasks/:id
 router.put('/:id', async (req, res, next) => {
   try {
-    const task = await TasksRepository.update(req.params.id, req.body);
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const task = await TasksRepository.update(cleanId, {
+      ...req.body,
+      lead_id: parseOptionalBigInt(req.body.lead_id),
+      deal_id: parseOptionalBigInt(req.body.deal_id),
+      assigned_user_id: parseOptionalBigInt(req.body.assigned_user_id)
+    });
     res.status(200).json({ status: 'success', data: { task } });
   } catch (error) {
     next(error);
@@ -63,9 +73,10 @@ router.put('/:id', async (req, res, next) => {
 // PATCH /api/tasks/:id/status
 router.patch('/:id/status', async (req, res, next) => {
   try {
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
     const { status } = req.body;
     if (!status) return next(new AppError('Статус обязателен', 400));
-    const task = await TasksRepository.updateStatus(req.params.id, status);
+    const task = await TasksRepository.updateStatus(cleanId, status);
     res.status(200).json({ status: 'success', data: { task } });
   } catch (error) {
     next(error);
@@ -75,7 +86,8 @@ router.patch('/:id/status', async (req, res, next) => {
 // DELETE /api/tasks/:id
 router.delete('/:id', async (req, res, next) => {
   try {
-    await TasksRepository.delete(req.params.id);
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    await TasksRepository.delete(cleanId);
     res.status(200).json({ status: 'success', message: 'Задача удалена' });
   } catch (error) {
     next(error);

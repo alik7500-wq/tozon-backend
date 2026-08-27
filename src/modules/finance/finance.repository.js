@@ -1,4 +1,5 @@
 import { getDB } from '../../db/connection.js';
+import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 
 export class FinanceRepository {
   /**
@@ -36,10 +37,11 @@ export class FinanceRepository {
     });
 
     // 3. Payments dates
-    const { data: payments } = await db.from('payments').select('payment_date');
+    const { data: payments } = await db.from('payments').select('payment_date, created_at');
     (payments || []).forEach(p => {
-      if (p.payment_date) {
-        const y = new Date(p.payment_date).getFullYear();
+      const dateStr = p.payment_date || p.created_at;
+      if (dateStr) {
+        const y = new Date(dateStr).getFullYear();
         if (y && !isNaN(y) && y > 2000 && y < 2100) {
           minYear = Math.min(minYear, y);
           maxYear = Math.max(maxYear, y);
@@ -193,8 +195,8 @@ export class FinanceRepository {
     const amountMinor = Math.round(Number(data.amount) * 100);
     const paymentDate = data.date || data.payment_date || now.split('T')[0];
     const currency = (data.currency || 'USD').toUpperCase();
-    const dealId = data.deal_id ? Number(data.deal_id) : null;
-    const scheduleId = data.schedule_id ? Number(data.schedule_id) : null;
+    const dealId = parseOptionalBigInt(data.deal_id);
+    const scheduleId = parseOptionalBigInt(data.schedule_id);
 
     const { data: newPayment, error } = await db.from('payments').insert([{
       deal_id: dealId,
@@ -206,7 +208,7 @@ export class FinanceRepository {
       reference: data.reference || `ПКО-${Date.now().toString().slice(-6)}`,
       comment: data.comment || null,
       payer_name: data.payer_name || null,
-      created_by_user_id: userId || null,
+      created_by_user_id: parseOptionalBigInt(userId),
       created_at: now
     }]).select().single();
 

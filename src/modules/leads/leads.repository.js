@@ -1,13 +1,16 @@
 import { getDB } from '../../db/connection.js';
+import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 
 export class LeadsRepository {
   static async findAll(filters = {}) {
     const db = getDB();
     let query = db.from('leads').select('*, users!responsible_user_id(name), projects!interested_project_id(name), lead_notes(id), deals(id)').is('archived_at', null).order('created_at', { ascending: false });
 
-    if (filters.status) query = query.eq('status', filters.status);
-    if (filters.projectId) query = query.eq('interested_project_id', filters.projectId);
-    if (filters.responsibleUserId) query = query.eq('responsible_user_id', filters.responsibleUserId);
+    if (filters.status && filters.status !== 'ALL') query = query.eq('status', filters.status);
+    const cleanProjectId = parseOptionalBigInt(filters.projectId);
+    if (cleanProjectId) query = query.eq('interested_project_id', cleanProjectId);
+    const cleanUserId = parseOptionalBigInt(filters.responsibleUserId);
+    if (cleanUserId) query = query.eq('responsible_user_id', cleanUserId);
 
     const { data, error } = await query;
     if (error) throw error;
@@ -33,11 +36,12 @@ export class LeadsRepository {
   }
 
   static async findById(id) {
+    const cleanId = parseRequiredBigInt(id, 'id');
     const db = getDB();
     const { data: lead, error } = await db
       .from('leads')
       .select('*, users!responsible_user_id(name), projects!interested_project_id(name), lead_notes(*), deals(*)')
-      .eq('id', id)
+      .eq('id', cleanId)
       .is('archived_at', null)
       .maybeSingle();
 
@@ -70,21 +74,25 @@ export class LeadsRepository {
     if (data.status !== undefined) payload.status = data.status || 'NEW';
     
     if (data.responsible_user_id !== undefined) {
-      payload.responsible_user_id = data.responsible_user_id ? parseInt(data.responsible_user_id, 10) : null;
+      payload.responsible_user_id = parseOptionalBigInt(data.responsible_user_id);
     }
     if (data.interested_project_id !== undefined) {
-      payload.interested_project_id = data.interested_project_id ? parseInt(data.interested_project_id, 10) : null;
+      payload.interested_project_id = parseOptionalBigInt(data.interested_project_id);
     }
     if (data.desired_rooms !== undefined) {
-      payload.desired_rooms = data.desired_rooms !== '' && data.desired_rooms !== null ? parseInt(data.desired_rooms, 10) : null;
+      const r = Number(data.desired_rooms);
+      payload.desired_rooms = Number.isInteger(r) && r > 0 ? r : null;
     }
     if (data.budget_min_minor !== undefined) {
-      payload.budget_min_minor = data.budget_min_minor !== '' && data.budget_min_minor !== null ? parseInt(data.budget_min_minor, 10) : null;
+      const bMin = Number(data.budget_min_minor);
+      payload.budget_min_minor = Number.isFinite(bMin) && bMin >= 0 ? Math.round(bMin) : null;
     }
     if (data.budget_max_minor !== undefined) {
-      payload.budget_max_minor = data.budget_max_minor !== '' && data.budget_max_minor !== null ? parseInt(data.budget_max_minor, 10) : null;
+      const bMax = Number(data.budget_max_minor);
+      payload.budget_max_minor = Number.isFinite(bMax) && bMax >= 0 ? Math.round(bMax) : null;
     } else if (data.budget_max) {
-      payload.budget_max_minor = Math.round(parseFloat(data.budget_max) * 100);
+      const bMaxNum = parseFloat(data.budget_max);
+      payload.budget_max_minor = Number.isFinite(bMaxNum) ? Math.round(bMaxNum * 100) : null;
     }
     
     if (data.passport_series !== undefined) payload.passport_series = data.passport_series || null;

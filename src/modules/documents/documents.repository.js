@@ -1,5 +1,6 @@
 import { getDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+import { parseOptionalBigInt } from '../../utils/idNormalizer.js';
 
 export class DocumentsRepository {
   /**
@@ -24,7 +25,7 @@ export class DocumentsRepository {
   /**
    * Generate signed upload URL for private bucket identity-documents
    */
-  static async generateUploadUrl({ projectId = 1, dealId = 0, leadId = 0, filename, side = 'front', contentType = 'image/jpeg' }) {
+  static async generateUploadUrl({ projectId, dealId, leadId, filename, side = 'front', contentType = 'image/jpeg' }) {
     const db = getDB();
 
     const ext = filename?.split('.').pop()?.toLowerCase();
@@ -33,8 +34,11 @@ export class DocumentsRepository {
       throw new AppError('Разрешены только форматы JPG, JPEG, PNG, PDF', 400);
     }
 
+    const cleanProjectId = parseOptionalBigInt(projectId) || 'general';
+    const cleanDealId = parseOptionalBigInt(dealId) || 'new';
+
     const sanitized = (filename || 'passport').replace(/[^a-zA-Z0-9._-]/g, '_');
-    const storagePath = `projects/${projectId || 1}/deals/${dealId || 'new'}/passport/${side}_${Date.now()}_${sanitized}`;
+    const storagePath = `projects/${cleanProjectId}/deals/${cleanDealId}/passport/${side}_${Date.now()}_${sanitized}`;
     const bucket = 'identity-documents';
 
     try {
@@ -73,22 +77,22 @@ export class DocumentsRepository {
     const db = getDB();
 
     const insertData = {
-      lead_id: payload.lead_id || null,
-      deal_id: payload.deal_id || null,
-      project_id: payload.project_id || null,
+      lead_id: parseOptionalBigInt(payload.lead_id),
+      deal_id: parseOptionalBigInt(payload.deal_id),
+      project_id: parseOptionalBigInt(payload.project_id),
       document_type: payload.document_type || 'PASSPORT_TJ',
       front_image_path: payload.front_image_path || null,
       back_image_path: payload.back_image_path || null,
       ocr_raw_json: payload.ocr_raw_json ? JSON.stringify(payload.ocr_raw_json) : null,
       ocr_fields_json: payload.ocr_fields_json ? JSON.stringify(payload.ocr_fields_json) : null,
       mrz_data_json: payload.mrz_data_json ? JSON.stringify(payload.mrz_data_json) : null,
-      confidence_score: payload.confidence_score || 0.0,
+      confidence_score: Number(payload.confidence_score) || 0.0,
       warnings_json: payload.warnings_json ? JSON.stringify(payload.warnings_json) : null,
       status: payload.status || 'REVIEW_REQUIRED',
       verified_data_json: payload.verified_data_json ? JSON.stringify(payload.verified_data_json) : null,
-      verified_by_user_id: payload.verified_by_user_id || null,
+      verified_by_user_id: parseOptionalBigInt(payload.verified_by_user_id),
       verified_at: payload.verified_at || null,
-      created_by_user_id: payload.created_by_user_id || null,
+      created_by_user_id: parseOptionalBigInt(payload.created_by_user_id),
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };

@@ -10,22 +10,41 @@ export class AppError extends Error {
 }
 
 export const errorHandler = (err, req, res, next) => {
-  err.statusCode = err.statusCode || 500;
-  err.status = err.status || 'error';
+  let statusCode = err.statusCode || 500;
+  let status = err.status || 'error';
+  let message = err.message || 'Произошла непредвиденная ошибка';
+
+  // Sanitize PostgreSQL driver errors into user-friendly business responses
+  if (err.message && typeof err.message === 'string') {
+    if (err.message.includes('invalid input syntax for type bigint') || err.message.includes('invalid input syntax for type integer')) {
+      statusCode = 400;
+      status = 'fail';
+      message = 'Некорректный идентификатор сущности (ожидается числовое значение)';
+    } else if (err.message.includes('foreign key constraint') || err.message.includes('violates foreign key')) {
+      statusCode = 400;
+      status = 'fail';
+      message = 'Связанная запись не найдена в базе данных';
+    } else if (err.message.includes('duplicate key value violates unique constraint') || err.message.includes('unique constraint')) {
+      statusCode = 409;
+      status = 'fail';
+      message = 'Запись с такими уникальными данными уже существует';
+    }
+  }
 
   if (process.env.NODE_ENV === 'development') {
-    res.status(err.statusCode).json({
-      status: err.status,
+    res.status(statusCode).json({
+      status,
+      message,
       error: err,
-      message: err.message,
       stack: err.stack,
     });
   } else {
     // Production
-    console.error('ERROR 💥', err);
-    res.status(err.statusCode || 500).json({
-      status: err.status || 'error',
-      message: err.message || 'Произошла ошибка при обработке запроса',
+    console.error('SERVER ERROR 💥:', err);
+    res.status(statusCode).json({
+      status,
+      message: statusCode < 500 ? message : 'Произошла ошибка при обработке запроса',
     });
   }
 };
+
