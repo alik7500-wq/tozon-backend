@@ -1,7 +1,7 @@
 import express from 'express';
 import { DealsRepository } from './deals.repository.js';
 import { TasksService } from '../tasks/tasks.service.js';
-import { protect } from '../../middleware/auth.middleware.js';
+import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 const router = express.Router();
@@ -47,6 +47,16 @@ router.get('/:id', async (req, res, next) => {
     if (!deal) {
       return next(new AppError('Сделка не найдена', 404));
     }
+    res.status(200).json({ status: 'success', data: { deal } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// PATCH /api/deals/:id - Update deal details (ADMIN ONLY for corrections)
+router.patch('/:id', restrictTo('ADMIN'), async (req, res, next) => {
+  try {
+    const deal = await DealsRepository.updateDeal(req.params.id, req.body, req.user.id);
     res.status(200).json({ status: 'success', data: { deal } });
   } catch (error) {
     next(error);

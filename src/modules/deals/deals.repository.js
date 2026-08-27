@@ -429,4 +429,41 @@ export class DealsRepository {
       };
     });
   }
+
+  static async updateDeal(id, data, userId) {
+    const db = getDB();
+    const now = new Date().toISOString();
+
+    const { data: existingDeal } = await db.from('deals').select('*').eq('id', id).single();
+    if (!existingDeal) throw new AppError('Сделка не найдена', 404);
+
+    const updates = {
+      updated_at: now
+    };
+
+    if (data.deal_date !== undefined) updates.deal_date = data.deal_date;
+    if (data.contract_number !== undefined) updates.contract_number = data.contract_number;
+    if (data.responsible_user_id !== undefined) updates.responsible_user_id = data.responsible_user_id ? parseInt(data.responsible_user_id, 10) : null;
+    if (data.reservation_expires_at !== undefined) updates.reservation_expires_at = data.reservation_expires_at;
+    if (data.payment_type !== undefined) updates.payment_type = data.payment_type;
+    if (data.installment_months !== undefined) updates.installment_months = parseInt(data.installment_months, 10) || 0;
+    if (data.barter_description !== undefined) updates.barter_description = data.barter_description;
+    if (data.barter_amount_minor !== undefined) updates.barter_amount_minor = parseInt(data.barter_amount_minor, 10) || 0;
+
+    const { error: updateErr } = await db.from('deals').update(updates).eq('id', id);
+    if (updateErr) throw updateErr;
+
+    // Update buyer / lead details if provided
+    if (data.lead_name || data.lead_phone || data.passport_series || data.passport_number) {
+      const leadUpdates = { updated_at: now };
+      if (data.lead_name) leadUpdates.full_name = data.lead_name;
+      if (data.lead_phone) leadUpdates.phone = data.lead_phone;
+      if (data.passport_series !== undefined) leadUpdates.passport_series = data.passport_series;
+      if (data.passport_number !== undefined) leadUpdates.passport_number = data.passport_number;
+      await db.from('leads').update(leadUpdates).eq('id', existingDeal.lead_id);
+    }
+
+    return this.getDealById(id);
+  }
 }
+
