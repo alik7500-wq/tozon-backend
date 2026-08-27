@@ -79,6 +79,13 @@ router.put('/:id', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+router.patch('/:id', async (req, res, next) => {
+  try {
+    const lead = await LeadsRepository.update(req.params.id, req.body);
+    res.status(200).json({ status: 'success', data: { lead } });
+  } catch (error) { next(error); }
+});
+
 router.patch('/:id/status', async (req, res, next) => {
   try {
     const lead = await LeadsRepository.updateStatus(req.params.id, req.body.status, req.body.lost_reason);
