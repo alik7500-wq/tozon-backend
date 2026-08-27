@@ -11,13 +11,13 @@ export class ProjectMediaRepository {
       const db = getDB();
       const { data, error } = await db.storage.from(bucket).createSignedUrl(storagePath, expiresIn);
       if (error) {
-        const { data: pub } = db.storage.from(bucket).getPublicUrl(storagePath);
-        return pub?.publicUrl || storagePath;
+        console.warn(`[ProjectMedia] Failed to generate signed URL for ${bucket}/${storagePath}:`, error.message);
+        return null;
       }
-      return data?.signedUrl || storagePath;
+      return data?.signedUrl || null;
     } catch (e) {
-      console.warn(`Failed to generate signed URL for ${storagePath}:`, e.message);
-      return storagePath;
+      console.warn(`[ProjectMedia] Exception generating signed URL for ${storagePath}:`, e.message);
+      return null;
     }
   }
 
