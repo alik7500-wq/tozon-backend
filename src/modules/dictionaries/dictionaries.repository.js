@@ -13,8 +13,32 @@ export class DictionariesRepository {
       query = query.eq('type', type);
     }
 
-    const { data, error } = await query;
+    let { data, error } = await query;
     if (error) throw error;
+
+    // Автоматическая инициализация начальных касс компании, если справочник CASH_DESK пустой
+    if (type === 'CASH_DESK' && (!data || data.length === 0)) {
+      const defaultDesks = [
+        { type: 'CASH_DESK', name: 'Главная касса компании (Бухгалтерия)', code: 'MAIN_CASHIER', icon: '🏢', color: '#10b981', sort_order: 1, is_active: true },
+        { type: 'CASH_DESK', name: 'Касса Директора (Руководство)', code: 'DIRECTOR', icon: '👔', color: '#3b82f6', sort_order: 2, is_active: true },
+        { type: 'CASH_DESK', name: 'Касса Менеджера продаж (Отдел продаж)', code: 'SALES_MANAGER', icon: '💼', color: '#f59e0b', sort_order: 3, is_active: true },
+        { type: 'CASH_DESK', name: 'Касса Казначейства / Финансового отдела', code: 'FINANCE_OFFICE', icon: '🏦', color: '#6366f1', sort_order: 4, is_active: true },
+        { type: 'CASH_DESK', name: 'Расчетный счет в банке (Безналичные)', code: 'BANK_ACCOUNT', icon: '🏛', color: '#06b6d4', sort_order: 5, is_active: true }
+      ];
+
+      try {
+        const now = new Date().toISOString();
+        const insertRows = defaultDesks.map(d => ({ ...d, created_at: now, updated_at: now }));
+        const { data: inserted } = await db.from('dictionaries').insert(insertRows).select();
+        if (inserted && inserted.length > 0) {
+          data = inserted;
+        }
+      } catch (seedErr) {
+        console.warn('Auto-seed CASH_DESK warning:', seedErr.message);
+        data = defaultDesks.map((d, i) => ({ id: i + 1, ...d }));
+      }
+    }
+
     return data || [];
   }
 
