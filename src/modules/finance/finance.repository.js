@@ -1136,8 +1136,73 @@ export class FinanceRepository {
       );
     }
 
+    // Сводные остатки по каждой конкретной кассе компании
+    const cashDesksMap = {};
+
+    (paymentsData || []).forEach(p => {
+      const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
+      const amt = (p.amount_minor || 0) / 100;
+      
+      let deskName = 'Главная касса компании (Бухгалтерия)';
+      if (p.comment) {
+        const match = String(p.comment).match(/\[Касса:\s*([^\]]+)\]/i);
+        if (match && match[1]) {
+          deskName = match[1].trim();
+        } else if (p.payer_name && p.payer_name.startsWith('Касса ')) {
+          deskName = p.payer_name;
+        }
+      }
+
+      if (!cashDesksMap[deskName]) {
+        cashDesksMap[deskName] = { name: deskName, USD: 0, TJS: 0, RUB: 0, totalIncomeUsd: 0, totalIncomeTjs: 0, totalExpenseUsd: 0, totalExpenseTjs: 0 };
+      }
+      if (cashDesksMap[deskName][cur] === undefined) {
+        cashDesksMap[deskName][cur] = 0;
+      }
+      cashDesksMap[deskName][cur] += amt;
+      if (cur === 'USD') cashDesksMap[deskName].totalIncomeUsd += amt;
+      if (cur === 'TJS') cashDesksMap[deskName].totalIncomeTjs += amt;
+    });
+
+    (expensesData || []).forEach(e => {
+      const cur = (e.currency || 'USD').toUpperCase();
+      const amt = (e.amount_minor || 0) / 100;
+      
+      let deskName = 'Главная касса компании (Бухгалтерия)';
+      const text = `${e.description || ''} ${e.recipient || ''}`;
+      const match = text.match(/\[Касса:\s*([^\]]+)\]/i);
+      if (match && match[1]) {
+        deskName = match[1].trim();
+      } else if (e.recipient && e.recipient.startsWith('Касса ')) {
+        deskName = e.recipient;
+      }
+
+      if (!cashDesksMap[deskName]) {
+        cashDesksMap[deskName] = { name: deskName, USD: 0, TJS: 0, RUB: 0, totalIncomeUsd: 0, totalIncomeTjs: 0, totalExpenseUsd: 0, totalExpenseTjs: 0 };
+      }
+      if (cashDesksMap[deskName][cur] === undefined) {
+        cashDesksMap[deskName][cur] = 0;
+      }
+      cashDesksMap[deskName][cur] -= amt;
+      if (cur === 'USD') cashDesksMap[deskName].totalExpenseUsd += amt;
+      if (cur === 'TJS') cashDesksMap[deskName].totalExpenseTjs += amt;
+    });
+
+    const cashDesksSummary = Object.values(cashDesksMap).map(d => ({
+      name: d.name,
+      balanceUsd: Number(d.USD.toFixed(2)),
+      balanceTjs: Number(d.TJS.toFixed(2)),
+      balanceRub: Number((d.RUB || 0).toFixed(2)),
+      totalIncomeUsd: Number(d.totalIncomeUsd.toFixed(2)),
+      totalExpenseUsd: Number(d.totalExpenseUsd.toFixed(2)),
+      totalIncomeTjs: Number(d.totalIncomeTjs.toFixed(2)),
+      totalExpenseTjs: Number(d.totalExpenseTjs.toFixed(2)),
+      hasBalance: Math.abs(d.USD) > 0.01 || Math.abs(d.TJS) > 0.01 || Math.abs(d.RUB || 0) > 0.01
+    })).sort((a, b) => (b.balanceUsd * eskhataRate + b.balanceTjs) - (a.balanceUsd * eskhataRate + a.balanceTjs));
+
     return {
       summaryByCurrency,
+      cashDesksSummary,
       availableCurrencies,
       availableYears,
       conversionsSummary: {
