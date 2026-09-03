@@ -80,7 +80,7 @@ export class FinanceRepository {
 
     const { data: paymentsData, error } = await db.from('payments').select(`
       id, deal_id, schedule_id, amount_minor, currency, payment_date, method, reference, comment, payer_name, created_at,
-      deals ( id, contract_number, currency, final_price_minor, leads ( full_name, phone ) ),
+      deals ( id, contract_number, currency, final_price_minor, leads ( full_name, phone, inn ) ),
       users ( id, name )
     `).order('payment_date', { ascending: false });
 
@@ -108,6 +108,7 @@ export class FinanceRepository {
         contract,
         clientName,
         clientPhone: p.deals?.leads?.phone || '',
+        clientInn: p.deals?.leads?.inn || '',
         createdByName: p.users?.name || 'Система',
         createdAt: p.created_at,
       };

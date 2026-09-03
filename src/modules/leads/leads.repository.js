@@ -21,7 +21,8 @@ export class LeadsRepository {
       leads = leads.filter(l => 
         (l.full_name && l.full_name.toLowerCase().includes(s)) ||
         (l.phone && l.phone.toLowerCase().includes(s)) ||
-        (l.passport_number && l.passport_number.toLowerCase().includes(s))
+        (l.passport_number && l.passport_number.toLowerCase().includes(s)) ||
+        (l.inn && l.inn.toLowerCase().includes(s))
       );
     }
 
@@ -101,6 +102,7 @@ export class LeadsRepository {
     if (data.passport_issue_date !== undefined) payload.passport_issue_date = data.passport_issue_date || null;
     if (data.birth_date !== undefined) payload.birth_date = data.birth_date || null;
     if (data.registration_address !== undefined) payload.registration_address = data.registration_address || null;
+    if (data.inn !== undefined) payload.inn = data.inn ? String(data.inn).trim() : null;
     if (data.notes !== undefined) payload.notes = data.notes || null;
     if (data.lost_reason !== undefined) payload.lost_reason = data.lost_reason || null;
 

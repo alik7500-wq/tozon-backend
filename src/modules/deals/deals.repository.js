@@ -7,7 +7,7 @@ export class DealsRepository {
     
     let query = db.from('deals').select(`
       *,
-      leads ( full_name, phone, passport_series, passport_number ),
+      leads ( full_name, phone, passport_series, passport_number, inn ),
       units ( 
         unit_number, rooms, area_m2_x100, price_per_m2_minor,
         floors ( floor_number, name, sections ( name, buildings ( name, projects ( id, name, developer_name, currency ) ) ) )
@@ -63,6 +63,7 @@ export class DealsRepository {
         lead_phone: deal.leads?.phone,
         passport_series: deal.leads?.passport_series,
         passport_number: deal.leads?.passport_number,
+        inn: deal.leads?.inn,
         unit_number: deal.units?.unit_number,
         unit_rooms: deal.units?.rooms,
         area_m2_x100: deal.units?.area_m2_x100,
@@ -136,7 +137,7 @@ export class DealsRepository {
     const db = getDB();
     const { data: deal, error } = await db.from('deals').select(`
       *,
-      leads ( full_name, phone, secondary_phone, passport_series, passport_number, passport_issued_by, passport_issue_date, birth_date, registration_address ),
+      leads ( full_name, phone, secondary_phone, passport_series, passport_number, passport_issued_by, passport_issue_date, birth_date, registration_address, inn ),
       units ( 
         unit_number, rooms, area_m2_x100, price_per_m2_minor, status,
         layout_types ( name, image_path ),
@@ -197,6 +198,7 @@ export class DealsRepository {
       passport_issue_date: deal.leads?.passport_issue_date,
       birth_date: deal.leads?.birth_date,
       registration_address: deal.leads?.registration_address,
+      inn: deal.leads?.inn,
       unit_number: deal.units?.unit_number,
       unit_rooms: deal.units?.rooms,
       area_m2_x100: deal.units?.area_m2_x100,
@@ -454,12 +456,13 @@ export class DealsRepository {
     if (updateErr) throw updateErr;
 
     // Update buyer / lead details if provided
-    if (data.lead_name || data.lead_phone || data.passport_series || data.passport_number) {
+    if (data.lead_name || data.lead_phone || data.passport_series || data.passport_number || data.inn) {
       const leadUpdates = { updated_at: now };
       if (data.lead_name) leadUpdates.full_name = data.lead_name;
       if (data.lead_phone) leadUpdates.phone = data.lead_phone;
       if (data.passport_series !== undefined) leadUpdates.passport_series = data.passport_series;
       if (data.passport_number !== undefined) leadUpdates.passport_number = data.passport_number;
+      if (data.inn !== undefined) leadUpdates.inn = data.inn ? String(data.inn).trim() : null;
       await db.from('leads').update(leadUpdates).eq('id', existingDeal.lead_id);
     }
 
