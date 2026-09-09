@@ -344,6 +344,7 @@ export class FinanceRepository {
 
     const { data: expensesData, error } = await db.from('expenses').select(`
       id, amount_minor, currency, expense_date, category, method, reference, recipient, description, created_at,
+      exchange_rate, amount_usd, conversion_expense_id,
       users ( id, name )
     `).order('expense_date', { ascending: false });
 
@@ -365,6 +366,9 @@ export class FinanceRepository {
         reference: e.reference || `РКО-${e.id}`,
         recipient: e.recipient || 'Контрагент',
         description: e.description || '',
+        exchange_rate: e.exchange_rate ? Number(e.exchange_rate) : null,
+        amount_usd: e.amount_usd ? Number(e.amount_usd) : null,
+        conversion_expense_id: e.conversion_expense_id || null,
         createdByName: e.users?.name || 'Администратор',
         createdAt: e.created_at
       };
@@ -479,7 +483,7 @@ export class FinanceRepository {
       const sourceMinor = Math.round(convertedSourceAmount * 100);
 
       // 1. Списание сконвертированной суммы с исходной кассы (USD)
-      await db.from('expenses').insert([{
+      const { data: convExpense } = await db.from('expenses').insert([{
         amount_minor: sourceMinor,
         currency: sourceCurrency,
         expense_date: expenseDate,
@@ -490,7 +494,9 @@ export class FinanceRepository {
         description: `Автоконвертация $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} в ${currency} для расхода: ${data.description || data.category || data.recipient || 'РКО'}`,
         created_by_user_id: userId || null,
         created_at: now
-      }]);
+      }]).select().single();
+
+      const convExpenseId = convExpense?.id || null;
 
       // 2. Зачисление сконвертированных средств в кассу назначения (TJS)
       await db.from('payments').insert([{
@@ -504,9 +510,29 @@ export class FinanceRepository {
         created_by_user_id: userId || null,
         created_at: now
       }]);
+
+      // 3. Регистрация самого расхода с сохранённым курсом и USD-эквивалентом (исторический снимок)
+      const { data: newExpense, error } = await db.from('expenses').insert([{
+        amount_minor: amountMinor,
+        currency,
+        expense_date: expenseDate,
+        category: data.category || 'Прочее',
+        method: data.method || 'CASH',
+        reference: data.reference || `РКО-${Date.now().toString().slice(-6)}`,
+        recipient: data.recipient || null,
+        description: data.description || null,
+        exchange_rate: exchangeRate,
+        amount_usd: Number(convertedSourceAmount.toFixed(2)),
+        conversion_expense_id: convExpenseId,
+        created_by_user_id: userId || null,
+        created_at: now
+      }]).select().single();
+
+      if (error) throw error;
+      return newExpense;
     }
 
-    // 3. Регистрация самого расхода в кассе (TJS / USD)
+    // Расход без автоконвертации (прямой расход в исходной валюте)
     const { data: newExpense, error } = await db.from('expenses').insert([{
       amount_minor: amountMinor,
       currency,
@@ -840,6 +866,7 @@ export class FinanceRepository {
 
     const { data: expensesData, error: eErr } = await db.from('expenses').select(`
       id, amount_minor, currency, expense_date, category, method, reference, recipient, description, created_at,
+      exchange_rate, amount_usd, conversion_expense_id,
       users ( name )
     `);
     if (eErr) throw eErr;
@@ -1143,6 +1170,9 @@ export class FinanceRepository {
         reference: e.reference || `РКО-${e.id}`,
         comment: e.description || '',
         description: e.description || '',
+        exchange_rate: e.exchange_rate ? Number(e.exchange_rate) : null,
+        amount_usd: e.amount_usd ? Number(e.amount_usd) : null,
+        conversion_expense_id: e.conversion_expense_id || null,
         createdByName: e.users?.name || 'Администратор',
         createdAt: e.created_at
       });
