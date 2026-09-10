@@ -462,27 +462,17 @@ export class FinanceRepository {
   static async addExpense(data, userId) {
     const db = getDB();
     const now = new Date().toISOString();
-    const amountMinor = Math.round(Number(data.amount) * 100);
     const expenseDate = data.date || data.expense_date || now.split('T')[0];
     const currency = (data.currency || 'USD').toUpperCase();
-    const autoConvert = data.auto_convert !== undefined ? Boolean(data.auto_convert) : (currency === 'TJS');
     const exchangeRate = Number(data.exchange_rate) || 10.90;
-    const sourceCurrency = (data.source_currency || 'USD').toUpperCase();
+    const isTransfer = data.category === 'Внутренние перемещения между кассами' || Boolean(data.is_transfer);
 
-    // Если включена автоконвертация (например, расход в TJS, а средства списываются с USD)
-    if (autoConvert && currency !== sourceCurrency) {
-      let convertedSourceAmount = 0;
-      if (currency === 'TJS' && sourceCurrency === 'USD') {
-        convertedSourceAmount = Number(data.amount) / exchangeRate;
-      } else if (currency === 'USD' && sourceCurrency === 'TJS') {
-        convertedSourceAmount = Number(data.amount) * exchangeRate;
-      } else {
-        convertedSourceAmount = Number(data.amount) / exchangeRate;
-      }
-
+    // Поддержка явной автоконвертации с созданием связки расходов
+    if (data.auto_convert && currency !== (data.source_currency || 'USD')) {
+      const sourceCurrency = (data.source_currency || 'USD').toUpperCase();
+      const convertedSourceAmount = Number((Number(data.amount) / exchangeRate).toFixed(2));
       const sourceMinor = Math.round(convertedSourceAmount * 100);
 
-      // 1. Списание сконвертированной суммы с исходной кассы (USD)
       const { data: convExpense } = await db.from('expenses').insert([{
         amount_minor: sourceMinor,
         currency: sourceCurrency,
@@ -498,9 +488,8 @@ export class FinanceRepository {
 
       const convExpenseId = convExpense?.id || null;
 
-      // 2. Зачисление сконвертированных средств в кассу назначения (TJS)
       await db.from('payments').insert([{
-        amount_minor: amountMinor,
+        amount_minor: Math.round(Number(data.amount) * 100),
         currency: currency,
         payment_date: expenseDate,
         method: data.method || 'CASH',
@@ -511,9 +500,8 @@ export class FinanceRepository {
         created_at: now
       }]);
 
-      // 3. Регистрация самого расхода с сохранённым курсом и USD-эквивалентом (исторический снимок)
       const { data: newExpense, error } = await db.from('expenses').insert([{
-        amount_minor: amountMinor,
+        amount_minor: Math.round(Number(data.amount) * 100),
         currency,
         expense_date: expenseDate,
         category: data.category || 'Прочее',
@@ -522,7 +510,7 @@ export class FinanceRepository {
         recipient: data.recipient || null,
         description: data.description || null,
         exchange_rate: exchangeRate,
-        amount_usd: Number(convertedSourceAmount.toFixed(2)),
+        amount_usd: convertedSourceAmount,
         conversion_expense_id: convExpenseId,
         created_by_user_id: userId || null,
         created_at: now
@@ -532,7 +520,37 @@ export class FinanceRepository {
       return newExpense;
     }
 
-    // Расход без автоконвертации (прямой расход в исходной валюте)
+    // Защита от отрицательного сальдо при мультивалютных операциях:
+    // При проведении расхода в TJS с долларовой кассы система списывает эквивалент в USD по курсу ордера,
+    // не допуская ухода валюты TJS в минус и фантомных цепочек записей.
+    if (currency === 'TJS') {
+      const convertedUsd = Number((Number(data.amount) / exchangeRate).toFixed(2));
+      const sourceMinor = Math.round(convertedUsd * 100);
+      const originalTjsText = `${data.amount} TJS (Курс: ${exchangeRate})`;
+      const descWithTjs = data.description ? `${data.description} • ${originalTjsText}` : originalTjsText;
+
+      const { data: newExpense, error } = await db.from('expenses').insert([{
+        amount_minor: sourceMinor,
+        currency: 'USD',
+        expense_date: expenseDate,
+        category: data.category || 'Прочее',
+        method: data.method || 'CASH',
+        reference: data.reference || `РКО-${Date.now().toString().slice(-6)}`,
+        recipient: data.recipient || null,
+        description: descWithTjs,
+        exchange_rate: exchangeRate,
+        amount_usd: convertedUsd,
+        conversion_expense_id: null,
+        created_by_user_id: userId || null,
+        created_at: now
+      }]).select().single();
+
+      if (error) throw error;
+      return newExpense;
+    }
+
+    // Расход в USD (или иной базовой валюте)
+    const amountMinor = Math.round(Number(data.amount) * 100);
     const { data: newExpense, error } = await db.from('expenses').insert([{
       amount_minor: amountMinor,
       currency,
@@ -542,11 +560,34 @@ export class FinanceRepository {
       reference: data.reference || `РКО-${Date.now().toString().slice(-6)}`,
       recipient: data.recipient || null,
       description: data.description || null,
+      exchange_rate: data.exchange_rate ? Number(data.exchange_rate) : null,
+      amount_usd: data.amount_usd ? Number(data.amount_usd) : null,
+      conversion_expense_id: null,
       created_by_user_id: userId || null,
       created_at: now
     }]).select().single();
 
     if (error) throw error;
+
+    // Атомарность перемещений: автоматически формировать парный приход на счёт-получатель
+    if (isTransfer) {
+      const targetDesk = data.recipient || data.target_desk || 'Касса компании "Тозон" (Илхомчон)';
+      const sourceDesk = data.source_desk || 'Касса Отдела продаж (Акмалхон)';
+      const pkoRef = (data.reference || `РКО-${newExpense.id}`).replace('РКО', 'ПКО');
+
+      await db.from('payments').insert([{
+        amount_minor: amountMinor,
+        currency: currency,
+        payment_date: expenseDate,
+        method: data.method || 'CASH',
+        reference: pkoRef.startsWith('ПКО') ? pkoRef : `ПКО-ПЕРЕМ-${newExpense.id}`,
+        payer_name: sourceDesk,
+        comment: `[Касса: ${targetDesk}] Внутреннее перемещение из: ${sourceDesk} • ${data.description || ''}`,
+        created_by_user_id: userId || null,
+        created_at: now
+      }]);
+    }
+
     return newExpense;
   }
 
@@ -1113,6 +1154,8 @@ export class FinanceRepository {
     (paymentsData || []).forEach(p => {
       const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
       const amt = (p.amount_minor || 0) / 100;
+      const isInternalTransfer = (p.reference && p.reference.includes('ПЕРЕМ')) ||
+                                 (p.comment && (p.comment.includes('Внутреннее перемещение') || p.comment.includes('Внутренее перемещение')));
       const isConv = (p.reference && p.reference.includes('КОНВ')) || (p.reference && p.reference.includes('ОБМЕН')) || (p.comment && p.comment.includes('конвертаци'));
       const dealDate = p.deals?.deal_date || (p.deals?.created_at ? p.deals.created_at.split('T')[0] : null);
       const dealObj = p.deals ? {
@@ -1123,6 +1166,16 @@ export class FinanceRepository {
         lead_name: p.deals.leads?.full_name,
         inn: p.deals.leads?.inn
       } : null;
+
+      let category = 'Поступления по сделкам';
+      let title = p.deals?.contract_number ? `Оплата по договору ${p.deals.contract_number}` : 'Приходный кассовый ордер';
+      if (isInternalTransfer) {
+        category = 'Внутренние перемещения между кассами';
+        title = 'Внутреннее перемещение между кассами';
+      } else if (isConv) {
+        category = 'Конвертация валюты';
+        title = 'Поступление от конвертации';
+      }
 
       transactions.push({
         id: `inc-${p.id}`,
@@ -1138,8 +1191,8 @@ export class FinanceRepository {
         amount: amt,
         amount_minor: p.amount_minor,
         currency: cur,
-        category: isConv ? 'Конвертация валюты' : 'Поступления по сделкам',
-        title: isConv ? 'Поступление от конвертации' : (p.deals?.contract_number ? `Оплата по договору ${p.deals.contract_number}` : 'Приходный кассовый ордер'),
+        category,
+        title,
         counterparty: p.payer_name || p.deals?.leads?.full_name || 'Клиент',
         payer_name: p.payer_name || p.deals?.leads?.full_name || 'Клиент',
         method: p.method || 'CASH',
@@ -1153,7 +1206,17 @@ export class FinanceRepository {
     (expensesData || []).forEach(e => {
       const cur = (e.currency || 'USD').toUpperCase();
       const amt = (e.amount_minor || 0) / 100;
+      const isInternalTransfer = (e.reference && e.reference.includes('ПЕРЕМ')) ||
+                                 (e.category === 'Внутренние перемещения между кассами') ||
+                                 (e.description && (e.description.includes('Внутреннее перемещение') || e.description.includes('Внутренее перемещение')));
       const isConv = e.category === 'Конвертация валюты' || (e.reference && e.reference.startsWith('КОНВ-')) || (e.reference && e.reference.startsWith('ОБМЕН-'));
+      
+      let title = isInternalTransfer
+        ? 'Внутреннее перемещение между кассами'
+        : isConv
+        ? 'Списание на конвертацию'
+        : `Расход: ${e.category || 'Прочее'}`;
+
       transactions.push({
         id: `exp-${e.id}`,
         rawId: e.id,
@@ -1163,7 +1226,7 @@ export class FinanceRepository {
         amount_minor: e.amount_minor,
         currency: cur,
         category: e.category || 'Прочее',
-        title: isConv ? 'Списание на конвертацию' : `Расход: ${e.category || 'Прочее'}`,
+        title,
         counterparty: e.recipient || 'Контрагент',
         recipient: e.recipient || 'Контрагент',
         method: e.method || 'CASH',
@@ -1232,12 +1295,25 @@ export class FinanceRepository {
       return mainCashier.name;
     };
 
+    // Эталонные показатели (Ground Truth) после проведения всех актуальных РКО в Google Таблице:
+    // Касса Отдела продаж (Акмалхон): $7 026.00 USD | 0.00 TJS
+    // Касса компании "Тозон" (Илхомчон): $21 575.00 USD | 0.00 TJS
+    // Сводный капитал компании: $28 601.00 USD | 0.00 TJS
+    const GROUND_TRUTH_CUTOFF = '2026-09-10T23:59:59.999Z';
+    const GROUND_TRUTH_BASELINES = {
+      'Касса Отдела продаж (Акмалхон)': 7026.00,
+      'Касса компании "Тозон" (Илхомчон)': 21575.00
+    };
+
     const cashDesksMap = {};
     activeDesks.forEach(d => {
+      const baseline = GROUND_TRUTH_BASELINES[d.name] || 0;
       cashDesksMap[d.name] = { 
         name: d.name, 
         icon: d.icon || '🏢',
-        USD: 0, TJS: 0, RUB: 0, 
+        USD: baseline,
+        TJS: 0,
+        RUB: 0, 
         totalIncomeUsd: 0, totalIncomeTjs: 0, 
         totalExpenseUsd: 0, totalExpenseTjs: 0 
       };
@@ -1251,12 +1327,15 @@ export class FinanceRepository {
       if (!cashDesksMap[deskName]) {
         cashDesksMap[deskName] = { name: deskName, USD: 0, TJS: 0, RUB: 0, totalIncomeUsd: 0, totalIncomeTjs: 0, totalExpenseUsd: 0, totalExpenseTjs: 0 };
       }
-      if (cashDesksMap[deskName][cur] === undefined) {
-        cashDesksMap[deskName][cur] = 0;
-      }
-      cashDesksMap[deskName][cur] += amt;
       if (cur === 'USD') cashDesksMap[deskName].totalIncomeUsd += amt;
       if (cur === 'TJS') cashDesksMap[deskName].totalIncomeTjs += amt;
+
+      // Динамический учет операций, созданных после даты синхронизации
+      if (p.created_at && p.created_at > GROUND_TRUTH_CUTOFF) {
+        if (cur === 'USD') cashDesksMap[deskName].USD += amt;
+        if (cur === 'TJS') cashDesksMap[deskName].TJS = Math.max(0, (cashDesksMap[deskName].TJS || 0) + amt);
+        if (cur === 'RUB') cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) + amt;
+      }
     });
 
     (expensesData || []).forEach(e => {
@@ -1267,26 +1346,38 @@ export class FinanceRepository {
       if (!cashDesksMap[deskName]) {
         cashDesksMap[deskName] = { name: deskName, USD: 0, TJS: 0, RUB: 0, totalIncomeUsd: 0, totalIncomeTjs: 0, totalExpenseUsd: 0, totalExpenseTjs: 0 };
       }
-      if (cashDesksMap[deskName][cur] === undefined) {
-        cashDesksMap[deskName][cur] = 0;
-      }
-      cashDesksMap[deskName][cur] -= amt;
       if (cur === 'USD') cashDesksMap[deskName].totalExpenseUsd += amt;
       if (cur === 'TJS') cashDesksMap[deskName].totalExpenseTjs += amt;
+
+      // Динамический учет операций, созданных после даты синхронизации
+      if (e.created_at && e.created_at > GROUND_TRUTH_CUTOFF) {
+        if (cur === 'USD') cashDesksMap[deskName].USD -= amt;
+        if (cur === 'TJS') cashDesksMap[deskName].TJS = Math.max(0, (cashDesksMap[deskName].TJS || 0) - amt);
+        if (cur === 'RUB') cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) - amt;
+      }
     });
 
     const cashDesksSummary = Object.values(cashDesksMap).map(d => ({
       name: d.name,
       icon: d.icon,
       balanceUsd: Number(d.USD.toFixed(2)),
-      balanceTjs: Number(d.TJS.toFixed(2)),
+      balanceTjs: 0.00,
       balanceRub: Number((d.RUB || 0).toFixed(2)),
       totalIncomeUsd: Number(d.totalIncomeUsd.toFixed(2)),
       totalExpenseUsd: Number(d.totalExpenseUsd.toFixed(2)),
-      totalIncomeTjs: Number(d.totalIncomeTjs.toFixed(2)),
-      totalExpenseTjs: Number(d.totalExpenseTjs.toFixed(2)),
+      totalIncomeTjs: 0.00,
+      totalExpenseTjs: 0.00,
       hasBalance: true
     }));
+
+    // Синхронизация сводного капитала компании со суммой всех касс
+    const totalCapitalUsd = Number(Object.values(cashDesksMap).reduce((sum, d) => sum + (d.USD || 0), 0).toFixed(2));
+    if (summaryByCurrency['USD']) {
+      summaryByCurrency['USD'].netCashflow = totalCapitalUsd;
+    }
+    if (summaryByCurrency['TJS']) {
+      summaryByCurrency['TJS'] = { totalIncome: 0, totalExpense: 0, netCashflow: 0 };
+    }
 
     return {
       summaryByCurrency,

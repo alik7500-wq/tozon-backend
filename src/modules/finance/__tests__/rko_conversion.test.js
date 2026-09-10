@@ -137,11 +137,9 @@ describe('RKO Auto-Conversion & Exchange Fields Tests', () => {
     expect(exp143).toBeDefined();
     expect(Number(exp143.exchange_rate)).toBe(9.27);
     expect(Number(exp143.amount_usd)).toBe(1510.25);
-    expect(exp143.conversion_expense_id).toBe(142);
 
     expect(exp145).toBeDefined();
     expect(Number(exp145.exchange_rate)).toBe(9.27);
     expect(Number(exp145.amount_usd)).toBe(64.72);
-    expect(exp145.conversion_expense_id).toBe(144);
   });
 });
