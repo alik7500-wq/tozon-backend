@@ -47,23 +47,24 @@ describe('Cash Desk Ground Truth & Sync Verification', () => {
     expect(boymatov.comment).toContain('Касса компании "Тозон" (Илхомчон)');
   });
 
-  it('3. Three internal transfers are correctly categorized as internal transfers, not deal sales', async () => {
+  it('3. Erroneous historical transfer set is VOIDED and excluded from active cashflow transactions', async () => {
     const cashflow = await FinanceRepository.getCashflow();
-    const transferPaymentIds = [127, 128, 129];
-    const transferExpenseIds = [54, 88, 94];
+    const voidedPaymentIds = [127, 128, 129];
+    const voidedExpenseIds = [54, 87, 88, 93, 94];
 
-    const transferTxs = cashflow.transactions.filter(t => 
-      (t.type === 'INCOME' && transferPaymentIds.includes(t.rawId)) ||
-      (t.type === 'EXPENSE' && transferExpenseIds.includes(t.rawId))
+    // Verify excluded from active transactions
+    const activeVoidedTxs = cashflow.transactions.filter(t => 
+      (t.type === 'INCOME' && voidedPaymentIds.includes(t.rawId)) ||
+      (t.type === 'EXPENSE' && voidedExpenseIds.includes(t.rawId))
     );
+    expect(activeVoidedTxs.length).toBe(0);
 
-    expect(transferTxs.length).toBe(6);
+    // Verify all 8 records are marked VOIDED in DB
+    const { data: pCheck } = await db.from('payments').select('id, status').in('id', voidedPaymentIds);
+    pCheck.forEach(p => expect(p.status).toBe('VOIDED'));
 
-    transferTxs.forEach(t => {
-      expect(t.category).toBe('Внутренние перемещения между кассами');
-      expect(t.title).toBe('Внутреннее перемещение между кассами');
-      expect(t.category).not.toBe('Поступления по сделкам');
-    });
+    const { data: eCheck } = await db.from('expenses').select('id, status').in('id', voidedExpenseIds);
+    eCheck.forEach(e => expect(e.status).toBe('VOIDED'));
   });
 
   it('4. Multi-currency expense protection: TJS expense debits USD equivalent without negative TJS', async () => {

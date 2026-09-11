@@ -6,8 +6,10 @@ export const protect = async (req, res, next) => {
   try {
     let token;
     
-    if (req.cookies.jwt) {
+    if (req.cookies?.jwt) {
       token = req.cookies.jwt;
+    } else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      token = req.headers.authorization.split(' ')[1];
     }
 
     if (!token) {
@@ -32,6 +34,28 @@ export const protect = async (req, res, next) => {
     next();
   } catch (error) {
     next(new AppError('Invalid token or authorization error', 401));
+  }
+};
+
+export const protectOptional = async (req, res, next) => {
+  try {
+    let token;
+    if (req.cookies?.jwt) {
+      token = req.cookies.jwt;
+    } else if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
+    if (token) {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'super-secret-key-for-dev-only');
+      const currentUser = await UsersRepository.findById(decoded.id);
+      if (currentUser && currentUser.is_active) {
+        req.user = currentUser;
+      }
+    }
+    next();
+  } catch {
+    next();
   }
 };
 

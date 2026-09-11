@@ -3,7 +3,13 @@ import { DictionariesRepository } from './dictionaries.repository.js';
 export const getDictionaryItems = async (req, res) => {
   try {
     const { type } = req.query;
-    const data = await DictionariesRepository.getItems(type);
+    let data = await DictionariesRepository.getItems(type);
+
+    // Изоляция касс для менеджеров: чужие кассы не возвращаются в справочнике
+    if (type === 'CASH_DESK' && req.cashDeskAccess && !req.cashDeskAccess.isAdmin) {
+      data = (data || []).filter(d => d.id === req.cashDeskAccess.cashDeskId || d.code === req.cashDeskAccess.cashDeskId);
+    }
+
     res.json({ success: true, data });
   } catch (error) {
     console.error('Error fetching dictionaries:', error);

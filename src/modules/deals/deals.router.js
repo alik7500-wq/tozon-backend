@@ -2,6 +2,7 @@ import express from 'express';
 import { DealsRepository } from './deals.repository.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
+import { resolveCashDeskAccess } from '../../middleware/cashDeskAuth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 
@@ -127,12 +128,24 @@ router.post('/:id/extend-reservation', async (req, res, next) => {
   }
 });
 
-router.post('/:id/payments', async (req, res, next) => {
+
+router.post('/:id/payments', resolveCashDeskAccess, async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
-    const { amount_minor, payment_date, method, schedule_id, reference, comment } = req.body;
+    const { amount_minor, payment_date, method, schedule_id, reference, comment, cash_desk_id } = req.body;
     if (!amount_minor || amount_minor <= 0) {
       return next(new AppError('Сумма платежа обязательна и должна быть больше нуля', 400));
+    }
+
+    let finalCashDeskId = cash_desk_id;
+    if (req.cashDeskAccess && !req.cashDeskAccess.isAdmin) {
+      // Для менеджера касса принудительно фиксируется на его собственной
+      finalCashDeskId = req.cashDeskAccess.cashDeskId;
+    } else {
+      // Для администратора касса обязательна
+      if (!finalCashDeskId) {
+        return next(new AppError('Касса получения средств обязательна для выбора', 400));
+      }
     }
 
     const deal = await DealsRepository.recordPayment(
@@ -143,7 +156,8 @@ router.post('/:id/payments', async (req, res, next) => {
         method,
         schedule_id: parseOptionalBigInt(schedule_id),
         reference,
-        comment
+        comment,
+        cash_desk_id: finalCashDeskId
       },
       req.user.id
     );
@@ -152,5 +166,6 @@ router.post('/:id/payments', async (req, res, next) => {
     next(error);
   }
 });
+
 
 export default router;

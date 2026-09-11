@@ -1,6 +1,124 @@
 import { getDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 
+// Проверка идемпотентности напрямую в БД без использования in-memory кэша (для многопроцессной архитектуры)
+async function checkIdempotentExpense(db, key) {
+  if (!key) return null;
+  try {
+    const { data: existing, error } = await db.from('expenses')
+      .select('*')
+      .eq('idempotency_key', key)
+      .maybeSingle();
+    if (!error && existing) {
+      return existing;
+    }
+  } catch {
+    // В случае если колонка еще не в schema cache
+  }
+
+  // Поиск по персистентной метке в БД (гарантирует синхронизацию между независимыми экземплярами backend)
+  try {
+    const { data: matches, error: tagErr } = await db.from('expenses')
+      .select('*')
+      .ilike('description', `%[IDEMP:${key}]%`)
+      .limit(1);
+    if (!tagErr && matches && matches.length > 0) {
+      return matches[0];
+    }
+  } catch {
+    // Ошибки чтения игнорируются
+  }
+
+  return null;
+}
+
+// Реестр активных (in-flight) запросов на время выполнения вставки для предотвращения дублей при параллельных запросах
+const inflightInserts = new Map();
+const inflightExpenses = new Map();
+
+// Сериализация операций по кассе на время проверки остатка и списания (защита от race condition до миграции 015)
+const deskQueues = new Map();
+function withDeskLock(deskId, fn) {
+  if (!deskId) return fn();
+  const prev = deskQueues.get(deskId) || Promise.resolve();
+  let release;
+  const current = new Promise(resolve => { release = resolve; });
+  deskQueues.set(deskId, prev.then(() => current, () => current));
+  return prev.then(async () => {
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (deskQueues.get(deskId) === current) {
+        deskQueues.delete(deskId);
+      }
+    }
+  });
+}
+
+async function insertExpenseWithIdempotency(db, payload) {
+  const key = payload.idempotency_key;
+  if (key) {
+    if (inflightInserts.has(key)) {
+      const inflightResult = await inflightInserts.get(key);
+      return { ...inflightResult, idempotent: true };
+    }
+    const existing = await checkIdempotentExpense(db, key);
+    if (existing) {
+      return { data: existing, error: null, idempotent: true };
+    }
+  }
+
+  const executeInsert = async () => {
+    const desc = payload.description || '';
+    const taggedPayload = {
+      ...payload,
+      description: key && !desc.includes('[IDEMP:')
+        ? `${desc} [IDEMP:${key}]`.trim()
+        : desc
+    };
+
+    const { idempotency_key, ...payloadWithoutCol } = taggedPayload;
+
+    try {
+      const res = await db.from('expenses').insert([taggedPayload]).select().single();
+      if (res.error) {
+        if (res.error.message && res.error.message.includes('idempotency_key') && res.error.message.includes('schema cache')) {
+          const fallbackRes = await db.from('expenses').insert([payloadWithoutCol]).select().single();
+          return fallbackRes;
+        }
+        if (res.error.code === '23505' || res.error.message?.includes('duplicate key') || res.error.message?.includes('idempotency_key')) {
+          const existing = await checkIdempotentExpense(db, key);
+          if (existing) {
+            return { data: existing, error: null, idempotent: true };
+          }
+        }
+      }
+      return res;
+    } catch (err) {
+      if (key) {
+        const existing = await checkIdempotentExpense(db, key);
+        if (existing) {
+          return { data: existing, error: null, idempotent: true };
+        }
+      }
+      return await db.from('expenses').insert([payloadWithoutCol]).select().single();
+    }
+  };
+
+  if (key) {
+    const insertPromise = executeInsert();
+    inflightInserts.set(key, insertPromise);
+    try {
+      return await insertPromise;
+    } finally {
+      inflightInserts.delete(key);
+    }
+  }
+
+  return await executeInsert();
+}
+
 export class FinanceRepository {
   /**
    * Определение динамического диапазона лет на основе данных в БД
@@ -71,7 +189,7 @@ export class FinanceRepository {
   /**
    * Получить список доходов (приходных ордеров и платежей)
    */
-  static async getIncome(filters = {}) {
+  static async getIncome(filters = {}, userAccess = null) {
     const db = getDB();
     await this.autoHarmonizeConversions();
     const currentYear = Number(filters.year) || new Date().getFullYear();
@@ -80,8 +198,9 @@ export class FinanceRepository {
 
     const { data: paymentsData, error } = await db.from('payments').select(`
       id, deal_id, schedule_id, amount_minor, currency, payment_date, method, reference, comment, payer_name, created_at,
+      status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs, amount_usd, exchange_rate,
       deals ( id, contract_number, currency, final_price_minor, deal_date, created_at, leads ( full_name, phone, inn ) ),
-      users ( id, name )
+      users:created_by_user_id ( id, name )
     `).order('payment_date', { ascending: false });
 
     if (error) throw error;
@@ -89,41 +208,59 @@ export class FinanceRepository {
     const allPayments = paymentsData || [];
     
     // Normalize and extract currency for each payment
-    const normalizedList = allPayments.map(p => {
-      const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
-      const amount = (p.amount_minor || 0) / 100;
-      const clientName = p.payer_name || p.deals?.leads?.full_name || (p.deal_id ? `Клиент по сделке #${p.deal_id}` : 'Прямой плательщик');
-      const contract = p.deals?.contract_number || (p.deal_id ? `СД-${p.deal_id}` : 'Прямой приход');
-      const dealDate = p.deals?.deal_date || (p.deals?.created_at ? p.deals.created_at.split('T')[0] : null);
-      const dealObj = p.deals ? {
-        id: p.deals.id,
-        contract_number: p.deals.contract_number,
-        deal_date: dealDate,
-        currency: p.deals.currency,
-        lead_name: p.deals.leads?.full_name,
-        inn: p.deals.leads?.inn
-      } : null;
+    let normalizedList = allPayments
+      .filter(p => filters.include_voided ? true : p.status !== 'VOIDED')
+      .map(p => {
+        const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
+        const amount = (p.amount_minor || 0) / 100;
+        const clientName = p.payer_name || p.deals?.leads?.full_name || (p.deal_id ? `Клиент по сделке #${p.deal_id}` : 'Прямой плательщик');
+        const contract = p.deals?.contract_number || (p.deal_id ? `СД-${p.deal_id}` : 'Прямой приход');
+        const dealDate = p.deals?.deal_date || (p.deals?.created_at ? p.deals.created_at.split('T')[0] : null);
+        const dealObj = p.deals ? {
+          id: p.deals.id,
+          contract_number: p.deals.contract_number,
+          deal_date: dealDate,
+          currency: p.deals.currency,
+          lead_name: p.deals.leads?.full_name,
+          inn: p.deals.leads?.inn
+        } : null;
 
-      return {
-        id: p.id,
-        dealId: p.deal_id,
-        scheduleId: p.schedule_id,
-        amount,
-        currency: cur,
-        date: p.payment_date,
-        method: p.method || 'CASH',
-        reference: p.reference || `ПКО-${p.id}`,
-        comment: p.comment || '',
-        contract,
-        dealDate,
-        deal: dealObj,
-        clientName,
-        clientPhone: p.deals?.leads?.phone || '',
-        clientInn: p.deals?.leads?.inn || '',
-        createdByName: p.users?.name || 'Система',
-        createdAt: p.created_at,
-      };
-    });
+        return {
+          id: p.id,
+          dealId: p.deal_id,
+          scheduleId: p.schedule_id,
+          amount,
+          currency: cur,
+          date: p.payment_date,
+          method: p.method || 'CASH',
+          reference: p.reference || `ПКО-${p.id}`,
+          comment: p.comment || '',
+          contract,
+          dealDate,
+          deal: dealObj,
+          clientName,
+          clientPhone: p.deals?.leads?.phone || '',
+          clientInn: p.deals?.leads?.inn || '',
+          status: p.status || 'ACTIVE',
+          voidReason: p.void_reason || null,
+          voidedAt: p.voided_at || null,
+          transferId: p.transfer_id || null,
+          cashDeskId: p.cash_desk_id || null,
+          operationType: p.operation_type || 'STANDARD',
+          amountTjs: p.amount_tjs ? Number(p.amount_tjs) : null,
+          amountUsd: p.amount_usd ? Number(p.amount_usd) : null,
+          exchangeRate: p.exchange_rate ? Number(p.exchange_rate) : null,
+          createdByName: p.users?.name || 'Система',
+          createdAt: p.created_at,
+        };
+      });
+
+    // Строгая серверная изоляция для менеджера
+    if (userAccess && !userAccess.isAdmin) {
+      normalizedList = normalizedList.filter(item => item.cashDeskId === userAccess.cashDeskId);
+    } else if (filters.cash_desk_id) {
+      normalizedList = normalizedList.filter(item => item.cashDeskId === filters.cash_desk_id);
+    }
 
     // Currencies present
     const availableCurrencies = Array.from(new Set(normalizedList.map(item => item.currency)));
@@ -190,18 +327,17 @@ export class FinanceRepository {
 
     return {
       list: filteredList,
-      totalsByCurrency,
+      totals: totalsByCurrency,
       availableCurrencies,
       availableYears,
-      chartData,
-      chartCurrency
+      monthlyChart: chartData
     };
   }
 
   /**
    * Добавить приходный кассовый ордер (доход)
    */
-  static async addIncome(data, userId) {
+  static async addIncome(data, userId, userAccess = null) {
     const db = getDB();
     const now = new Date().toISOString();
     const amountMinor = Math.round(Number(data.amount) * 100);
@@ -209,6 +345,10 @@ export class FinanceRepository {
     const currency = (data.currency || 'USD').toUpperCase();
     const dealId = parseOptionalBigInt(data.deal_id);
     const scheduleId = parseOptionalBigInt(data.schedule_id);
+
+    const targetCashDeskId = (userAccess && !userAccess.isAdmin) 
+      ? userAccess.cashDeskId 
+      : (data.cash_desk_id || null);
 
     const { data: newPayment, error } = await db.from('payments').insert([{
       deal_id: dealId,
@@ -220,6 +360,7 @@ export class FinanceRepository {
       reference: data.reference || `ПКО-${Date.now().toString().slice(-6)}`,
       comment: data.comment || null,
       payer_name: data.payer_name || null,
+      cash_desk_id: targetCashDeskId,
       created_by_user_id: parseOptionalBigInt(userId),
       created_at: now
     }]).select().single();
@@ -246,9 +387,9 @@ export class FinanceRepository {
   /**
    * Обновить приходный ордер / платеж (только ADMIN)
    */
-  static async updateIncome(id, data, userRole) {
-    if (userRole && userRole !== 'ADMIN') {
-      throw new Error('Только администратор имеет право редактировать финансовые записи');
+  static async updateIncome(id, data, userRole, userAccess = null) {
+    if (userRole !== 'ADMIN' || (userAccess && !userAccess.isAdmin)) {
+      throw new Error('Редактирование приходных кассовых ордеров запрещено для вашей роли');
     }
     const db = getDB();
     const now = new Date().toISOString();
@@ -296,11 +437,94 @@ export class FinanceRepository {
   }
 
   /**
+   * Получить актуальный баланс конкретной кассы (в USD)
+   */
+  static async getCashDeskBalance(cashDeskId) {
+    if (!cashDeskId) return 0;
+    const db = getDB();
+    const { data: pData } = await db.from('payments')
+      .select('amount_minor, currency')
+      .eq('cash_desk_id', cashDeskId)
+      .neq('status', 'VOIDED');
+
+    const { data: eData } = await db.from('expenses')
+      .select('amount_minor, currency')
+      .eq('cash_desk_id', cashDeskId)
+      .neq('status', 'VOIDED');
+
+    let balanceUsd = 0;
+    (pData || []).forEach(p => {
+      const cur = (p.currency || 'USD').toUpperCase();
+      if (cur === 'USD') balanceUsd += (p.amount_minor || 0) / 100;
+    });
+    (eData || []).forEach(e => {
+      const cur = (e.currency || 'USD').toUpperCase();
+      if (cur === 'USD') balanceUsd -= (e.amount_minor || 0) / 100;
+    });
+    return Number(balanceUsd.toFixed(2));
+  }
+
+  /**
+   * Получить ПКО по ID с проверкой прав доступа к кассе
+   */
+  static async getIncomeById(id, userAccess = null) {
+    const db = getDB();
+    const { data: payment, error } = await db.from('payments').select(`
+      *,
+      deals ( id, contract_number, currency, deal_date, created_at, leads ( full_name, inn, phone ) ),
+      users:created_by_user_id ( name )
+    `).eq('id', id).maybeSingle();
+
+    if (error || !payment) {
+      const err = new Error('Документ ПКО не найден');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    if (userAccess && !userAccess.isAdmin) {
+      if (payment.cash_desk_id !== userAccess.cashDeskId) {
+        const err = new Error('Документ не найден');
+        err.statusCode = 404;
+        throw err;
+      }
+    }
+
+    return payment;
+  }
+
+  /**
+   * Получить РКО по ID с проверкой прав доступа к кассе
+   */
+  static async getExpenseById(id, userAccess = null) {
+    const db = getDB();
+    const { data: expense, error } = await db.from('expenses').select(`
+      *,
+      users:created_by_user_id ( name )
+    `).eq('id', id).maybeSingle();
+
+    if (error || !expense) {
+      const err = new Error('Документ РКО не найден');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    if (userAccess && !userAccess.isAdmin) {
+      if (expense.cash_desk_id !== userAccess.cashDeskId) {
+        const err = new Error('Документ не найден');
+        err.statusCode = 404;
+        throw err;
+      }
+    }
+
+    return expense;
+  }
+
+  /**
    * Удалить приходный ордер / платеж (только ADMIN)
    */
-  static async deleteIncome(id, userRole) {
-    if (userRole && userRole !== 'ADMIN') {
-      throw new Error('Только администратор имеет право удалять финансовые записи');
+  static async deleteIncome(id, userRole, userAccess = null) {
+    if (userRole !== 'ADMIN' || (userAccess && !userAccess.isAdmin)) {
+      throw new Error('Удаление приходных кассовых ордеров запрещено для вашей роли');
     }
     const db = getDB();
     const now = new Date().toISOString();
@@ -335,7 +559,7 @@ export class FinanceRepository {
   /**
    * Получить список расходов (расходных ордеров)
    */
-  static async getExpenses(filters = {}) {
+  static async getExpenses(filters = {}, userAccess = null) {
     const db = getDB();
     await this.autoHarmonizeConversions();
     const currentYear = Number(filters.year) || new Date().getFullYear();
@@ -345,34 +569,50 @@ export class FinanceRepository {
     const { data: expensesData, error } = await db.from('expenses').select(`
       id, amount_minor, currency, expense_date, category, method, reference, recipient, description, created_at,
       exchange_rate, amount_usd, conversion_expense_id,
-      users ( id, name )
+      status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type,
+      users:created_by_user_id ( id, name )
     `).order('expense_date', { ascending: false });
 
     if (error) throw error;
 
     const allExpenses = expensesData || [];
     
-    const normalizedList = allExpenses.map(e => {
-      const cur = (e.currency || 'USD').toUpperCase();
-      const amount = (e.amount_minor || 0) / 100;
+    let normalizedList = allExpenses
+      .filter(e => filters.include_voided ? true : e.status !== 'VOIDED')
+      .map(e => {
+        const cur = (e.currency || 'USD').toUpperCase();
+        const amount = (e.amount_minor || 0) / 100;
 
-      return {
-        id: e.id,
-        amount,
-        currency: cur,
-        date: e.expense_date,
-        category: e.category || 'Прочее',
-        method: e.method || 'CASH',
-        reference: e.reference || `РКО-${e.id}`,
-        recipient: e.recipient || 'Контрагент',
-        description: e.description || '',
-        exchange_rate: e.exchange_rate ? Number(e.exchange_rate) : null,
-        amount_usd: e.amount_usd ? Number(e.amount_usd) : null,
-        conversion_expense_id: e.conversion_expense_id || null,
-        createdByName: e.users?.name || 'Администратор',
-        createdAt: e.created_at
-      };
-    });
+        return {
+          id: e.id,
+          amount,
+          currency: cur,
+          date: e.expense_date,
+          category: e.category || 'Прочее',
+          method: e.method || 'CASH',
+          reference: e.reference || `РКО-${e.id}`,
+          recipient: e.recipient || 'Контрагент',
+          description: e.description || '',
+          exchange_rate: e.exchange_rate ? Number(e.exchange_rate) : null,
+          amount_usd: e.amount_usd ? Number(e.amount_usd) : null,
+          conversion_expense_id: e.conversion_expense_id || null,
+          status: e.status || 'ACTIVE',
+          voidReason: e.void_reason || null,
+          voidedAt: e.voided_at || null,
+          transferId: e.transfer_id || null,
+          cashDeskId: e.cash_desk_id || null,
+          operationType: e.operation_type || 'STANDARD',
+          createdByName: e.users?.name || 'Администратор',
+          createdAt: e.created_at
+        };
+      });
+
+    // Строгая серверная изоляция для менеджера
+    if (userAccess && !userAccess.isAdmin) {
+      normalizedList = normalizedList.filter(item => item.cashDeskId === userAccess.cashDeskId);
+    } else if (filters.cash_desk_id) {
+      normalizedList = normalizedList.filter(item => item.cashDeskId === filters.cash_desk_id);
+    }
 
     const availableCurrencies = Array.from(new Set(normalizedList.map(item => item.currency)));
     if (!availableCurrencies.includes('USD')) availableCurrencies.push('USD');
@@ -448,7 +688,7 @@ export class FinanceRepository {
 
     return {
       list: filteredList,
-      totalsByCurrency,
+      totals: totalsByCurrency,
       availableCurrencies,
       availableYears,
       categoriesChart,
@@ -457,150 +697,266 @@ export class FinanceRepository {
   }
 
   /**
-   * Добавить расходный кассовый ордер (с поддержкой автоконвертации)
+   * Добавить расходный кассовый ордер (с поддержкой автоконвертации и контролем остатка)
    */
-  static async addExpense(data, userId) {
-    const db = getDB();
-    const now = new Date().toISOString();
-    const expenseDate = data.date || data.expense_date || now.split('T')[0];
-    const currency = (data.currency || 'USD').toUpperCase();
-    const exchangeRate = Number(data.exchange_rate) || 10.90;
-    const isTransfer = data.category === 'Внутренние перемещения между кассами' || Boolean(data.is_transfer);
+  static async addExpense(data, userId, userAccess = null) {
+    const key = data.idempotency_key ? String(data.idempotency_key).trim() : null;
+    if (key && inflightExpenses.has(key)) {
+      const inflightResult = await inflightExpenses.get(key);
+      return { ...inflightResult, idempotent: true };
+    }
 
-    // Поддержка явной автоконвертации с созданием связки расходов
-    if (data.auto_convert && currency !== (data.source_currency || 'USD')) {
-      const sourceCurrency = (data.source_currency || 'USD').toUpperCase();
-      const convertedSourceAmount = Number((Number(data.amount) / exchangeRate).toFixed(2));
-      const sourceMinor = Math.round(convertedSourceAmount * 100);
+    const runAddExpense = async () => {
+      const db = getDB();
+      const targetCashDeskId = (userAccess && !userAccess.isAdmin)
+        ? userAccess.cashDeskId
+        : (data.cash_desk_id || null);
 
-      const { data: convExpense } = await db.from('expenses').insert([{
-        amount_minor: sourceMinor,
-        currency: sourceCurrency,
-        expense_date: expenseDate,
-        category: 'Конвертация валюты',
-        method: data.method || 'CASH',
-        reference: `КОНВ-${Date.now().toString().slice(-5)}`,
-        recipient: `Касса ${currency} (Автоконвертация)`,
-        description: `Автоконвертация $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} в ${currency} для расхода: ${data.description || data.category || data.recipient || 'РКО'}`,
-        created_by_user_id: userId || null,
-        created_at: now
-      }]).select().single();
+      // 1. Проверка в БД: если операция уже существует (между процессами)
+      if (key) {
+        const existing = await checkIdempotentExpense(db, key);
+        if (existing) {
+          return {
+            id: existing.id,
+            reference: existing.reference || `РКО-${existing.id}`,
+            amount: (existing.amount_minor || 0) / 100,
+            currency: existing.currency,
+            cash_desk_id: existing.cash_desk_id,
+            idempotent: true
+          };
+        }
+      }
 
-      const convExpenseId = convExpense?.id || null;
+      const now = new Date().toISOString();
+      const expenseDate = data.date || data.expense_date || now.split('T')[0];
+      const currency = (data.currency || 'USD').toUpperCase();
+      const exchangeRate = Number(data.exchange_rate) || 9.27;
+      const isTransfer = data.category === 'Внутренние перемещения между кассами' || Boolean(data.is_transfer);
 
-      await db.from('payments').insert([{
-        amount_minor: Math.round(Number(data.amount) * 100),
-        currency: currency,
-        payment_date: expenseDate,
-        method: data.method || 'CASH',
-        reference: `ПКО-КОНВ-${Date.now().toString().slice(-5)}`,
-        payer_name: `Касса ${sourceCurrency} (Автоконвертация)`,
-        comment: `Поступление от автоконвертации $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} для расхода: ${data.description || data.category || data.recipient || 'РКО'}`,
-        created_by_user_id: userId || null,
-        created_at: now
-      }]);
+      // 2. Для менеджера: попытка вызова атомарной PostgreSQL-функции create_atomic_expense
+      if (userAccess && !userAccess.isAdmin) {
+        try {
+          const rpcParams = {
+            p_cash_desk_id: targetCashDeskId,
+            p_amount_minor: Math.round(Number(data.amount) * 100),
+            p_currency: currency,
+            p_expense_date: expenseDate,
+            p_category: data.category || 'Прочее',
+            p_recipient: data.recipient || 'Контрагент',
+            p_description: data.description || '',
+            p_user_id: parseOptionalBigInt(userId),
+            p_method: data.method || 'CASH',
+            p_exchange_rate: exchangeRate,
+            p_amount_usd: currency === 'USD' ? Number(data.amount) : Number((Number(data.amount) / exchangeRate).toFixed(2)),
+            p_amount_tjs: currency === 'TJS' ? Number(data.amount) : null,
+            p_idempotency_key: key
+          };
 
-      const { data: newExpense, error } = await db.from('expenses').insert([{
-        amount_minor: Math.round(Number(data.amount) * 100),
+          const { data: rpcResult, error: rpcError } = await db.rpc('create_atomic_expense', rpcParams);
+          if (!rpcError && rpcResult) {
+            return {
+              id: rpcResult.expense_id,
+              reference: rpcResult.reference,
+              amount: rpcResult.amount,
+              currency: rpcResult.currency,
+              cash_desk_id: rpcResult.cash_desk_id,
+              idempotent: rpcResult.idempotent,
+              balance_after: rpcResult.balance_after
+            };
+          }
+        } catch {
+          // Игнорируем ошибку отсутствия функции до миграции
+        }
+
+        // Контроль остатка кассы для менеджера (запрет отрицательного сальдо)
+        const currentBalanceUsd = await this.getCashDeskBalance(userAccess.cashDeskId);
+        const requestedUsd = (currency === 'TJS') 
+          ? Number((Number(data.amount) / exchangeRate).toFixed(2)) 
+          : Number(data.amount);
+
+        if (requestedUsd > currentBalanceUsd) {
+          throw new Error(`Недостаточно средств в кассе менеджера. Доступный остаток: $${currentBalanceUsd.toFixed(2)} USD, запрошено: $${requestedUsd.toFixed(2)} USD`);
+        }
+      }
+
+      // Поддержка явной автоконвертации с созданием связки расходов
+      if (data.auto_convert && currency !== (data.source_currency || 'USD')) {
+        const sourceCurrency = (data.source_currency || 'USD').toUpperCase();
+        const convertedSourceAmount = Number((Number(data.amount) / exchangeRate).toFixed(2));
+        const sourceMinor = Math.round(convertedSourceAmount * 100);
+
+        const { data: convExpense } = await db.from('expenses').insert([{
+          amount_minor: sourceMinor,
+          currency: sourceCurrency,
+          expense_date: expenseDate,
+          category: 'Конвертация валюты',
+          method: data.method || 'CASH',
+          reference: 'TEMP_REF',
+          recipient: `Касса ${currency} (Автоконвертация)`,
+          description: `Автоконвертация $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} в ${currency} для расхода: ${data.description || data.category || data.recipient || 'РКО'}`,
+          cash_desk_id: targetCashDeskId,
+          created_by_user_id: parseOptionalBigInt(userId),
+          created_at: now
+        }]).select().single();
+
+        const convExpenseId = convExpense?.id || null;
+        if (convExpenseId) {
+          await db.from('expenses').update({ reference: `КОНВ-${convExpenseId}` }).eq('id', convExpenseId);
+        }
+
+        const { data: convPayment } = await db.from('payments').insert([{
+          amount_minor: Math.round(Number(data.amount) * 100),
+          currency: currency,
+          payment_date: expenseDate,
+          method: data.method || 'CASH',
+          reference: 'TEMP_REF',
+          payer_name: `Касса ${sourceCurrency} (Автоконвертация)`,
+          comment: `Поступление от автоконвертации $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} для расхода: ${data.description || data.category || data.recipient || 'РКО'}`,
+          cash_desk_id: targetCashDeskId,
+          created_by_user_id: parseOptionalBigInt(userId),
+          created_at: now
+        }]).select().single();
+
+        if (convPayment?.id) {
+          await db.from('payments').update({ reference: `ПКО-КОНВ-${convPayment.id}` }).eq('id', convPayment.id);
+        }
+
+        const { data: newExpense, error } = await insertExpenseWithIdempotency(db, {
+          amount_minor: Math.round(Number(data.amount) * 100),
+          currency,
+          expense_date: expenseDate,
+          category: data.category || 'Прочее',
+          method: data.method || 'CASH',
+          reference: data.reference || 'TEMP_REF',
+          recipient: data.recipient || null,
+          description: data.description || null,
+          exchange_rate: exchangeRate,
+          amount_usd: convertedSourceAmount,
+          conversion_expense_id: convExpenseId,
+          cash_desk_id: targetCashDeskId,
+          created_by_user_id: parseOptionalBigInt(userId),
+          idempotency_key: key,
+          created_at: now
+        });
+
+        if (error) throw error;
+        const finalRef = data.reference || `РКО-${newExpense.id}`;
+        await db.from('expenses').update({ reference: finalRef }).eq('id', newExpense.id);
+        newExpense.reference = finalRef;
+        return newExpense;
+      }
+
+      // Защита от отрицательного сальдо при мультивалютных операциях
+      if (currency === 'TJS') {
+        const convertedUsd = Number((Number(data.amount) / exchangeRate).toFixed(2));
+        const sourceMinor = Math.round(convertedUsd * 100);
+        const originalTjsText = `${data.amount} TJS (Курс: ${exchangeRate})`;
+        const descWithTjs = data.description ? `${data.description} • ${originalTjsText}` : originalTjsText;
+
+        const { data: newExpense, error } = await insertExpenseWithIdempotency(db, {
+          amount_minor: sourceMinor,
+          currency: 'USD',
+          expense_date: expenseDate,
+          category: data.category || 'Прочее',
+          method: data.method || 'CASH',
+          reference: data.reference || 'TEMP_REF',
+          recipient: data.recipient || null,
+          description: descWithTjs,
+          exchange_rate: exchangeRate,
+          amount_usd: convertedUsd,
+          conversion_expense_id: null,
+          cash_desk_id: targetCashDeskId,
+          created_by_user_id: parseOptionalBigInt(userId),
+          idempotency_key: key,
+          created_at: now
+        });
+
+        if (error) throw error;
+        const finalRef = data.reference || `РКО-${newExpense.id}`;
+        await db.from('expenses').update({ reference: finalRef }).eq('id', newExpense.id);
+        newExpense.reference = finalRef;
+        return newExpense;
+      }
+
+      // Расход в USD (или иной базовой валюте)
+      const amountMinor = Math.round(Number(data.amount) * 100);
+      const { data: newExpense, error } = await insertExpenseWithIdempotency(db, {
+        amount_minor: amountMinor,
         currency,
         expense_date: expenseDate,
         category: data.category || 'Прочее',
         method: data.method || 'CASH',
-        reference: data.reference || `РКО-${Date.now().toString().slice(-6)}`,
+        reference: data.reference || 'TEMP_REF',
         recipient: data.recipient || null,
         description: data.description || null,
-        exchange_rate: exchangeRate,
-        amount_usd: convertedSourceAmount,
-        conversion_expense_id: convExpenseId,
-        created_by_user_id: userId || null,
-        created_at: now
-      }]).select().single();
-
-      if (error) throw error;
-      return newExpense;
-    }
-
-    // Защита от отрицательного сальдо при мультивалютных операциях:
-    // При проведении расхода в TJS с долларовой кассы система списывает эквивалент в USD по курсу ордера,
-    // не допуская ухода валюты TJS в минус и фантомных цепочек записей.
-    if (currency === 'TJS') {
-      const convertedUsd = Number((Number(data.amount) / exchangeRate).toFixed(2));
-      const sourceMinor = Math.round(convertedUsd * 100);
-      const originalTjsText = `${data.amount} TJS (Курс: ${exchangeRate})`;
-      const descWithTjs = data.description ? `${data.description} • ${originalTjsText}` : originalTjsText;
-
-      const { data: newExpense, error } = await db.from('expenses').insert([{
-        amount_minor: sourceMinor,
-        currency: 'USD',
-        expense_date: expenseDate,
-        category: data.category || 'Прочее',
-        method: data.method || 'CASH',
-        reference: data.reference || `РКО-${Date.now().toString().slice(-6)}`,
-        recipient: data.recipient || null,
-        description: descWithTjs,
-        exchange_rate: exchangeRate,
-        amount_usd: convertedUsd,
+        exchange_rate: data.exchange_rate ? Number(data.exchange_rate) : null,
+        amount_usd: data.amount_usd ? Number(data.amount_usd) : null,
         conversion_expense_id: null,
-        created_by_user_id: userId || null,
+        cash_desk_id: targetCashDeskId,
+        created_by_user_id: parseOptionalBigInt(userId),
+        idempotency_key: key,
         created_at: now
-      }]).select().single();
+      });
 
       if (error) throw error;
+      const finalRef = data.reference || `РКО-${newExpense.id}`;
+      await db.from('expenses').update({ reference: finalRef }).eq('id', newExpense.id);
+      newExpense.reference = finalRef;
+
+      // Атомарность перемещений: автоматически формировать парный приход на счёт-получатель
+      if (isTransfer) {
+        const targetDesk = data.recipient || data.target_desk || 'Касса компании "Тозон" (Илхомчон)';
+        const sourceDesk = data.source_desk || 'Касса Отдела продаж (Акмалхон)';
+        const pkoRef = `ПКО-ПЕРЕМ-${newExpense.id}`;
+
+        await db.from('payments').insert([{
+          amount_minor: amountMinor,
+          currency: currency,
+          payment_date: expenseDate,
+          method: data.method || 'CASH',
+          reference: pkoRef,
+          payer_name: sourceDesk,
+          comment: `[Касса: ${targetDesk}] Внутреннее перемещение из: ${sourceDesk} • ${data.description || ''}`,
+          created_by_user_id: parseOptionalBigInt(userId),
+          created_at: now
+        }]);
+      }
+
       return newExpense;
+    };
+
+    const targetDeskId = (userAccess && !userAccess.isAdmin)
+      ? userAccess.cashDeskId
+      : (data.cash_desk_id || null);
+
+    const executeOperation = () => withDeskLock(targetDeskId, runAddExpense);
+
+    if (key) {
+      const expensePromise = executeOperation();
+      inflightExpenses.set(key, expensePromise);
+      try {
+        return await expensePromise;
+      } finally {
+        inflightExpenses.delete(key);
+      }
     }
 
-    // Расход в USD (или иной базовой валюте)
-    const amountMinor = Math.round(Number(data.amount) * 100);
-    const { data: newExpense, error } = await db.from('expenses').insert([{
-      amount_minor: amountMinor,
-      currency,
-      expense_date: expenseDate,
-      category: data.category || 'Прочее',
-      method: data.method || 'CASH',
-      reference: data.reference || `РКО-${Date.now().toString().slice(-6)}`,
-      recipient: data.recipient || null,
-      description: data.description || null,
-      exchange_rate: data.exchange_rate ? Number(data.exchange_rate) : null,
-      amount_usd: data.amount_usd ? Number(data.amount_usd) : null,
-      conversion_expense_id: null,
-      created_by_user_id: userId || null,
-      created_at: now
-    }]).select().single();
-
-    if (error) throw error;
-
-    // Атомарность перемещений: автоматически формировать парный приход на счёт-получатель
-    if (isTransfer) {
-      const targetDesk = data.recipient || data.target_desk || 'Касса компании "Тозон" (Илхомчон)';
-      const sourceDesk = data.source_desk || 'Касса Отдела продаж (Акмалхон)';
-      const pkoRef = (data.reference || `РКО-${newExpense.id}`).replace('РКО', 'ПКО');
-
-      await db.from('payments').insert([{
-        amount_minor: amountMinor,
-        currency: currency,
-        payment_date: expenseDate,
-        method: data.method || 'CASH',
-        reference: pkoRef.startsWith('ПКО') ? pkoRef : `ПКО-ПЕРЕМ-${newExpense.id}`,
-        payer_name: sourceDesk,
-        comment: `[Касса: ${targetDesk}] Внутреннее перемещение из: ${sourceDesk} • ${data.description || ''}`,
-        created_by_user_id: userId || null,
-        created_at: now
-      }]);
-    }
-
-    return newExpense;
+    return await executeOperation();
   }
 
   /**
    * Обновить расходный ордер (только ADMIN)
    */
-  static async updateExpense(id, data, userRole) {
-    if (userRole && userRole !== 'ADMIN') {
-      throw new Error('Только администратор имеет право редактировать финансовые записи');
+  static async updateExpense(id, data, userRole, userAccess = null) {
+    if (userRole !== 'ADMIN' || (userAccess && !userAccess.isAdmin)) {
+      throw new Error('Редактирование расходных кассовых ордеров запрещено для вашей роли');
     }
     const db = getDB();
 
     const { data: originalRecord } = await db.from('expenses').select('*').eq('id', id).maybeSingle();
+    if (!originalRecord) {
+      throw new Error('Документ не найден');
+    }
 
     const updatePayload = {};
     if (data.amount !== undefined) updatePayload.amount_minor = Math.round(Number(data.amount) * 100);
@@ -632,9 +988,9 @@ export class FinanceRepository {
   /**
    * Удалить расходный ордер (только ADMIN)
    */
-  static async deleteExpense(id, userRole) {
-    if (userRole && userRole !== 'ADMIN') {
-      throw new Error('Только администратор имеет право удалять финансовые записи');
+  static async deleteExpense(id, userRole, userAccess = null) {
+    if (userRole !== 'ADMIN' || (userAccess && !userAccess.isAdmin)) {
+      throw new Error('Удаление расходных кассовых ордеров запрещено для вашей роли');
     }
     const db = getDB();
     const { data: originalRecord } = await db.from('expenses').select('*').eq('id', id).maybeSingle();
@@ -891,7 +1247,7 @@ export class FinanceRepository {
   /**
    * Получить ДДС (Движение Денежных Средств)
    */
-  static async getCashflow(filters = {}) {
+  static async getCashflow(filters = {}, userAccess = null) {
     const db = getDB();
     await this.autoHarmonizeConversions();
     const currentYear = Number(filters.year) || new Date().getFullYear();
@@ -900,25 +1256,38 @@ export class FinanceRepository {
 
     const { data: paymentsData, error: pErr } = await db.from('payments').select(`
       id, deal_id, amount_minor, currency, payment_date, method, reference, comment, payer_name, created_at,
+      status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs, amount_usd, exchange_rate,
       deals ( id, contract_number, currency, deal_date, created_at, leads ( full_name, inn ) ),
-      users ( name )
+      users:created_by_user_id ( name )
     `);
     if (pErr) throw pErr;
 
     const { data: expensesData, error: eErr } = await db.from('expenses').select(`
       id, amount_minor, currency, expense_date, category, method, reference, recipient, description, created_at,
       exchange_rate, amount_usd, conversion_expense_id,
-      users ( name )
+      status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs,
+      users:created_by_user_id ( name )
     `);
     if (eErr) throw eErr;
 
+    // Filter out VOIDED items for financial calculations
+    let activePayments = (paymentsData || []).filter(p => p.status !== 'VOIDED');
+    let activeExpenses = (expensesData || []).filter(e => e.status !== 'VOIDED');
+
+    // Серверная изоляция для менеджера: видит ТОЛЬКО свою кассу
+    if (userAccess && !userAccess.isAdmin) {
+      activePayments = activePayments.filter(p => p.cash_desk_id === userAccess.cashDeskId);
+      activeExpenses = activeExpenses.filter(e => e.cash_desk_id === userAccess.cashDeskId);
+    }
+
+
     // Collect all currencies
     const currencySet = new Set(['USD', 'TJS']);
-    (paymentsData || []).forEach(p => {
+    activePayments.forEach(p => {
       const c = (p.currency || p.deals?.currency || 'USD').toUpperCase();
       currencySet.add(c);
     });
-    (expensesData || []).forEach(e => {
+    activeExpenses.forEach(e => {
       const c = (e.currency || 'USD').toUpperCase();
       currencySet.add(c);
     });
@@ -930,7 +1299,7 @@ export class FinanceRepository {
       summaryByCurrency[c] = { totalIncome: 0, totalExpense: 0, netCashflow: 0 };
     });
 
-    (paymentsData || []).forEach(p => {
+    activePayments.forEach(p => {
       const c = (p.currency || p.deals?.currency || 'USD').toUpperCase();
       const d = new Date(p.payment_date);
       if (d.getFullYear() === currentYear) {
@@ -940,7 +1309,7 @@ export class FinanceRepository {
       }
     });
 
-    (expensesData || []).forEach(e => {
+    activeExpenses.forEach(e => {
       const c = (e.currency || 'USD').toUpperCase();
       const d = new Date(e.expense_date);
       if (d.getFullYear() === currentYear) {
@@ -962,7 +1331,7 @@ export class FinanceRepository {
     let totalConvertedToTjs = 0;
     let conversionOperationsCount = 0;
 
-    (expensesData || []).forEach(e => {
+    activeExpenses.forEach(e => {
       const isConv = e.category === 'Конвертация валюты' || (e.reference && e.reference.startsWith('КОНВ-')) || (e.reference && e.reference.startsWith('ОБМЕН-'));
       const d = new Date(e.expense_date);
       if (isConv && d.getFullYear() === currentYear) {
@@ -975,7 +1344,7 @@ export class FinanceRepository {
       }
     });
 
-    (paymentsData || []).forEach(p => {
+    activePayments.forEach(p => {
       const isConv = (p.reference && p.reference.includes('КОНВ')) || (p.reference && p.reference.includes('ОБМЕН')) || (p.comment && p.comment.includes('конвертаци'));
       const d = new Date(p.payment_date);
       if (isConv && d.getFullYear() === currentYear) {
@@ -992,7 +1361,7 @@ export class FinanceRepository {
     let totalTjsInflow = 0;
     let totalTjsInflowUsdEquiv = 0;
 
-    (paymentsData || []).forEach(p => {
+    activePayments.forEach(p => {
       const d = new Date(p.payment_date);
       if (d.getFullYear() === currentYear) {
         const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
@@ -1025,7 +1394,7 @@ export class FinanceRepository {
     let totalTjsOutflow = 0;
     let totalTjsOutflowUsdEquiv = 0;
 
-    (expensesData || []).forEach(e => {
+    activeExpenses.forEach(e => {
       const d = new Date(e.expense_date);
       if (d.getFullYear() === currentYear) {
         const cur = (e.currency || 'USD').toUpperCase();
@@ -1110,7 +1479,7 @@ export class FinanceRepository {
     ];
     const monthlyData = monthNames.map(month => ({ month, income: 0, expense: 0, net: 0 }));
 
-    (paymentsData || []).forEach(p => {
+    activePayments.forEach(p => {
       const c = (p.currency || p.deals?.currency || 'USD').toUpperCase();
       const d = new Date(p.payment_date);
       if (d.getFullYear() === currentYear) {
@@ -1126,7 +1495,7 @@ export class FinanceRepository {
       }
     });
 
-    (expensesData || []).forEach(e => {
+    activeExpenses.forEach(e => {
       const c = (e.currency || 'USD').toUpperCase();
       const d = new Date(e.expense_date);
       if (d.getFullYear() === currentYear) {
@@ -1151,10 +1520,14 @@ export class FinanceRepository {
     // Unified Cashflow Ledger (transactions)
     const transactions = [];
 
-    (paymentsData || []).forEach(p => {
+    const txPayments = (paymentsData || []).filter(p => filters.include_voided ? true : p.status !== 'VOIDED');
+    const txExpenses = (expensesData || []).filter(e => filters.include_voided ? true : e.status !== 'VOIDED');
+
+    txPayments.forEach(p => {
       const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
       const amt = (p.amount_minor || 0) / 100;
-      const isInternalTransfer = (p.reference && p.reference.includes('ПЕРЕМ')) ||
+      const isInternalTransfer = (p.operation_type === 'INTERNAL_CASH_TRANSFER' || p.operation_type === 'PAYMENT_ON_BEHALF' || p.transfer_id) ||
+                                 (p.reference && p.reference.includes('ПЕРЕМ')) ||
                                  (p.comment && (p.comment.includes('Внутреннее перемещение') || p.comment.includes('Внутренее перемещение')));
       const isConv = (p.reference && p.reference.includes('КОНВ')) || (p.reference && p.reference.includes('ОБМЕН')) || (p.comment && p.comment.includes('конвертаци'));
       const dealDate = p.deals?.deal_date || (p.deals?.created_at ? p.deals.created_at.split('T')[0] : null);
@@ -1198,15 +1571,28 @@ export class FinanceRepository {
         method: p.method || 'CASH',
         reference: p.reference || `ПКО-${p.id}`,
         comment: p.comment || '',
+        status: p.status || 'ACTIVE',
+        voidReason: p.void_reason || null,
+        voidedAt: p.voided_at || null,
+        transferId: p.transfer_id || null,
+        transfer_id: p.transfer_id || null,
+        cashDeskId: p.cash_desk_id || null,
+        cash_desk_id: p.cash_desk_id || null,
+        operationType: p.operation_type || 'STANDARD',
+        operation_type: p.operation_type || 'STANDARD',
+        amount_usd: p.amount_usd ? Number(p.amount_usd) : null,
+        amount_tjs: p.amount_tjs ? Number(p.amount_tjs) : null,
+        exchange_rate: p.exchange_rate ? Number(p.exchange_rate) : null,
         createdByName: p.users?.name || 'Система',
         createdAt: p.created_at
       });
     });
 
-    (expensesData || []).forEach(e => {
+    txExpenses.forEach(e => {
       const cur = (e.currency || 'USD').toUpperCase();
       const amt = (e.amount_minor || 0) / 100;
-      const isInternalTransfer = (e.reference && e.reference.includes('ПЕРЕМ')) ||
+      const isInternalTransfer = (e.operation_type === 'INTERNAL_CASH_TRANSFER' || e.operation_type === 'PAYMENT_ON_BEHALF' || e.transfer_id) ||
+                                 (e.reference && e.reference.includes('ПЕРЕМ')) ||
                                  (e.category === 'Внутренние перемещения между кассами') ||
                                  (e.description && (e.description.includes('Внутреннее перемещение') || e.description.includes('Внутренее перемещение')));
       const isConv = e.category === 'Конвертация валюты' || (e.reference && e.reference.startsWith('КОНВ-')) || (e.reference && e.reference.startsWith('ОБМЕН-'));
@@ -1233,8 +1619,18 @@ export class FinanceRepository {
         reference: e.reference || `РКО-${e.id}`,
         comment: e.description || '',
         description: e.description || '',
+        status: e.status || 'ACTIVE',
+        voidReason: e.void_reason || null,
+        voidedAt: e.voided_at || null,
+        transferId: e.transfer_id || null,
+        transfer_id: e.transfer_id || null,
+        cashDeskId: e.cash_desk_id || null,
+        cash_desk_id: e.cash_desk_id || null,
+        operationType: e.operation_type || 'STANDARD',
+        operation_type: e.operation_type || 'STANDARD',
         exchange_rate: e.exchange_rate ? Number(e.exchange_rate) : null,
         amount_usd: e.amount_usd ? Number(e.amount_usd) : null,
+        amount_tjs: e.amount_tjs ? Number(e.amount_tjs) : null,
         conversion_expense_id: e.conversion_expense_id || null,
         createdByName: e.users?.name || 'Администратор',
         createdAt: e.created_at
@@ -1264,16 +1660,26 @@ export class FinanceRepository {
 
     // Сводные остатки по каждой конкретной кассе компании строго на основе справочника
     const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true).order('sort_order');
-    const activeDesks = dictDesks && dictDesks.length > 0 ? dictDesks : [
+    let activeDesks = dictDesks && dictDesks.length > 0 ? dictDesks : [
       { code: 'MAIN_CASHIER', name: 'Касса компании "Тозон" (Илхомчон)' },
       { code: 'SALES_MANAGER', name: 'Касса Отдела продаж (Акмалхон)' },
       { code: 'SALES_MANAGER_Dadojon', name: 'Касса менеждера (Дадочон)' },
       { code: 'BANK_ACCOUNT', name: 'Расчетный счет в банке (Безналичные)' }
     ];
 
+    // Изоляция касс для менеджера
+    if (userAccess && !userAccess.isAdmin) {
+      activeDesks = activeDesks.filter(d => d.id === userAccess.cashDeskId || d.code === userAccess.cashDeskId);
+      filteredTransactions = filteredTransactions.filter(t => t.cashDeskId === userAccess.cashDeskId);
+    }
+
     const mainCashier = activeDesks.find(d => d.code === 'MAIN_CASHIER') || activeDesks[0];
 
-    const resolveDeskName = (rawComment, rawRecipient) => {
+    const resolveDeskName = (cashDeskId, rawComment, rawRecipient) => {
+      if (cashDeskId) {
+        const directDesk = activeDesks.find(d => d.id === cashDeskId || d.code === cashDeskId);
+        if (directDesk) return directDesk.name;
+      }
       const text = `${rawComment || ''} ${rawRecipient || ''}`;
       const match = text.match(/\[Касса:\s*([^\]]+)\]/i);
       let parsed = match ? match[1].trim() : '';
@@ -1307,7 +1713,7 @@ export class FinanceRepository {
 
     const cashDesksMap = {};
     activeDesks.forEach(d => {
-      const baseline = GROUND_TRUTH_BASELINES[d.name] || 0;
+      const baseline = (userAccess && !userAccess.isAdmin) ? 0 : (GROUND_TRUTH_BASELINES[d.name] || 0);
       cashDesksMap[d.name] = { 
         name: d.name, 
         icon: d.icon || '🏢',
@@ -1319,10 +1725,10 @@ export class FinanceRepository {
       };
     });
 
-    (paymentsData || []).forEach(p => {
+    activePayments.forEach(p => {
       const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
       const amt = (p.amount_minor || 0) / 100;
-      const deskName = resolveDeskName(p.comment, p.payer_name);
+      const deskName = resolveDeskName(p.cash_desk_id, p.comment, p.payer_name);
 
       if (!cashDesksMap[deskName]) {
         cashDesksMap[deskName] = { name: deskName, USD: 0, TJS: 0, RUB: 0, totalIncomeUsd: 0, totalIncomeTjs: 0, totalExpenseUsd: 0, totalExpenseTjs: 0 };
@@ -1330,18 +1736,25 @@ export class FinanceRepository {
       if (cur === 'USD') cashDesksMap[deskName].totalIncomeUsd += amt;
       if (cur === 'TJS') cashDesksMap[deskName].totalIncomeTjs += amt;
 
-      // Динамический учет операций, созданных после даты синхронизации
-      if (p.created_at && p.created_at > GROUND_TRUTH_CUTOFF) {
+      if (userAccess && !userAccess.isAdmin) {
+        // Менеджер: динамический учет всех его операций
         if (cur === 'USD') cashDesksMap[deskName].USD += amt;
         if (cur === 'TJS') cashDesksMap[deskName].TJS = Math.max(0, (cashDesksMap[deskName].TJS || 0) + amt);
         if (cur === 'RUB') cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) + amt;
+      } else {
+        // Администратор: динамический учет операций, созданных после даты синхронизации
+        if (p.created_at && p.created_at > GROUND_TRUTH_CUTOFF) {
+          if (cur === 'USD') cashDesksMap[deskName].USD += amt;
+          if (cur === 'TJS') cashDesksMap[deskName].TJS = Math.max(0, (cashDesksMap[deskName].TJS || 0) + amt);
+          if (cur === 'RUB') cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) + amt;
+        }
       }
     });
 
-    (expensesData || []).forEach(e => {
+    activeExpenses.forEach(e => {
       const cur = (e.currency || 'USD').toUpperCase();
       const amt = (e.amount_minor || 0) / 100;
-      const deskName = resolveDeskName(e.description, e.recipient);
+      const deskName = resolveDeskName(e.cash_desk_id, e.description, e.recipient);
 
       if (!cashDesksMap[deskName]) {
         cashDesksMap[deskName] = { name: deskName, USD: 0, TJS: 0, RUB: 0, totalIncomeUsd: 0, totalIncomeTjs: 0, totalExpenseUsd: 0, totalExpenseTjs: 0 };
@@ -1349,11 +1762,18 @@ export class FinanceRepository {
       if (cur === 'USD') cashDesksMap[deskName].totalExpenseUsd += amt;
       if (cur === 'TJS') cashDesksMap[deskName].totalExpenseTjs += amt;
 
-      // Динамический учет операций, созданных после даты синхронизации
-      if (e.created_at && e.created_at > GROUND_TRUTH_CUTOFF) {
+      if (userAccess && !userAccess.isAdmin) {
+        // Менеджер: динамический учет всех его операций
         if (cur === 'USD') cashDesksMap[deskName].USD -= amt;
         if (cur === 'TJS') cashDesksMap[deskName].TJS = Math.max(0, (cashDesksMap[deskName].TJS || 0) - amt);
         if (cur === 'RUB') cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) - amt;
+      } else {
+        // Администратор: динамический учет операций, созданных после даты синхронизации
+        if (e.created_at && e.created_at > GROUND_TRUTH_CUTOFF) {
+          if (cur === 'USD') cashDesksMap[deskName].USD -= amt;
+          if (cur === 'TJS') cashDesksMap[deskName].TJS = Math.max(0, (cashDesksMap[deskName].TJS || 0) - amt);
+          if (cur === 'RUB') cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) - amt;
+        }
       }
     });
 
@@ -1361,22 +1781,41 @@ export class FinanceRepository {
       name: d.name,
       icon: d.icon,
       balanceUsd: Number(d.USD.toFixed(2)),
-      balanceTjs: 0.00,
+      balanceTjs: (userAccess && !userAccess.isAdmin) ? Number(d.TJS.toFixed(2)) : 0.00,
       balanceRub: Number((d.RUB || 0).toFixed(2)),
       totalIncomeUsd: Number(d.totalIncomeUsd.toFixed(2)),
       totalExpenseUsd: Number(d.totalExpenseUsd.toFixed(2)),
-      totalIncomeTjs: 0.00,
-      totalExpenseTjs: 0.00,
+      totalIncomeTjs: (userAccess && !userAccess.isAdmin) ? Number(d.totalIncomeTjs.toFixed(2)) : 0.00,
+      totalExpenseTjs: (userAccess && !userAccess.isAdmin) ? Number(d.totalExpenseTjs.toFixed(2)) : 0.00,
       hasBalance: true
     }));
 
-    // Синхронизация сводного капитала компании со суммой всех касс
-    const totalCapitalUsd = Number(Object.values(cashDesksMap).reduce((sum, d) => sum + (d.USD || 0), 0).toFixed(2));
-    if (summaryByCurrency['USD']) {
-      summaryByCurrency['USD'].netCashflow = totalCapitalUsd;
-    }
-    if (summaryByCurrency['TJS']) {
-      summaryByCurrency['TJS'] = { totalIncome: 0, totalExpense: 0, netCashflow: 0 };
+    if (userAccess && !userAccess.isAdmin) {
+      // Для менеджера: сводка отражает строго баланс его персональной кассы
+      const managerDesk = Object.values(cashDesksMap)[0];
+      if (summaryByCurrency['USD']) {
+        summaryByCurrency['USD'] = {
+          totalIncome: Number((managerDesk?.totalIncomeUsd || 0).toFixed(2)),
+          totalExpense: Number((managerDesk?.totalExpenseUsd || 0).toFixed(2)),
+          netCashflow: Number((managerDesk?.USD || 0).toFixed(2))
+        };
+      }
+      if (summaryByCurrency['TJS']) {
+        summaryByCurrency['TJS'] = {
+          totalIncome: Number((managerDesk?.totalIncomeTjs || 0).toFixed(2)),
+          totalExpense: Number((managerDesk?.totalExpenseTjs || 0).toFixed(2)),
+          netCashflow: Number((managerDesk?.TJS || 0).toFixed(2))
+        };
+      }
+    } else {
+      // Синхронизация сводного капитала компании со суммой всех касс
+      const totalCapitalUsd = Number(Object.values(cashDesksMap).reduce((sum, d) => sum + (d.USD || 0), 0).toFixed(2));
+      if (summaryByCurrency['USD']) {
+        summaryByCurrency['USD'].netCashflow = totalCapitalUsd;
+      }
+      if (summaryByCurrency['TJS']) {
+        summaryByCurrency['TJS'] = { totalIncome: 0, totalExpense: 0, netCashflow: 0 };
+      }
     }
 
     return {
@@ -1384,12 +1823,24 @@ export class FinanceRepository {
       cashDesksSummary,
       availableCurrencies,
       availableYears,
-      conversionsSummary: {
+      conversionsSummary: (userAccess && !userAccess.isAdmin) ? {
+        totalConvertedFromUsd: 0,
+        totalConvertedToTjs: 0,
+        conversionOperationsCount: 0
+      } : {
         totalConvertedFromUsd: Number(totalConvertedFromUsd.toFixed(2)),
         totalConvertedToTjs: Number(totalConvertedToTjs.toFixed(2)),
         conversionOperationsCount
       },
-      fxSummary: {
+      fxSummary: (userAccess && !userAccess.isAdmin) ? {
+        avgIncomeRate: 0,
+        avgExpenseRate: 0,
+        totalTjsInflow: 0,
+        totalTjsOutflow: 0,
+        fxGainLossUsd: 0,
+        fxGainLossTjs: 0,
+        isProfit: true
+      } : {
         avgIncomeRate: Number(avgIncomeRate.toFixed(2)),
         avgExpenseRate: Number(avgExpenseRate.toFixed(2)),
         totalTjsInflow: Number(totalTjsInflow.toFixed(2)),
@@ -1398,11 +1849,69 @@ export class FinanceRepository {
         fxGainLossTjs: Number(fxGainLossTjs.toFixed(2)),
         isProfit: fxGainLossUsd >= 0
       },
-      salesSummary,
+      salesSummary: (userAccess && !userAccess.isAdmin) ? {
+        totalSoldAreaM2: 0,
+        totalDealsCount: 0,
+        totalContractSumUsd: 0,
+        totalDiscountSumUsd: 0,
+        totalReceivedSumUsd: 0,
+        totalReceivableSumUsd: 0,
+      } : salesSummary,
       monthlyData,
       chartCurrency,
       transactions: filteredTransactions
     };
+  }
+
+  /**
+   * Атомарное создание внутреннего перемещения между кассами
+   */
+  static async createCashTransfer(data, userId) {
+    const db = getDB();
+    const {
+      source_cash_desk_id,
+      destination_cash_desk_id,
+      operation_type = 'INTERNAL_CASH_TRANSFER',
+      currency = 'USD',
+      amount,
+      amount_tjs,
+      amount_usd,
+      exchange_rate,
+      date,
+      recipient,
+      description,
+      idempotency_key
+    } = data;
+
+    let finalAmountTjs = null;
+    let finalExchangeRate = null;
+    let finalAmountUsd = null;
+
+    if (currency === 'TJS') {
+      finalAmountTjs = Number(amount_tjs || amount);
+      finalExchangeRate = Number(exchange_rate);
+      finalAmountUsd = amount_usd ? Number(amount_usd) : Number((finalAmountTjs / finalExchangeRate).toFixed(2));
+    } else {
+      finalAmountUsd = Number(amount_usd || amount);
+    }
+
+    const { data: result, error } = await db.rpc('create_atomic_cash_transfer', {
+      p_source_cash_desk_id: source_cash_desk_id,
+      p_destination_cash_desk_id: destination_cash_desk_id,
+      p_operation_type: operation_type,
+      p_currency: currency,
+      p_amount_tjs: finalAmountTjs,
+      p_exchange_rate: finalExchangeRate,
+      p_amount_usd: finalAmountUsd,
+      p_transfer_date: date || new Date().toISOString().split('T')[0],
+      p_recipient: recipient || 'Касса-получатель',
+      p_description: description || 'Внутреннее перемещение между кассами',
+      p_idempotency_key: idempotency_key || null,
+      p_user_id: parseOptionalBigInt(userId) || 1
+    });
+
+    if (error) throw error;
+    return result;
   }
 
   /**

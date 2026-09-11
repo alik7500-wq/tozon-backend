@@ -377,9 +377,11 @@ export class DealsRepository {
       method: data.method || 'CASH',
       reference: data.reference || null,
       comment: data.comment || null,
+      cash_desk_id: data.cash_desk_id || null,
       created_by_user_id: userId,
       created_at: now
     }]);
+
 
     if (data.schedule_id) {
       const { data: schedule } = await db.from('deal_payment_schedules').select('*').eq('id', data.schedule_id).single();
