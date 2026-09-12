@@ -57,6 +57,9 @@ export class DealsRepository {
       const remainingDebt = Math.max(0, deal.final_price_minor - totalPaid);
       const isOverdue = deal.status === 'RESERVED' && deal.reservation_expires_at && deal.reservation_expires_at < today;
 
+      const areaM2 = deal.units?.area_m2_x100 ? (deal.units.area_m2_x100 / 100) : 0;
+      const computedDealPricePerM2 = deal.deal_price_per_m2_minor || (areaM2 > 0 ? Math.round(deal.final_price_minor / areaM2) : deal.units?.price_per_m2_minor);
+
       return {
         ...deal,
         lead_name: deal.leads?.full_name,
@@ -67,7 +70,10 @@ export class DealsRepository {
         unit_number: deal.units?.unit_number,
         unit_rooms: deal.units?.rooms,
         area_m2_x100: deal.units?.area_m2_x100,
-        price_per_m2_minor: deal.units?.price_per_m2_minor,
+        deal_price_per_m2_minor: computedDealPricePerM2,
+        unit_price_per_m2_minor: deal.units?.price_per_m2_minor,
+        price_per_m2_minor: computedDealPricePerM2,
+        exchange_rate: deal.exchange_rate || 9.29,
         floor_number: deal.units?.floors?.floor_number,
         floor_name: deal.units?.floors?.name,
         section_name: deal.units?.floors?.sections?.name,
@@ -187,6 +193,9 @@ export class DealsRepository {
     const total_paid_minor = Math.max(paymentsTotal, schedulesTotal);
     const remaining_debt_minor = Math.max(0, deal.final_price_minor - total_paid_minor);
 
+    const areaM2 = deal.units?.area_m2_x100 ? (deal.units.area_m2_x100 / 100) : 0;
+    const computedDealPricePerM2 = deal.deal_price_per_m2_minor || (areaM2 > 0 ? Math.round(deal.final_price_minor / areaM2) : deal.units?.price_per_m2_minor);
+
     return {
       ...deal,
       lead_name: deal.leads?.full_name,
@@ -202,7 +211,10 @@ export class DealsRepository {
       unit_number: deal.units?.unit_number,
       unit_rooms: deal.units?.rooms,
       area_m2_x100: deal.units?.area_m2_x100,
-      price_per_m2_minor: deal.units?.price_per_m2_minor,
+      deal_price_per_m2_minor: computedDealPricePerM2,
+      unit_price_per_m2_minor: deal.units?.price_per_m2_minor,
+      price_per_m2_minor: computedDealPricePerM2,
+      exchange_rate: deal.exchange_rate ? Number(deal.exchange_rate) : null,
       unit_status: deal.units?.status,
       layout_name: deal.units?.layout_types?.name,
       layout_image_path: deal.units?.layout_types?.image_path,
@@ -249,6 +261,9 @@ export class DealsRepository {
       reservationExpiresAt = d.toISOString().split('T')[0];
     }
 
+    const unitAreaM2 = unit.area_m2_x100 ? (unit.area_m2_x100 / 100) : 0;
+    const computedDealPricePerM2 = data.deal_price_per_m2_minor || (unitAreaM2 > 0 ? Math.round(data.final_price_minor / unitAreaM2) : (unit.price_per_m2_minor || 0));
+
     // 3. Insert Deal
     const { data: newDeal, error: dealErr } = await db.from('deals').insert([{
       contract_number: contractNumber,
@@ -261,6 +276,8 @@ export class DealsRepository {
       base_price_minor: data.base_price_minor,
       discount_minor: data.discount_minor || 0,
       final_price_minor: data.final_price_minor,
+      deal_price_per_m2_minor: computedDealPricePerM2,
+      exchange_rate: data.exchange_rate !== undefined && data.exchange_rate !== null ? parseFloat(data.exchange_rate) : null,
       down_payment_minor: data.down_payment_minor || 0,
       installment_months: data.installment_months || 0,
       barter_description: data.barter_description || null,
@@ -567,31 +584,145 @@ export class DealsRepository {
     const { data: existingDeal } = await db.from('deals').select('*').eq('id', id).single();
     if (!existingDeal) throw new AppError('Сделка не найдена', 404);
 
-    const updates = {
-      updated_at: now
-    };
+    // 1. Paid deal protection check
+    const { count: paymentsCount } = await db.from('payments').select('*', { count: 'exact', head: true }).eq('deal_id', id);
+    const hasPaidPayments = (paymentsCount || 0) > 0;
 
-    if (data.deal_date !== undefined) updates.deal_date = data.deal_date;
-    if (data.contract_number !== undefined) updates.contract_number = data.contract_number;
-    if (data.responsible_user_id !== undefined) updates.responsible_user_id = data.responsible_user_id ? parseInt(data.responsible_user_id, 10) : null;
-    if (data.reservation_expires_at !== undefined) updates.reservation_expires_at = data.reservation_expires_at;
-    if (data.payment_type !== undefined) updates.payment_type = data.payment_type;
-    if (data.installment_months !== undefined) updates.installment_months = parseInt(data.installment_months, 10) || 0;
-    if (data.barter_description !== undefined) updates.barter_description = data.barter_description;
-    if (data.barter_amount_minor !== undefined) updates.barter_amount_minor = parseInt(data.barter_amount_minor, 10) || 0;
+    const financialKeys = ['base_price_minor', 'discount_minor', 'final_price_minor', 'deal_price_per_m2_minor', 'down_payment_minor', 'installment_months', 'exchange_rate', 'payment_type'];
+    const containsFinancialUpdate = financialKeys.some(k => data[k] !== undefined);
 
-    const { error: updateErr } = await db.from('deals').update(updates).eq('id', id);
+    if (hasPaidPayments && containsFinancialUpdate) {
+      throw new AppError('Запрещено изменять финансовые условия сделки, по которой уже проведены фактические платежи', 400);
+    }
+
+    const updatesJson = {};
+    if (data.deal_date !== undefined) updatesJson.deal_date = data.deal_date;
+    if (data.contract_number !== undefined) updatesJson.contract_number = data.contract_number;
+    if (data.responsible_user_id !== undefined) updatesJson.responsible_user_id = data.responsible_user_id ? parseInt(data.responsible_user_id, 10) : null;
+    if (data.reservation_expires_at !== undefined) updatesJson.reservation_expires_at = data.reservation_expires_at;
+    if (data.payment_type !== undefined) updatesJson.payment_type = data.payment_type;
+    if (data.installment_months !== undefined) updatesJson.installment_months = parseInt(data.installment_months, 10) || 0;
+    if (data.barter_description !== undefined) updatesJson.barter_description = data.barter_description;
+    if (data.barter_amount_minor !== undefined) updatesJson.barter_amount_minor = parseInt(data.barter_amount_minor, 10) || 0;
+    if (data.base_price_minor !== undefined) updatesJson.base_price_minor = parseInt(data.base_price_minor, 10);
+    if (data.discount_minor !== undefined) updatesJson.discount_minor = parseInt(data.discount_minor, 10) || 0;
+    if (data.final_price_minor !== undefined) updatesJson.final_price_minor = parseInt(data.final_price_minor, 10);
+    if (data.deal_price_per_m2_minor !== undefined) updatesJson.deal_price_per_m2_minor = parseInt(data.deal_price_per_m2_minor, 10);
+    if (data.down_payment_minor !== undefined) updatesJson.down_payment_minor = parseInt(data.down_payment_minor, 10) || 0;
+    if (data.exchange_rate !== undefined) updatesJson.exchange_rate = data.exchange_rate ? parseFloat(data.exchange_rate) : null;
+
+    let leadUpdatesJson = null;
+    if (data.lead_name || data.lead_phone || data.passport_series || data.passport_number || data.inn) {
+      leadUpdatesJson = {};
+      if (data.lead_name) leadUpdatesJson.full_name = data.lead_name;
+      if (data.lead_phone) leadUpdatesJson.phone = data.lead_phone;
+      if (data.passport_series !== undefined) leadUpdatesJson.passport_series = data.passport_series;
+      if (data.passport_number !== undefined) leadUpdatesJson.passport_number = data.passport_number;
+      if (data.inn !== undefined) leadUpdatesJson.inn = data.inn ? String(data.inn).trim() : null;
+    }
+
+    let schedulesJson = null;
+    if (data.schedules && Array.isArray(data.schedules)) {
+      schedulesJson = data.schedules.map((s, i) => ({
+        payment_number: i + 1,
+        due_date: s.due_date,
+        amount_minor: parseInt(s.amount_minor, 10),
+        paid_amount_minor: parseInt(s.paid_amount_minor || 0, 10),
+        status: s.status || 'UPCOMING'
+      }));
+    } else if (
+      !hasPaidPayments &&
+      (data.final_price_minor !== undefined || data.down_payment_minor !== undefined || data.installment_months !== undefined || data.payment_type !== undefined) &&
+      ((updatesJson.payment_type || existingDeal.payment_type) === 'INSTALLMENT')
+    ) {
+      const finalPrice = updatesJson.final_price_minor !== undefined ? updatesJson.final_price_minor : existingDeal.final_price_minor;
+      const downPmt = updatesJson.down_payment_minor !== undefined ? updatesJson.down_payment_minor : existingDeal.down_payment_minor;
+      const months = updatesJson.installment_months !== undefined ? updatesJson.installment_months : existingDeal.installment_months;
+      const dDate = updatesJson.deal_date || existingDeal.deal_date || now.split('T')[0];
+
+      if (months > 0 && finalPrice > downPmt) {
+        const remainingMinor = finalPrice - downPmt;
+        const monthlyMinor = Math.floor(remainingMinor / months);
+        const remainderMinor = remainingMinor - (monthlyMinor * months);
+
+        schedulesJson = [];
+        const startDate = new Date(dDate);
+
+        for (let i = 1; i <= months; i++) {
+          const dueDate = new Date(startDate);
+          dueDate.setMonth(dueDate.getMonth() + i);
+
+          const paymentAmount = (i <= remainderMinor) ? monthlyMinor + 1 : monthlyMinor;
+          schedulesJson.push({
+            payment_number: i,
+            due_date: dueDate.toISOString().split('T')[0],
+            amount_minor: paymentAmount,
+            paid_amount_minor: 0,
+            status: 'UPCOMING'
+          });
+        }
+      }
+    }
+
+    // Try calling atomic Postgres RPC
+    try {
+      const { data: rpcRes, error: rpcErr } = await db.rpc('update_deal_atomic', {
+        p_deal_id: Number(id),
+        p_user_id: Number(userId),
+        p_updates_json: updatesJson,
+        p_lead_updates_json: leadUpdatesJson,
+        p_schedules_json: schedulesJson
+      });
+
+      if (!rpcErr) {
+        return this.getDealById(id);
+      }
+      if (rpcErr && rpcErr.message?.includes('PAID_DEAL_FINANCIAL_EDIT_BLOCKED')) {
+        throw new AppError('Запрещено изменять финансовые условия сделки, по которой уже проведены фактические платежи', 400);
+      }
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      if (err?.message?.includes('PAID_DEAL_FINANCIAL_EDIT_BLOCKED')) {
+        throw new AppError('Запрещено изменять финансовые условия сделки, по которой уже проведены фактические платежи', 400);
+      }
+    }
+
+    // Fallback JS-level execution with audit logging
+    const { error: updateErr } = await db.from('deals').update({ ...updatesJson, updated_at: now }).eq('id', id);
     if (updateErr) throw updateErr;
 
-    // Update buyer / lead details if provided
-    if (data.lead_name || data.lead_phone || data.passport_series || data.passport_number || data.inn) {
-      const leadUpdates = { updated_at: now };
-      if (data.lead_name) leadUpdates.full_name = data.lead_name;
-      if (data.lead_phone) leadUpdates.phone = data.lead_phone;
-      if (data.passport_series !== undefined) leadUpdates.passport_series = data.passport_series;
-      if (data.passport_number !== undefined) leadUpdates.passport_number = data.passport_number;
-      if (data.inn !== undefined) leadUpdates.inn = data.inn ? String(data.inn).trim() : null;
-      await db.from('leads').update(leadUpdates).eq('id', existingDeal.lead_id);
+    if (leadUpdatesJson) {
+      await db.from('leads').update({ ...leadUpdatesJson, updated_at: now }).eq('id', existingDeal.lead_id);
+    }
+
+    if (schedulesJson !== null) {
+      await db.from('deal_payment_schedules').delete().eq('deal_id', id);
+      if (schedulesJson.length > 0) {
+        const inserts = schedulesJson.map(s => ({
+          deal_id: id,
+          payment_number: s.payment_number,
+          due_date: s.due_date,
+          amount_minor: s.amount_minor,
+          paid_amount_minor: s.paid_amount_minor || 0,
+          status: s.status || 'UPCOMING',
+          created_at: now,
+          updated_at: now
+        }));
+        await db.from('deal_payment_schedules').insert(inserts);
+      }
+    }
+
+    // Insert audit log
+    try {
+      await db.from('deal_audit_logs').insert([{
+        deal_id: id,
+        user_id: userId,
+        action: 'UPDATE_DEAL',
+        changes_json: { old: existingDeal, updates: updatesJson },
+        created_at: now
+      }]);
+    } catch (auditErr) {
+      console.warn('Failed to insert deal audit log:', auditErr);
     }
 
     return this.getDealById(id);
