@@ -351,9 +351,17 @@ export class FinanceRepository {
     const dealId = parseOptionalBigInt(data.deal_id);
     const scheduleId = parseOptionalBigInt(data.schedule_id);
 
-    const targetCashDeskId = (userAccess && !userAccess.isAdmin) 
+    let targetCashDeskId = (userAccess && !userAccess.isAdmin) 
       ? userAccess.cashDeskId 
       : (data.cash_desk_id || null);
+
+    if (!targetCashDeskId && data.cash_desk) {
+      const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
+      const matched = (dictDesks || []).find(d => d.name.toLowerCase() === data.cash_desk.toLowerCase() || d.id === data.cash_desk || d.code === data.cash_desk);
+      if (matched) {
+        targetCashDeskId = matched.id;
+      }
+    }
 
     const { data: newPayment, error } = await db.from('payments').insert([{
       deal_id: dealId,
@@ -400,10 +408,23 @@ export class FinanceRepository {
     const now = new Date().toISOString();
 
     const { data: originalRecord } = await db.from('payments').select('*').eq('id', id).maybeSingle();
+    if (!originalRecord) {
+      throw new Error('Документ не найден');
+    }
+
+    const isConversion = originalRecord.operation_type === 'CONVERSION' || Boolean(originalRecord.conversion_id);
+    if (isConversion && data.amount !== undefined) {
+      const newMinor = Math.round(Number(data.amount) * 100);
+      if (newMinor !== originalRecord.amount_minor) {
+        throw new Error('Изменение суммы валютообменного ордера запрещено. Сумма конвертации защищена от случайного изменения.');
+      }
+    }
 
     const updatePayload = {};
-    if (data.amount !== undefined) updatePayload.amount_minor = Math.round(Number(data.amount) * 100);
-    if (data.currency) updatePayload.currency = String(data.currency).toUpperCase();
+    if (data.amount !== undefined && !isConversion) {
+      updatePayload.amount_minor = Math.round(Number(data.amount) * 100);
+    }
+    if (data.currency && !isConversion) updatePayload.currency = String(data.currency).toUpperCase();
     if (data.date || data.payment_date) updatePayload.payment_date = data.date || data.payment_date;
     if (data.method) updatePayload.method = data.method;
     if (data.reference !== undefined) updatePayload.reference = data.reference;
@@ -412,6 +433,15 @@ export class FinanceRepository {
     }
     if (data.payer_name !== undefined || data.recipient !== undefined) {
       updatePayload.payer_name = data.payer_name !== undefined ? data.payer_name : data.recipient;
+    }
+    if (data.cash_desk_id !== undefined) {
+      updatePayload.cash_desk_id = data.cash_desk_id;
+    } else if (data.cash_desk) {
+      const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
+      const matched = (dictDesks || []).find(d => d.name.toLowerCase() === data.cash_desk.toLowerCase() || d.id === data.cash_desk || d.code === data.cash_desk);
+      if (matched) {
+        updatePayload.cash_desk_id = matched.id;
+      }
     }
 
     const { data: updatedRows, error } = await db.from('payments').update(updatePayload).eq('id', id).select();
@@ -714,9 +744,17 @@ export class FinanceRepository {
 
     const runAddExpense = async () => {
       const db = getDB();
-      const targetCashDeskId = (userAccess && !userAccess.isAdmin)
+      let targetCashDeskId = (userAccess && !userAccess.isAdmin)
         ? userAccess.cashDeskId
         : (data.cash_desk_id || null);
+
+      if (!targetCashDeskId && data.cash_desk) {
+        const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
+        const matched = (dictDesks || []).find(d => d.name.toLowerCase() === data.cash_desk.toLowerCase() || d.id === data.cash_desk || d.code === data.cash_desk);
+        if (matched) {
+          targetCashDeskId = matched.id;
+        }
+      }
 
       // 1. Проверка в БД: если операция уже существует (между процессами)
       if (key) {
@@ -964,9 +1002,19 @@ export class FinanceRepository {
       throw new Error('Документ не найден');
     }
 
+    const isConversion = originalRecord.operation_type === 'CONVERSION' || Boolean(originalRecord.conversion_id);
+    if (isConversion && data.amount !== undefined) {
+      const newMinor = Math.round(Number(data.amount) * 100);
+      if (newMinor !== originalRecord.amount_minor) {
+        throw new Error('Изменение суммы валютообменного ордера запрещено. Сумма конвертации защищена от случайного изменения.');
+      }
+    }
+
     const updatePayload = {};
-    if (data.amount !== undefined) updatePayload.amount_minor = Math.round(Number(data.amount) * 100);
-    if (data.currency) updatePayload.currency = String(data.currency).toUpperCase();
+    if (data.amount !== undefined && !isConversion) {
+      updatePayload.amount_minor = Math.round(Number(data.amount) * 100);
+    }
+    if (data.currency && !isConversion) updatePayload.currency = String(data.currency).toUpperCase();
     if (data.date || data.expense_date) updatePayload.expense_date = data.date || data.expense_date;
     if (data.category) updatePayload.category = data.category;
     if (data.method) updatePayload.method = data.method;
@@ -974,6 +1022,15 @@ export class FinanceRepository {
     if (data.reference !== undefined) updatePayload.reference = data.reference;
     if (data.description !== undefined || data.comment !== undefined) {
       updatePayload.description = data.description !== undefined ? data.description : data.comment;
+    }
+    if (data.cash_desk_id !== undefined) {
+      updatePayload.cash_desk_id = data.cash_desk_id;
+    } else if (data.cash_desk) {
+      const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
+      const matched = (dictDesks || []).find(d => d.name.toLowerCase() === data.cash_desk.toLowerCase() || d.id === data.cash_desk || d.code === data.cash_desk);
+      if (matched) {
+        updatePayload.cash_desk_id = matched.id;
+      }
     }
 
     const { data: updatedRows, error } = await db.from('expenses').update(updatePayload).eq('id', id).select();
@@ -1026,12 +1083,24 @@ export class FinanceRepository {
       const ref = originalRecord.reference || '';
       const desc = (isExp ? originalRecord.description : originalRecord.comment) || '';
       const isConv = (originalRecord.category === 'Конвертация валюты') ||
+                     (originalRecord.operation_type === 'CONVERSION') ||
+                     Boolean(originalRecord.conversion_id) ||
                      ref.includes('КОНВ') || ref.includes('ОБМЕН') ||
-                     (originalRecord.recipient && originalRecord.recipient.includes('Касса')) ||
-                     (originalRecord.payer_name && originalRecord.payer_name.includes('Касса')) ||
                      desc.toLowerCase().includes('обмен') || desc.toLowerCase().includes('конвертаци');
 
       if (!isConv) return;
+
+      // CRITICAL GUARD: Only sync amount if explicitly provided and actually changed!
+      // If user only changed cash desk, date, or comment, NEVER mutate paired amount!
+      const shouldSyncAmount = updatedData.amount !== undefined && 
+                               Math.round(Number(updatedData.amount) * 100) !== originalRecord.amount_minor;
+
+      const newDate = updatedData.date || updatedData.expense_date || updatedData.payment_date;
+
+      // If neither amount nor date changed, DO NOT TOUCH paired record!
+      if (!shouldSyncAmount && !newDate) {
+        return;
+      }
 
       // Extract exchange rate from description/comment or default to 10.90
       let rate = 10.90;
@@ -1040,53 +1109,59 @@ export class FinanceRepository {
         rate = parseFloat(rateMatch[1].replace(',', '.'));
       }
 
-      const newAmount = Number(updatedData.amount !== undefined ? updatedData.amount : ((originalRecord.amount_minor || 0) / 100));
-      const newDate = updatedData.date || updatedData.expense_date || updatedData.payment_date || originalRecord.expense_date || originalRecord.payment_date;
+      const newAmount = shouldSyncAmount ? Number(updatedData.amount) : ((originalRecord.amount_minor || 0) / 100);
+      const targetDate = newDate || originalRecord.expense_date || originalRecord.payment_date;
       const refSuffix = ref.replace(/^(ПКО-|ОБМЕН-|КОНВ-)/, '');
 
       if (isExp) {
-        // Find paired payment in payments table
-        const { data: allPayments } = await db.from('payments').select('*');
-        const paired = (allPayments || []).filter(p => {
-          const pRef = p.reference || '';
-          const pComment = p.comment || '';
-          return (refSuffix && pRef.includes(refSuffix)) ||
-                 pComment.includes(ref) ||
-                 (p.payer_name && p.payer_name.includes('Касса') && p.payment_date === originalRecord.expense_date);
-        });
+        // Find paired payment strictly by conversion_id or exact refSuffix
+        let paired = [];
+        if (originalRecord.conversion_id) {
+          const { data } = await db.from('payments').select('*').eq('conversion_id', originalRecord.conversion_id);
+          paired = data || [];
+        } else if (refSuffix) {
+          const { data } = await db.from('payments').select('*').ilike('reference', `%${refSuffix}%`);
+          paired = data || [];
+        }
 
         for (const p of paired) {
-          const isTargetTjs = (p.currency || 'TJS').toUpperCase() === 'TJS';
-          const targetAmount = isTargetTjs ? (newAmount * rate) : (newAmount / rate);
-          const targetMinor = Math.round(targetAmount * 100);
+          const updateObj = {};
+          if (newDate) updateObj.payment_date = targetDate;
+          if (shouldSyncAmount) {
+            const isTargetTjs = (p.currency || 'TJS').toUpperCase() === 'TJS';
+            const targetAmount = isTargetTjs ? (newAmount * rate) : (newAmount / rate);
+            updateObj.amount_minor = Math.round(targetAmount * 100);
+            updateObj.comment = `Поступление от обмена ${newAmount} ${originalRecord.currency || 'USD'} по курсу ${rate}`;
+          }
 
-          await db.from('payments').update({
-            amount_minor: targetMinor,
-            payment_date: newDate,
-            comment: `Поступление от обмена ${newAmount} ${originalRecord.currency || 'USD'} по курсу ${rate}`
-          }).eq('id', p.id);
+          if (Object.keys(updateObj).length > 0) {
+            await db.from('payments').update(updateObj).eq('id', p.id);
+          }
         }
       } else {
-        // Find paired expense in expenses table
-        const { data: allExpenses } = await db.from('expenses').select('*');
-        const paired = (allExpenses || []).filter(e => {
-          const eRef = e.reference || '';
-          const eDesc = e.description || '';
-          return (refSuffix && eRef.includes(refSuffix)) ||
-                 eDesc.includes(ref) ||
-                 (e.recipient && e.recipient.includes('Касса') && e.expense_date === originalRecord.payment_date);
-        });
+        // Find paired expense strictly by conversion_id or exact refSuffix
+        let paired = [];
+        if (originalRecord.conversion_id) {
+          const { data } = await db.from('expenses').select('*').eq('conversion_id', originalRecord.conversion_id);
+          paired = data || [];
+        } else if (refSuffix) {
+          const { data } = await db.from('expenses').select('*').ilike('reference', `%${refSuffix}%`);
+          paired = data || [];
+        }
 
         for (const e of paired) {
-          const isSourceUsd = (e.currency || 'USD').toUpperCase() === 'USD';
-          const sourceAmount = isSourceUsd ? (newAmount / rate) : (newAmount * rate);
-          const sourceMinor = Math.round(sourceAmount * 100);
+          const updateObj = {};
+          if (newDate) updateObj.expense_date = targetDate;
+          if (shouldSyncAmount) {
+            const isSourceUsd = (e.currency || 'USD').toUpperCase() === 'USD';
+            const sourceAmount = isSourceUsd ? (newAmount / rate) : (newAmount * rate);
+            updateObj.amount_minor = Math.round(sourceAmount * 100);
+            updateObj.description = `Обмен ${sourceAmount.toFixed(2)} ${e.currency || 'USD'} в ${originalRecord.currency || 'TJS'} по курсу ${rate}`;
+          }
 
-          await db.from('expenses').update({
-            amount_minor: sourceMinor,
-            expense_date: newDate,
-            description: `Обмен ${sourceAmount.toFixed(2)} ${e.currency || 'USD'} в ${originalRecord.currency || 'TJS'} по курсу ${rate}`
-          }).eq('id', e.id);
+          if (Object.keys(updateObj).length > 0) {
+            await db.from('expenses').update(updateObj).eq('id', e.id);
+          }
         }
       }
     } catch (err) {
@@ -1106,9 +1181,9 @@ export class FinanceRepository {
       const ref = record.reference || '';
       const desc = (isExp ? record.description : record.comment) || '';
       const isConv = (record.category === 'Конвертация валюты') ||
+                     (record.operation_type === 'CONVERSION') ||
+                     Boolean(record.conversion_id) ||
                      ref.includes('КОНВ') || ref.includes('ОБМЕН') ||
-                     (record.recipient && record.recipient.includes('Касса')) ||
-                     (record.payer_name && record.payer_name.includes('Касса')) ||
                      desc.toLowerCase().includes('обмен') || desc.toLowerCase().includes('конвертаци');
 
       if (!isConv) return;
@@ -1116,32 +1191,32 @@ export class FinanceRepository {
       const refSuffix = ref.replace(/^(ПКО-|ОБМЕН-|КОНВ-)/, '');
 
       if (isExp) {
-        const { data: allPayments } = await db.from('payments').select('id, reference, comment, payer_name, payment_date');
-        const paired = (allPayments || []).filter(p => {
-          const pRef = p.reference || '';
-          const pComment = p.comment || '';
-          return (refSuffix && pRef.includes(refSuffix)) ||
-                 pComment.includes(ref) ||
-                 (p.payer_name && p.payer_name.includes('Касса') && p.payment_date === record.expense_date);
-        });
+        let paired = [];
+        if (record.conversion_id) {
+          const { data } = await db.from('payments').select('id').eq('conversion_id', record.conversion_id);
+          paired = data || [];
+        } else if (refSuffix) {
+          const { data } = await db.from('payments').select('id').ilike('reference', `%${refSuffix}%`);
+          paired = data || [];
+        }
         for (const p of paired) {
           await db.from('payments').delete().eq('id', p.id);
         }
       } else {
-        const { data: allExpenses } = await db.from('expenses').select('id, reference, description, recipient, expense_date');
-        const paired = (allExpenses || []).filter(e => {
-          const eRef = e.reference || '';
-          const eDesc = e.description || '';
-          return (refSuffix && eRef.includes(refSuffix)) ||
-                 eDesc.includes(ref) ||
-                 (e.recipient && e.recipient.includes('Касса') && e.expense_date === record.payment_date);
-        });
+        let paired = [];
+        if (record.conversion_id) {
+          const { data } = await db.from('expenses').select('id').eq('conversion_id', record.conversion_id);
+          paired = data || [];
+        } else if (refSuffix) {
+          const { data } = await db.from('expenses').select('id').ilike('reference', `%${refSuffix}%`);
+          paired = data || [];
+        }
         for (const e of paired) {
           await db.from('expenses').delete().eq('id', e.id);
         }
       }
     } catch (err) {
-      console.warn('deletePairedConversion warning:', err.message);
+      console.warn('deletePairedConversion error:', err.message);
     }
   }
 
@@ -1161,9 +1236,28 @@ export class FinanceRepository {
     const fromAmountMinor = Math.round(fromAmount * 100);
     const toAmountMinor = Math.round(toAmount * 100);
 
-    const convId = Date.now().toString().slice(-5);
-    const expRef = data.reference || `ОБМЕН-${convId}`;
+    const convId = `conv_${Date.now()}`;
+    const expRef = data.reference || `ОБМЕН-${Date.now().toString().slice(-5)}`;
     const incRef = `ПКО-${expRef}`;
+
+    // Resolve structured cash desk IDs
+    const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
+    const desks = dictDesks || [];
+
+    let fromCashDeskId = data.from_cash_desk_id || data.source_cash_desk_id || null;
+    let toCashDeskId = data.to_cash_desk_id || data.destination_cash_desk_id || null;
+
+    if (!fromCashDeskId) {
+      const defaultFrom = desks.find(d => d.code === 'SALES_MANAGER') || desks[0];
+      fromCashDeskId = defaultFrom?.id || null;
+    }
+    if (!toCashDeskId) {
+      const defaultTo = desks.find(d => d.code === 'MAIN_CASHIER') || desks[1] || desks[0];
+      toCashDeskId = defaultTo?.id || null;
+    }
+
+    const fromDeskObj = desks.find(d => d.id === fromCashDeskId);
+    const toDeskObj = desks.find(d => d.id === toCashDeskId);
 
     // 1. Списание с кассы-источника (USD)
     const { data: exp, error: expErr } = await db.from('expenses').insert([{
@@ -1173,8 +1267,10 @@ export class FinanceRepository {
       category: 'Конвертация валюты',
       method: data.method || 'CASH',
       reference: expRef,
-      recipient: `Касса ${toCurrency}`,
+      recipient: toDeskObj ? toDeskObj.name : `Касса ${toCurrency}`,
       description: `Обмен ${fromAmount.toLocaleString()} ${fromCurrency} в ${toCurrency} по курсу ${rate}. Назначение: ${data.comment || 'Пополнение кассы'}`,
+      cash_desk_id: fromCashDeskId,
+      conversion_id: convId,
       created_by_user_id: userId || null,
       created_at: now
     }]).select().single();
@@ -1187,8 +1283,10 @@ export class FinanceRepository {
       payment_date: date,
       method: data.method || 'CASH',
       reference: incRef,
-      payer_name: `Касса ${fromCurrency}`,
+      payer_name: fromDeskObj ? fromDeskObj.name : `Касса ${fromCurrency}`,
       comment: `Поступление от обмена ${fromAmount.toLocaleString()} ${fromCurrency} по курсу ${rate}`,
+      cash_desk_id: toCashDeskId,
+      conversion_id: convId,
       created_by_user_id: userId || null,
       created_at: now
     }]).select().single();
@@ -1209,6 +1307,7 @@ export class FinanceRepository {
     const { data: paymentsData, error: pErr } = await db.from('payments').select(`
       id, deal_id, amount_minor, currency, payment_date, method, reference, comment, payer_name, created_at,
       status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs, amount_usd, exchange_rate,
+      conversion_id,
       deals ( id, contract_number, currency, deal_date, created_at, leads ( full_name, inn ) ),
       users:created_by_user_id ( name )
     `);
@@ -1218,6 +1317,7 @@ export class FinanceRepository {
       id, amount_minor, currency, expense_date, category, method, reference, recipient, description, created_at,
       exchange_rate, amount_usd, conversion_expense_id,
       status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs,
+      conversion_id,
       users:created_by_user_id ( name )
     `);
     if (eErr) throw eErr;
@@ -1469,6 +1569,72 @@ export class FinanceRepository {
       m.net = Number((m.income - m.expense).toFixed(2));
     });
 
+    // Сводные остатки по каждой конкретной кассе компании строго на основе справочника
+    const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true).order('sort_order');
+    let activeDesks = dictDesks && dictDesks.length > 0 ? dictDesks : [
+      { code: 'MAIN_CASHIER', name: 'Касса компании "Тозон" (Илхомчон)' },
+      { code: 'SALES_MANAGER', name: 'Касса Отдела продаж (Акмалхон)' },
+      { code: 'SALES_MANAGER_Dadojon', name: 'Касса менеждера (Дадочон)' },
+      { code: 'BANK_ACCOUNT', name: 'Расчетный счет в банке (Безналичные)' }
+    ];
+
+    const mainCashier = activeDesks.find(d => d.code === 'MAIN_CASHIER') || activeDesks[0];
+
+    const resolveDeskName = (cashDeskId, rawComment, rawRecipient) => {
+      if (cashDeskId) {
+        const directDesk = activeDesks.find(d => d.id === cashDeskId || d.code === cashDeskId);
+        if (directDesk) return directDesk.name;
+      }
+      const text = `${rawComment || ''} ${rawRecipient || ''}`;
+      const match = text.match(/\[Касса:\s*([^\]]+)\]/i);
+      let parsed = match ? match[1].trim() : '';
+      if (!parsed && rawRecipient && rawRecipient.startsWith('Касса ')) {
+        parsed = rawRecipient.trim();
+      }
+      if (!parsed) {
+        return mainCashier.name;
+      }
+      const directMatch = activeDesks.find(d => d.name.toLowerCase() === parsed.toLowerCase());
+      if (directMatch) return directMatch.name;
+
+      const prefixMatch = activeDesks.find(d => parsed.toLowerCase().startsWith(d.name.toLowerCase()) || d.name.toLowerCase().startsWith(parsed.toLowerCase()));
+      if (prefixMatch) return prefixMatch.name;
+
+      if (parsed.includes('Бухгалтерия') || parsed.includes('Главная касса')) {
+        return mainCashier.name;
+      }
+      return mainCashier.name;
+    };
+
+    // Pre-map conversion and transfer counterparts
+    const convDeskMap = new Map();
+    (expensesData || []).forEach(e => {
+      if (e.conversion_id) {
+        const deskName = resolveDeskName(e.cash_desk_id, e.description, e.recipient);
+        convDeskMap.set(`exp_${e.conversion_id}`, { deskName, deskId: e.cash_desk_id });
+      }
+    });
+    (paymentsData || []).forEach(p => {
+      if (p.conversion_id) {
+        const deskName = resolveDeskName(p.cash_desk_id, p.comment, p.payer_name);
+        convDeskMap.set(`pay_${p.conversion_id}`, { deskName, deskId: p.cash_desk_id });
+      }
+    });
+
+    const transferDeskMap = new Map();
+    (expensesData || []).forEach(e => {
+      if (e.transfer_id) {
+        const deskName = resolveDeskName(e.cash_desk_id, e.description, e.recipient);
+        transferDeskMap.set(`exp_${e.transfer_id}`, { deskName, deskId: e.cash_desk_id });
+      }
+    });
+    (paymentsData || []).forEach(p => {
+      if (p.transfer_id) {
+        const deskName = resolveDeskName(p.cash_desk_id, p.comment, p.payer_name);
+        transferDeskMap.set(`pay_${p.transfer_id}`, { deskName, deskId: p.cash_desk_id });
+      }
+    });
+
     // Unified Cashflow Ledger (transactions)
     const transactions = [];
 
@@ -1502,6 +1668,15 @@ export class FinanceRepository {
         title = 'Поступление от конвертации';
       }
 
+      const deskName = resolveDeskName(p.cash_desk_id, p.comment, p.payer_name);
+      let counterpartDeskName = null;
+      if (p.conversion_id && convDeskMap.has(`exp_${p.conversion_id}`)) {
+        counterpartDeskName = convDeskMap.get(`exp_${p.conversion_id}`).deskName;
+      } else if (p.transfer_id && transferDeskMap.has(`exp_${p.transfer_id}`)) {
+        counterpartDeskName = transferDeskMap.get(`exp_${p.transfer_id}`).deskName;
+      }
+      const isBank = p.method === 'BANK_TRANSFER' || p.cash_desk_id === 'BANK_ACCOUNT' || deskName.includes('Расчетный счет');
+
       transactions.push({
         id: `inc-${p.id}`,
         rawId: p.id,
@@ -1528,8 +1703,14 @@ export class FinanceRepository {
         voidedAt: p.voided_at || null,
         transferId: p.transfer_id || null,
         transfer_id: p.transfer_id || null,
+        conversion_id: p.conversion_id || null,
         cashDeskId: p.cash_desk_id || null,
         cash_desk_id: p.cash_desk_id || null,
+        cashDeskName: deskName,
+        cash_desk_name: deskName,
+        counterpart_cash_desk_name: counterpartDeskName,
+        account_id: isBank ? (p.cash_desk_id || 'BANK_ACCOUNT') : null,
+        account_name: isBank ? deskName : null,
         operationType: p.operation_type || 'STANDARD',
         operation_type: p.operation_type || 'STANDARD',
         amount_usd: p.amount_usd ? Number(p.amount_usd) : null,
@@ -1555,6 +1736,15 @@ export class FinanceRepository {
         ? 'Списание на конвертацию'
         : `Расход: ${e.category || 'Прочее'}`;
 
+      const deskName = resolveDeskName(e.cash_desk_id, e.description, e.recipient);
+      let counterpartDeskName = null;
+      if (e.conversion_id && convDeskMap.has(`pay_${e.conversion_id}`)) {
+        counterpartDeskName = convDeskMap.get(`pay_${e.conversion_id}`).deskName;
+      } else if (e.transfer_id && transferDeskMap.has(`pay_${e.transfer_id}`)) {
+        counterpartDeskName = transferDeskMap.get(`pay_${e.transfer_id}`).deskName;
+      }
+      const isBank = e.method === 'BANK_TRANSFER' || e.cash_desk_id === 'BANK_ACCOUNT' || deskName.includes('Расчетный счет');
+
       transactions.push({
         id: `exp-${e.id}`,
         rawId: e.id,
@@ -1576,8 +1766,14 @@ export class FinanceRepository {
         voidedAt: e.voided_at || null,
         transferId: e.transfer_id || null,
         transfer_id: e.transfer_id || null,
+        conversion_id: e.conversion_id || null,
         cashDeskId: e.cash_desk_id || null,
         cash_desk_id: e.cash_desk_id || null,
+        cashDeskName: deskName,
+        cash_desk_name: deskName,
+        counterpart_cash_desk_name: counterpartDeskName,
+        account_id: isBank ? (e.cash_desk_id || 'BANK_ACCOUNT') : null,
+        account_name: isBank ? deskName : null,
         operationType: e.operation_type || 'STANDARD',
         operation_type: e.operation_type || 'STANDARD',
         exchange_rate: e.exchange_rate ? Number(e.exchange_rate) : null,
@@ -1610,48 +1806,11 @@ export class FinanceRepository {
       );
     }
 
-    // Сводные остатки по каждой конкретной кассе компании строго на основе справочника
-    const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true).order('sort_order');
-    let activeDesks = dictDesks && dictDesks.length > 0 ? dictDesks : [
-      { code: 'MAIN_CASHIER', name: 'Касса компании "Тозон" (Илхомчон)' },
-      { code: 'SALES_MANAGER', name: 'Касса Отдела продаж (Акмалхон)' },
-      { code: 'SALES_MANAGER_Dadojon', name: 'Касса менеждера (Дадочон)' },
-      { code: 'BANK_ACCOUNT', name: 'Расчетный счет в банке (Безналичные)' }
-    ];
-
     // Изоляция касс для менеджера
     if (userAccess && !userAccess.isAdmin) {
       activeDesks = activeDesks.filter(d => d.id === userAccess.cashDeskId || d.code === userAccess.cashDeskId);
       filteredTransactions = filteredTransactions.filter(t => t.cashDeskId === userAccess.cashDeskId);
     }
-
-    const mainCashier = activeDesks.find(d => d.code === 'MAIN_CASHIER') || activeDesks[0];
-
-    const resolveDeskName = (cashDeskId, rawComment, rawRecipient) => {
-      if (cashDeskId) {
-        const directDesk = activeDesks.find(d => d.id === cashDeskId || d.code === cashDeskId);
-        if (directDesk) return directDesk.name;
-      }
-      const text = `${rawComment || ''} ${rawRecipient || ''}`;
-      const match = text.match(/\[Касса:\s*([^\]]+)\]/i);
-      let parsed = match ? match[1].trim() : '';
-      if (!parsed && rawRecipient && rawRecipient.startsWith('Касса ')) {
-        parsed = rawRecipient.trim();
-      }
-      if (!parsed) {
-        return mainCashier.name;
-      }
-      const directMatch = activeDesks.find(d => d.name.toLowerCase() === parsed.toLowerCase());
-      if (directMatch) return directMatch.name;
-
-      const prefixMatch = activeDesks.find(d => parsed.toLowerCase().startsWith(d.name.toLowerCase()) || d.name.toLowerCase().startsWith(parsed.toLowerCase()));
-      if (prefixMatch) return prefixMatch.name;
-
-      if (parsed.includes('Бухгалтерия') || parsed.includes('Главная касса')) {
-        return mainCashier.name;
-      }
-      return mainCashier.name;
-    };
 
     // Динамический расчёт остатков касс (Strictly Dynamic SUM(PKO) - SUM(RKO))
     const cashDesksMap = {};

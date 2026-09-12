@@ -38,12 +38,14 @@ router.get('/income', getIncome);
 router.get('/income/:id', getIncomeById);
 router.post('/income', requireCashDeskIncome, addIncome);
 router.put('/income/:id', requireCashDeskMutation, updateIncome);
+router.patch('/income/:id', requireCashDeskMutation, updateIncome);
 router.delete('/income/:id', requireCashDeskMutation, deleteIncome);
 
 router.get('/expenses', getExpenses);
 router.get('/expenses/:id', getExpenseById);
 router.post('/expenses', requireCashDeskExpense, addExpense);
 router.put('/expenses/:id', requireCashDeskMutation, updateExpense);
+router.patch('/expenses/:id', requireCashDeskMutation, updateExpense);
 router.delete('/expenses/:id', requireCashDeskMutation, deleteExpense);
 
 router.post('/transfers', requireCashTransferPermission, createCashTransfer);
