@@ -363,27 +363,148 @@ export class DealsRepository {
     const now = new Date().toISOString();
     const paymentDate = data.payment_date || now.split('T')[0];
     const amountMinor = data.amount_minor;
+    const idempotencyKey = data.idempotency_key;
 
-    if (!amountMinor || amountMinor <= 0) throw new AppError('Сумма платежа должна быть больше нуля', 400);
+    if (!idempotencyKey || !idempotencyKey.trim()) {
+      throw new AppError('Ключ идемпотентности обязателен для проведения ПКО', 400);
+    }
+    if (!amountMinor || amountMinor <= 0) {
+      throw new AppError('Сумма платежа должна быть больше нуля', 400);
+    }
+
+    // 1. Попытка вызова атомарной PostgreSQL RPC функции (единая транзакция)
+    let paymentRecord = null;
+    let isDuplicate = false;
+
+    try {
+      const { data: rpcResult, error: rpcErr } = await db.rpc('create_atomic_payment', {
+        p_deal_id: Number(dealId),
+        p_schedule_id: data.schedule_id ? Number(data.schedule_id) : null,
+        p_amount_minor: Number(amountMinor),
+        p_payment_date: String(paymentDate),
+        p_method: String(data.method || 'CASH'),
+        p_reference: data.reference ? String(data.reference) : null,
+        p_comment: data.comment ? String(data.comment) : null,
+        p_cash_desk_id: data.cash_desk_id,
+        p_created_by_user_id: Number(userId),
+        p_idempotency_key: String(idempotencyKey),
+        p_currency: String(data.currency || 'USD'),
+        p_payer_name: data.payer_name ? String(data.payer_name) : null,
+        p_amount_tjs: data.amount_tjs !== undefined && data.amount_tjs !== null ? Number(data.amount_tjs) : null,
+        p_amount_usd: data.amount_usd !== undefined && data.amount_usd !== null ? Number(data.amount_usd) : null,
+        p_exchange_rate: data.exchange_rate !== undefined && data.exchange_rate !== null ? Number(data.exchange_rate) : null
+      });
+
+      if (!rpcErr && rpcResult && rpcResult.length > 0) {
+        const resRow = rpcResult[0];
+        isDuplicate = Boolean(resRow.is_duplicate);
+        const { data: pData } = await db.from('payments').select('*').eq('id', resRow.payment_id).single();
+        paymentRecord = pData;
+
+        const fullDeal = await this.getDealById(dealId);
+        return {
+          ...fullDeal,
+          payment: paymentRecord,
+          isDuplicate
+        };
+      }
+
+      if (rpcErr && (rpcErr.code === '42883' || rpcErr.message?.includes('function') || rpcErr.message?.includes('does not exist'))) {
+        // Миграция 018 еще не применена в окружении — фолбэк с проверкой по idempotency_key
+        return this.recordPaymentFallback(dealId, data, userId);
+      } else if (rpcErr) {
+        throw new AppError(rpcErr.message || 'Ошибка атомарного проведения ПКО', 400);
+      }
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+      return this.recordPaymentFallback(dealId, data, userId);
+    }
+
+    const fullDeal = await this.getDealById(dealId);
+    return {
+      ...fullDeal,
+      payment: paymentRecord,
+      isDuplicate
+    };
+  }
+
+  static async recordPaymentFallback(dealId, data, userId) {
+    const db = getDB();
+    const now = new Date().toISOString();
+    const paymentDate = data.payment_date || now.split('T')[0];
+    const amountMinor = data.amount_minor;
+    const idempotencyKey = data.idempotency_key || null;
 
     const { data: deal } = await db.from('deals').select('*').eq('id', dealId).single();
     if (!deal) throw new AppError('Сделка не найдена', 404);
 
-    await db.from('payments').insert([{
-      deal_id: dealId,
-      schedule_id: data.schedule_id || null,
-      amount_minor: amountMinor,
-      payment_date: paymentDate,
-      method: data.method || 'CASH',
-      reference: data.reference || null,
-      comment: data.comment || null,
-      cash_desk_id: data.cash_desk_id || null,
-      created_by_user_id: userId,
-      created_at: now
-    }]);
+    if (idempotencyKey) {
+      const { data: existingPayment } = await db
+        .from('payments')
+        .select('*')
+        .eq('idempotency_key', idempotencyKey)
+        .maybeSingle();
 
+      if (existingPayment) {
+        const fullDeal = await this.getDealById(dealId);
+        return {
+          ...fullDeal,
+          payment: existingPayment,
+          isDuplicate: true
+        };
+      }
+    }
 
-    if (data.schedule_id) {
+    let createdPayment = null;
+    try {
+      const { data: inserted, error: insErr } = await db.from('payments').insert([{
+        deal_id: dealId,
+        schedule_id: data.schedule_id || null,
+        amount_minor: amountMinor,
+        payment_date: paymentDate,
+        method: data.method || 'CASH',
+        reference: data.reference || null,
+        comment: data.comment || null,
+        cash_desk_id: data.cash_desk_id || null,
+        created_by_user_id: userId,
+        idempotency_key: idempotencyKey,
+        created_at: now
+      }]).select().single();
+
+      if (insErr) {
+        if (insErr.code === '23505' || insErr.message?.includes('duplicate key') || insErr.message?.includes('idempotency_key')) {
+          if (idempotencyKey) {
+            const { data: existing } = await db.from('payments').select('*').eq('idempotency_key', idempotencyKey).maybeSingle();
+            if (existing) {
+              const fullDeal = await this.getDealById(dealId);
+              return {
+                ...fullDeal,
+                payment: existing,
+                isDuplicate: true
+              };
+            }
+          }
+        }
+        throw insErr;
+      }
+
+      createdPayment = inserted;
+    } catch (err) {
+      if (idempotencyKey) {
+        const { data: existing } = await db.from('payments').select('*').eq('idempotency_key', idempotencyKey).maybeSingle();
+        if (existing) {
+          const fullDeal = await this.getDealById(dealId);
+          return {
+            ...fullDeal,
+            payment: existing,
+            isDuplicate: true
+          };
+        }
+      }
+      throw err;
+    }
+
+    if (data.schedule_id && createdPayment) {
       const { data: schedule } = await db.from('deal_payment_schedules').select('*').eq('id', data.schedule_id).single();
       if (schedule) {
         const newPaid = (schedule.paid_amount_minor || 0) + amountMinor;
@@ -392,7 +513,12 @@ export class DealsRepository {
       }
     }
 
-    return this.getDealById(dealId);
+    const fullDeal = await this.getDealById(dealId);
+    return {
+      ...fullDeal,
+      payment: createdPayment,
+      isDuplicate: false
+    };
   }
 
   static async getAvailableUnits(projectId) {

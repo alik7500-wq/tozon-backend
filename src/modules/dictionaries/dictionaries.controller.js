@@ -5,9 +5,18 @@ export const getDictionaryItems = async (req, res) => {
     const { type } = req.query;
     let data = await DictionariesRepository.getItems(type);
 
-    // Изоляция касс для менеджеров: чужие кассы не возвращаются в справочнике
+    // Изоляция касс для менеджеров:
+    // Если purpose === 'income' — возвращаем кассы, куда разрешен приход (incomeDeskIds)
+    // Иначе (для балансов и общих списков) — возвращаем только кассы, где разрешен просмотр (viewableDeskIds)
     if (type === 'CASH_DESK' && req.cashDeskAccess && !req.cashDeskAccess.isAdmin) {
-      data = (data || []).filter(d => d.id === req.cashDeskAccess.cashDeskId || d.code === req.cashDeskAccess.cashDeskId);
+      const isIncomePurpose = req.query.purpose === 'income' || req.query.for_income === 'true';
+      if (isIncomePurpose) {
+        const allowedIncomeIds = req.cashDeskAccess.incomeDeskIds || [req.cashDeskAccess.cashDeskId];
+        data = (data || []).filter(d => allowedIncomeIds.includes(d.id) || allowedIncomeIds.includes(d.code));
+      } else {
+        const allowedViewIds = req.cashDeskAccess.viewableDeskIds || [req.cashDeskAccess.cashDeskId];
+        data = (data || []).filter(d => allowedViewIds.includes(d.id) || allowedViewIds.includes(d.code));
+      }
     }
 
     res.json({ success: true, data });

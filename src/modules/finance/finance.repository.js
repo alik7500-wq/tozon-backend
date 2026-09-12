@@ -199,6 +199,7 @@ export class FinanceRepository {
     const { data: paymentsData, error } = await db.from('payments').select(`
       id, deal_id, schedule_id, amount_minor, currency, payment_date, method, reference, comment, payer_name, created_at,
       status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs, amount_usd, exchange_rate,
+      created_by_user_id,
       deals ( id, contract_number, currency, final_price_minor, deal_date, created_at, leads ( full_name, phone, inn ) ),
       users:created_by_user_id ( id, name )
     `).order('payment_date', { ascending: false });
@@ -251,13 +252,18 @@ export class FinanceRepository {
           amountUsd: p.amount_usd ? Number(p.amount_usd) : null,
           exchangeRate: p.exchange_rate ? Number(p.exchange_rate) : null,
           createdByName: p.users?.name || 'Система',
+          createdByUserId: p.created_by_user_id || p.users?.id || null,
           createdAt: p.created_at,
         };
       });
 
-    // Строгая серверная изоляция для менеджера
+    // Серверная изоляция для менеджера: видит ПКО своей кассы ИЛИ оформленные лично им
     if (userAccess && !userAccess.isAdmin) {
-      normalizedList = normalizedList.filter(item => item.cashDeskId === userAccess.cashDeskId);
+      normalizedList = normalizedList.filter(item => {
+        const belongsToUserDesk = (userAccess.viewableDeskIds && userAccess.viewableDeskIds.includes(item.cashDeskId)) || (userAccess.cashDeskId && item.cashDeskId === userAccess.cashDeskId);
+        const createdByUser = userAccess.userId && Number(item.createdByUserId) === Number(userAccess.userId);
+        return belongsToUserDesk || createdByUser;
+      });
     } else if (filters.cash_desk_id) {
       normalizedList = normalizedList.filter(item => item.cashDeskId === filters.cash_desk_id);
     }
@@ -482,7 +488,9 @@ export class FinanceRepository {
     }
 
     if (userAccess && !userAccess.isAdmin) {
-      if (payment.cash_desk_id !== userAccess.cashDeskId) {
+      const belongsToUserDesk = (userAccess.viewableDeskIds && userAccess.viewableDeskIds.includes(payment.cash_desk_id)) || (userAccess.cashDeskId && payment.cash_desk_id === userAccess.cashDeskId);
+      const createdByUser = userAccess.userId && Number(payment.created_by_user_id) === Number(userAccess.userId);
+      if (!belongsToUserDesk && !createdByUser) {
         const err = new Error('Документ не найден');
         err.statusCode = 404;
         throw err;

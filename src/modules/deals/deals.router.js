@@ -132,23 +132,24 @@ router.post('/:id/extend-reservation', async (req, res, next) => {
 router.post('/:id/payments', resolveCashDeskAccess, async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
-    const { amount_minor, payment_date, method, schedule_id, reference, comment, cash_desk_id } = req.body;
+    const { amount_minor, payment_date, method, schedule_id, reference, comment, cash_desk_id, idempotency_key } = req.body;
     if (!amount_minor || amount_minor <= 0) {
       return next(new AppError('Сумма платежа обязательна и должна быть больше нуля', 400));
     }
 
+    if (!cash_desk_id) {
+      return next(new AppError('Касса получения средств обязательна для выбора', 400));
+    }
+
     let finalCashDeskId = cash_desk_id;
     if (req.cashDeskAccess && !req.cashDeskAccess.isAdmin) {
-      // Для менеджера касса принудительно фиксируется на его собственной
-      finalCashDeskId = req.cashDeskAccess.cashDeskId;
-    } else {
-      // Для администратора касса обязательна
-      if (!finalCashDeskId) {
-        return next(new AppError('Касса получения средств обязательна для выбора', 400));
+      // Для менеджера касса зачисления должна входить в список разрешенных для приема платежа (incomeDeskIds)
+      if (!req.cashDeskAccess.incomeDeskIds.includes(finalCashDeskId)) {
+        return next(new AppError('Выбранная касса недоступна для зачисления средств', 403));
       }
     }
 
-    const deal = await DealsRepository.recordPayment(
+    const result = await DealsRepository.recordPayment(
       cleanId,
       {
         amount_minor,
@@ -157,11 +158,24 @@ router.post('/:id/payments', resolveCashDeskAccess, async (req, res, next) => {
         schedule_id: parseOptionalBigInt(schedule_id),
         reference,
         comment,
-        cash_desk_id: finalCashDeskId
+        cash_desk_id: finalCashDeskId,
+        idempotency_key: idempotency_key || null
       },
       req.user.id
     );
-    res.status(201).json({ status: 'success', data: { deal } });
+
+    const dealData = result.deal || result;
+    const paymentData = result.payment || null;
+    const statusCode = result.isDuplicate ? 200 : 201;
+
+    res.status(statusCode).json({
+      status: 'success',
+      data: {
+        deal: dealData,
+        payment: paymentData,
+        is_duplicate: Boolean(result.isDuplicate)
+      }
+    });
   } catch (error) {
     next(error);
   }
