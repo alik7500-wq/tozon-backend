@@ -191,7 +191,6 @@ export class FinanceRepository {
    */
   static async getIncome(filters = {}, userAccess = null) {
     const db = getDB();
-    await this.autoHarmonizeConversions();
     const currentYear = Number(filters.year) || new Date().getFullYear();
     const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
     const availableYears = await this.getAvailableYears();
@@ -569,7 +568,6 @@ export class FinanceRepository {
    */
   static async getExpenses(filters = {}, userAccess = null) {
     const db = getDB();
-    await this.autoHarmonizeConversions();
     const currentYear = Number(filters.year) || new Date().getFullYear();
     const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
     const availableYears = await this.getAvailableYears();
@@ -1148,59 +1146,6 @@ export class FinanceRepository {
   }
 
   /**
-   * Автоматическая гармонизация существующих парных конвертаций
-   */
-  static async autoHarmonizeConversions() {
-    try {
-      const db = getDB();
-      const { data: expenses } = await db.from('expenses')
-        .select('*')
-        .or('category.eq.Конвертация валюты,reference.ilike.%ОБМЕН%,reference.ilike.%КОНВ%');
-
-      const { data: payments } = await db.from('payments')
-        .select('*')
-        .or('reference.ilike.%ОБМЕН%,reference.ilike.%КОНВ%,comment.ilike.%обмен%,comment.ilike.%конвертаци%');
-
-      if (!expenses || !payments) return;
-
-      for (const e of expenses) {
-        const eRef = e.reference || '';
-        const eDesc = e.description || '';
-        const eAmount = (e.amount_minor || 0) / 100;
-        const refSuffix = eRef.replace(/^(ПКО-|ОБМЕН-|КОНВ-)/, '');
-
-        let rate = 10.90;
-        const rateMatch = eDesc.match(/курсу\s*([\d\.,]+)/i);
-        if (rateMatch && rateMatch[1]) {
-          rate = parseFloat(rateMatch[1].replace(',', '.'));
-        }
-
-        // Find matching payment
-        const matched = payments.filter(p => {
-          const pRef = p.reference || '';
-          const pComment = p.comment || '';
-          return (refSuffix && pRef.includes(refSuffix)) ||
-                 (p.payment_date === e.expense_date && (p.payer_name?.includes('Касса') || pComment.includes('обмен')));
-        });
-
-        for (const p of matched) {
-          const expectedTargetAmount = eAmount * rate;
-          const expectedMinor = Math.round(expectedTargetAmount * 100);
-          if (p.amount_minor !== expectedMinor) {
-            await db.from('payments').update({
-              amount_minor: expectedMinor,
-              comment: `Поступление от обмена ${eAmount} ${e.currency || 'USD'} по курсу ${rate}`
-            }).eq('id', p.id);
-            p.amount_minor = expectedMinor;
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('autoHarmonizeConversions warning:', err.message);
-    }
-  }
-
-  /**
    * Ручная конвертация / валютообмен между кассами
    */
   static async convertCurrency(data, userId) {
@@ -1257,7 +1202,6 @@ export class FinanceRepository {
    */
   static async getCashflow(filters = {}, userAccess = null) {
     const db = getDB();
-    await this.autoHarmonizeConversions();
     const currentYear = Number(filters.year) || new Date().getFullYear();
     const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
     const availableYears = await this.getAvailableYears();
@@ -1709,23 +1653,13 @@ export class FinanceRepository {
       return mainCashier.name;
     };
 
-    // Эталонные показатели (Ground Truth) после проведения всех актуальных РКО в Google Таблице:
-    // Касса Отдела продаж (Акмалхон): $7 026.00 USD | 0.00 TJS
-    // Касса компании "Тозон" (Илхомчон): $21 575.00 USD | 0.00 TJS
-    // Сводный капитал компании: $28 601.00 USD | 0.00 TJS
-    const GROUND_TRUTH_CUTOFF = '2026-09-10T23:59:59.999Z';
-    const GROUND_TRUTH_BASELINES = {
-      'Касса Отдела продаж (Акмалхон)': 7026.00,
-      'Касса компании "Тозон" (Илхомчон)': 21575.00
-    };
-
+    // Динамический расчёт остатков касс (Strictly Dynamic SUM(PKO) - SUM(RKO))
     const cashDesksMap = {};
     activeDesks.forEach(d => {
-      const baseline = (userAccess && !userAccess.isAdmin) ? 0 : (GROUND_TRUTH_BASELINES[d.name] || 0);
       cashDesksMap[d.name] = { 
         name: d.name, 
         icon: d.icon || '🏢',
-        USD: baseline,
+        USD: 0,
         TJS: 0,
         RUB: 0, 
         totalIncomeUsd: 0, totalIncomeTjs: 0, 
@@ -1741,21 +1675,14 @@ export class FinanceRepository {
       if (!cashDesksMap[deskName]) {
         cashDesksMap[deskName] = { name: deskName, USD: 0, TJS: 0, RUB: 0, totalIncomeUsd: 0, totalIncomeTjs: 0, totalExpenseUsd: 0, totalExpenseTjs: 0 };
       }
-      if (cur === 'USD') cashDesksMap[deskName].totalIncomeUsd += amt;
-      if (cur === 'TJS') cashDesksMap[deskName].totalIncomeTjs += amt;
-
-      if (userAccess && !userAccess.isAdmin) {
-        // Менеджер: динамический учет всех его операций
-        if (cur === 'USD') cashDesksMap[deskName].USD += amt;
-        if (cur === 'TJS') cashDesksMap[deskName].TJS = Math.max(0, (cashDesksMap[deskName].TJS || 0) + amt);
-        if (cur === 'RUB') cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) + amt;
-      } else {
-        // Администратор: динамический учет операций, созданных после даты синхронизации
-        if (p.created_at && p.created_at > GROUND_TRUTH_CUTOFF) {
-          if (cur === 'USD') cashDesksMap[deskName].USD += amt;
-          if (cur === 'TJS') cashDesksMap[deskName].TJS = Math.max(0, (cashDesksMap[deskName].TJS || 0) + amt);
-          if (cur === 'RUB') cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) + amt;
-        }
+      if (cur === 'USD') {
+        cashDesksMap[deskName].USD += amt;
+        cashDesksMap[deskName].totalIncomeUsd += amt;
+      } else if (cur === 'TJS') {
+        cashDesksMap[deskName].TJS += amt;
+        cashDesksMap[deskName].totalIncomeTjs += amt;
+      } else if (cur === 'RUB') {
+        cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) + amt;
       }
     });
 
@@ -1767,21 +1694,14 @@ export class FinanceRepository {
       if (!cashDesksMap[deskName]) {
         cashDesksMap[deskName] = { name: deskName, USD: 0, TJS: 0, RUB: 0, totalIncomeUsd: 0, totalIncomeTjs: 0, totalExpenseUsd: 0, totalExpenseTjs: 0 };
       }
-      if (cur === 'USD') cashDesksMap[deskName].totalExpenseUsd += amt;
-      if (cur === 'TJS') cashDesksMap[deskName].totalExpenseTjs += amt;
-
-      if (userAccess && !userAccess.isAdmin) {
-        // Менеджер: динамический учет всех его операций
-        if (cur === 'USD') cashDesksMap[deskName].USD -= amt;
-        if (cur === 'TJS') cashDesksMap[deskName].TJS = Math.max(0, (cashDesksMap[deskName].TJS || 0) - amt);
-        if (cur === 'RUB') cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) - amt;
-      } else {
-        // Администратор: динамический учет операций, созданных после даты синхронизации
-        if (e.created_at && e.created_at > GROUND_TRUTH_CUTOFF) {
-          if (cur === 'USD') cashDesksMap[deskName].USD -= amt;
-          if (cur === 'TJS') cashDesksMap[deskName].TJS = Math.max(0, (cashDesksMap[deskName].TJS || 0) - amt);
-          if (cur === 'RUB') cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) - amt;
-        }
+      if (cur === 'USD') {
+        cashDesksMap[deskName].USD -= amt;
+        cashDesksMap[deskName].totalExpenseUsd += amt;
+      } else if (cur === 'TJS') {
+        cashDesksMap[deskName].TJS -= amt;
+        cashDesksMap[deskName].totalExpenseTjs += amt;
+      } else if (cur === 'RUB') {
+        cashDesksMap[deskName].RUB = (cashDesksMap[deskName].RUB || 0) - amt;
       }
     });
 
@@ -1789,12 +1709,12 @@ export class FinanceRepository {
       name: d.name,
       icon: d.icon,
       balanceUsd: Number(d.USD.toFixed(2)),
-      balanceTjs: (userAccess && !userAccess.isAdmin) ? Number(d.TJS.toFixed(2)) : 0.00,
+      balanceTjs: Number(d.TJS.toFixed(2)),
       balanceRub: Number((d.RUB || 0).toFixed(2)),
       totalIncomeUsd: Number(d.totalIncomeUsd.toFixed(2)),
       totalExpenseUsd: Number(d.totalExpenseUsd.toFixed(2)),
-      totalIncomeTjs: (userAccess && !userAccess.isAdmin) ? Number(d.totalIncomeTjs.toFixed(2)) : 0.00,
-      totalExpenseTjs: (userAccess && !userAccess.isAdmin) ? Number(d.totalExpenseTjs.toFixed(2)) : 0.00,
+      totalIncomeTjs: Number(d.totalIncomeTjs.toFixed(2)),
+      totalExpenseTjs: Number(d.totalExpenseTjs.toFixed(2)),
       hasBalance: true
     }));
 
@@ -1818,11 +1738,12 @@ export class FinanceRepository {
     } else {
       // Синхронизация сводного капитала компании со суммой всех касс
       const totalCapitalUsd = Number(Object.values(cashDesksMap).reduce((sum, d) => sum + (d.USD || 0), 0).toFixed(2));
+      const totalCapitalTjs = Number(Object.values(cashDesksMap).reduce((sum, d) => sum + (d.TJS || 0), 0).toFixed(2));
       if (summaryByCurrency['USD']) {
         summaryByCurrency['USD'].netCashflow = totalCapitalUsd;
       }
       if (summaryByCurrency['TJS']) {
-        summaryByCurrency['TJS'] = { totalIncome: 0, totalExpense: 0, netCashflow: 0 };
+        summaryByCurrency['TJS'].netCashflow = totalCapitalTjs;
       }
     }
 

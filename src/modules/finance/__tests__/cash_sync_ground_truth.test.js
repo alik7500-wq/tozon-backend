@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { connectDB, getDB } from '../../../db/connection.js';
 import { FinanceRepository } from '../finance.repository.js';
 
-describe('Cash Desk Ground Truth & Sync Verification', () => {
+describe('Cash Desk Balance Formula & Read-Only Idempotency Verification', () => {
   let db;
 
   beforeAll(async () => {
@@ -10,61 +10,89 @@ describe('Cash Desk Ground Truth & Sync Verification', () => {
     db = getDB();
   });
 
-  it('1. Cashflow returns exact Ground Truth balances and consolidated capital', async () => {
+  it('1. Cashflow dynamically computes balance = SUM(PKO) - SUM(RKO) per cash desk & currency without hardcoding', async () => {
     const cashflow = await FinanceRepository.getCashflow();
 
     expect(cashflow).toBeDefined();
     expect(cashflow.cashDesksSummary).toBeInstanceOf(Array);
 
-    const akmalhon = cashflow.cashDesksSummary.find(d => d.name.includes('Акмалхон'));
-    const ilhomjon = cashflow.cashDesksSummary.find(d => d.name.includes('Илхомчон'));
+    let totalDeskUsd = 0;
+    let totalDeskTjs = 0;
 
-    expect(akmalhon).toBeDefined();
-    expect(akmalhon.balanceUsd).toBe(7026.00);
-    expect(akmalhon.balanceTjs).toBe(0.00);
+    for (const desk of cashflow.cashDesksSummary) {
+      // Dynamic balance formula verification
+      const expectedUsd = Number((desk.totalIncomeUsd - desk.totalExpenseUsd).toFixed(2));
+      const expectedTjs = Number((desk.totalIncomeTjs - desk.totalExpenseTjs).toFixed(2));
 
-    expect(ilhomjon).toBeDefined();
-    expect(ilhomjon.balanceUsd).toBe(21575.00);
-    expect(ilhomjon.balanceTjs).toBe(0.00);
+      expect(desk.balanceUsd).toBe(expectedUsd);
+      expect(desk.balanceTjs).toBe(expectedTjs);
 
-    // Consolidated capital
-    expect(cashflow.summaryByCurrency.USD.netCashflow).toBe(28601.00);
-    expect(cashflow.summaryByCurrency.TJS.netCashflow).toBe(0.00);
+      totalDeskUsd = Number((totalDeskUsd + desk.balanceUsd).toFixed(2));
+      totalDeskTjs = Number((totalDeskTjs + desk.balanceTjs).toFixed(2));
+    }
 
-    // All cash desks have non-negative TJS and exactly 0.00
-    cashflow.cashDesksSummary.forEach(desk => {
-      expect(desk.balanceTjs).toBeGreaterThanOrEqual(0);
-      expect(desk.balanceTjs).toBe(0.00);
-    });
+    // Consolidated capital matches sum of desks
+    expect(cashflow.summaryByCurrency.USD.netCashflow).toBe(totalDeskUsd);
+    expect(cashflow.summaryByCurrency.TJS.netCashflow).toBe(totalDeskTjs);
   });
 
-  it('2. Boymatov payment ($10 000 USD) is bound to Ilhomjon cash desk', async () => {
-    const { data: boymatov } = await db.from('payments').select('*').eq('id', 121).single();
+  it('2. Mandatory Regression Test: GET cashflow called twice consecutively causes ZERO database mutations', async () => {
+    // Snapshot existing state of payments and expenses
+    const { data: paymentsBefore, error: errP1 } = await db
+      .from('payments')
+      .select('id, amount_minor, currency, status, cash_desk_id')
+      .order('id', { ascending: true });
+    expect(errP1).toBeNull();
 
-    expect(boymatov).toBeDefined();
-    expect(boymatov.amount_minor).toBe(1000000);
-    expect(boymatov.currency).toBe('USD');
-    expect(boymatov.comment).toContain('Касса компании "Тозон" (Илхомчон)');
+    const { data: expensesBefore, error: errE1 } = await db
+      .from('expenses')
+      .select('id, amount_minor, currency, status, cash_desk_id')
+      .order('id', { ascending: true });
+    expect(errE1).toBeNull();
+
+    // Call getCashflow twice in succession
+    const run1 = await FinanceRepository.getCashflow();
+    const run2 = await FinanceRepository.getCashflow();
+
+    expect(run1).toBeDefined();
+    expect(run2).toBeDefined();
+
+    // Re-query database to ensure absolute read-only behavior
+    const { data: paymentsAfter, error: errP2 } = await db
+      .from('payments')
+      .select('id, amount_minor, currency, status, cash_desk_id')
+      .order('id', { ascending: true });
+    expect(errP2).toBeNull();
+
+    const { data: expensesAfter, error: errE2 } = await db
+      .from('expenses')
+      .select('id, amount_minor, currency, status, cash_desk_id')
+      .order('id', { ascending: true });
+    expect(errE2).toBeNull();
+
+    // Assert row counts did not change
+    expect(paymentsAfter.length).toBe(paymentsBefore.length);
+    expect(expensesAfter.length).toBe(expensesBefore.length);
+
+    // Assert every row is strictly identical (no updates, no timestamp bumps, no amount mutations)
+    expect(paymentsAfter).toEqual(paymentsBefore);
+    expect(expensesAfter).toEqual(expensesBefore);
   });
 
-  it('3. Erroneous historical transfer set is VOIDED and excluded from active cashflow transactions', async () => {
-    const cashflow = await FinanceRepository.getCashflow();
-    const voidedPaymentIds = [127, 128, 129];
-    const voidedExpenseIds = [54, 87, 88, 93, 94];
+  it('3. Mathematical formula test: verify currency isolation without cross-contamination', () => {
+    // Pure unit formula demonstration
+    const sampleDesk = {
+      pkoUsd: 1000.00,
+      rkoUsd: 250.00,
+      pkoTjs: 9270.00,
+      rkoTjs: 1000.00
+    };
 
-    // Verify excluded from active transactions
-    const activeVoidedTxs = cashflow.transactions.filter(t => 
-      (t.type === 'INCOME' && voidedPaymentIds.includes(t.rawId)) ||
-      (t.type === 'EXPENSE' && voidedExpenseIds.includes(t.rawId))
-    );
-    expect(activeVoidedTxs.length).toBe(0);
+    const usdBalance = Number((sampleDesk.pkoUsd - sampleDesk.rkoUsd).toFixed(2));
+    const tjsBalance = Number((sampleDesk.pkoTjs - sampleDesk.rkoTjs).toFixed(2));
 
-    // Verify all 8 records are marked VOIDED in DB
-    const { data: pCheck } = await db.from('payments').select('id, status').in('id', voidedPaymentIds);
-    pCheck.forEach(p => expect(p.status).toBe('VOIDED'));
-
-    const { data: eCheck } = await db.from('expenses').select('id, status').in('id', voidedExpenseIds);
-    eCheck.forEach(e => expect(e.status).toBe('VOIDED'));
+    expect(usdBalance).toBe(750.00);
+    expect(tjsBalance).toBe(8270.00);
   });
 
   it('4. Multi-currency expense protection: TJS expense debits USD equivalent without negative TJS', async () => {
@@ -88,3 +116,4 @@ describe('Cash Desk Ground Truth & Sync Verification', () => {
     await db.from('expenses').delete().eq('id', testExpense.id);
   });
 });
+

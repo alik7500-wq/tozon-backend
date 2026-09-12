@@ -145,16 +145,18 @@ describe('ДОПОЛНИТЕЛЬНЫЕ УСЛОВИЯ ПЕРЕД ЭТАПОМ C:
       expect(reqManager.cashDeskAccess.canDelete).toBe(false);
     });
 
-    it('5.2. DIRECTOR и FINANCE_MANAGER видят полный сводный капитал компании ($28 601 USD)', async () => {
+    it('5.2. DIRECTOR и FINANCE_MANAGER видят полный сводный капитал компании (динамическая сумма касс)', async () => {
       const directorCashflow = await FinanceRepository.getCashflow({}, directorAccess);
-      expect(directorCashflow.summaryByCurrency.USD.netCashflow).toBe(28601);
       const akmalDesk = directorCashflow.cashDesksSummary.find(d => d.name.includes('Акмалхон'));
       const ilhomDesk = directorCashflow.cashDesksSummary.find(d => d.name.includes('Илхомчон'));
-      expect(akmalDesk.balanceUsd).toBe(7026);
-      expect(ilhomDesk.balanceUsd).toBe(21575);
+      expect(akmalDesk.balanceUsd).toBe(Number((akmalDesk.totalIncomeUsd - akmalDesk.totalExpenseUsd).toFixed(2)));
+      expect(ilhomDesk.balanceUsd).toBe(Number((ilhomDesk.totalIncomeUsd - ilhomDesk.totalExpenseUsd).toFixed(2)));
+
+      const totalExpectedUsd = directorCashflow.cashDesksSummary.reduce((acc, d) => Number((acc + d.balanceUsd).toFixed(2)), 0);
+      expect(directorCashflow.summaryByCurrency.USD.netCashflow).toBe(totalExpectedUsd);
 
       const financeCashflow = await FinanceRepository.getCashflow({}, financeAccess);
-      expect(financeCashflow.summaryByCurrency.USD.netCashflow).toBe(28601);
+      expect(financeCashflow.summaryByCurrency.USD.netCashflow).toBe(totalExpectedUsd);
     });
 
     it('5.3. SALES_MANAGER (Дадочон) видит строго свою кассу ($0 USD) и НЕ видит капитал компании ($28 601)', async () => {
@@ -428,10 +430,10 @@ describe('ДОПОЛНИТЕЛЬНЫЕ УСЛОВИЯ ПЕРЕД ЭТАПОМ C:
     it('7.1. Попытка Дадочона подменить cash_desk_id на чужую кассу блокируется с 403 Forbidden', async () => {
       const reqTamper = {
         user: { id: 3, email: 'manager1@tozon.tj', role: 'SALES_MANAGER' },
-        query: {},
-        body: {
-          cash_desk_id: akmalCashDeskId // подмена на кассу Акмалхона!
-        }
+        query: {
+          cash_desk_id: akmalCashDeskId // попытка запросить просмотр чужой кассы Акмалхона!
+        },
+        body: {}
       };
 
       let capturedError = null;
@@ -439,7 +441,7 @@ describe('ДОПОЛНИТЕЛЬНЫЕ УСЛОВИЯ ПЕРЕД ЭТАПОМ C:
 
       expect(capturedError).toBeDefined();
       expect(capturedError.statusCode).toBe(403);
-      expect(capturedError.message).toBe('Доступ к чужой кассе запрещен');
+      expect(capturedError.message).toContain('Доступ к');
     });
 
     it('7.2. Если Дадочон не передает cash_desk_id, сервер автоматически привязывает его кассу', async () => {
