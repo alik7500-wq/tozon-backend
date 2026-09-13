@@ -15,12 +15,57 @@ if (!supabaseUrl || !supabaseKey) {
   process.exit(1);
 }
 
+const PRODUCTION_PROJECT_REF = 'yeslzrrcwgcqfxhgbrqk';
+
+export const assertSafeTestDatabase = (customEnv = process.env) => {
+  const nodeEnv = customEnv.NODE_ENV;
+  if (nodeEnv !== 'test') {
+    return true;
+  }
+
+  // Collect all possible database connection sources
+  const sources = [
+    customEnv.TEST_DATABASE_URL,
+    customEnv.TEST_SUPABASE_URL,
+    customEnv.DATABASE_URL,
+    customEnv.SUPABASE_URL,
+    customEnv.SUPABASE_SERVICE_ROLE_KEY,
+    customEnv.PGHOST,
+  ].filter(Boolean);
+
+  // 1. Check for Production project ref or production host in ANY connection string
+  for (const src of sources) {
+    if (src.includes(PRODUCTION_PROJECT_REF) || src.includes('yeslzrrcwgcqfxhgbrqk.supabase.co')) {
+      throw new Error('FATAL_TEST_DATABASE_IS_PRODUCTION');
+    }
+  }
+
+  // 2. Strict requirement: NODE_ENV=test MUST specify dedicated TEST_DATABASE_URL or TEST_SUPABASE_URL
+  const testConfig = customEnv.TEST_DATABASE_URL || customEnv.TEST_SUPABASE_URL;
+  if (!testConfig) {
+    throw new Error('TEST_DATABASE_CONFIGURATION_REQUIRED');
+  }
+
+  return true;
+};
+
 let db;
 
 export const connectDB = () => {
   if (db) return db;
 
-  db = createClient(supabaseUrl, supabaseKey);
+  // Enforce test database safety guard
+  assertSafeTestDatabase();
+
+  const activeUrl = process.env.NODE_ENV === 'test'
+    ? (process.env.TEST_SUPABASE_URL || process.env.TEST_DATABASE_URL)
+    : supabaseUrl;
+
+  const activeKey = process.env.NODE_ENV === 'test'
+    ? (process.env.TEST_SUPABASE_KEY || supabaseKey)
+    : supabaseKey;
+
+  db = createClient(activeUrl, activeKey);
   console.log('Connected to Supabase');
   
   return db;
