@@ -376,6 +376,9 @@ export class FinanceRepository {
   static async addIncome(data, userId, userAccess = null) {
     const db = getDB();
     const now = new Date().toISOString();
+    if (data && data.amount !== undefined && data.amount !== null) {
+      data.amount = String(data.amount).replace(',', '.').trim();
+    }
     const amountMinor = Math.round(Number(data.amount) * 100);
     const paymentDate = data.date || data.payment_date || now.split('T')[0];
     const currency = (data.currency || 'USD').toUpperCase();
@@ -433,6 +436,9 @@ export class FinanceRepository {
     }
     const db = getDB();
     const now = new Date().toISOString();
+    if (data && data.amount !== undefined && data.amount !== null) {
+      data.amount = String(data.amount).replace(',', '.').trim();
+    }
 
     const { data: originalRecord } = await db.from('payments').select('*').eq('id', id).maybeSingle();
     if (!originalRecord) {
@@ -767,6 +773,9 @@ export class FinanceRepository {
    * Добавить расходный кассовый ордер (с поддержкой автоконвертации и контролем остатка)
    */
   static async addExpense(data, userId, userAccess = null) {
+    if (data && data.amount !== undefined && data.amount !== null) {
+      data.amount = String(data.amount).replace(',', '.').trim();
+    }
     const key = data.idempotency_key ? String(data.idempotency_key).trim() : null;
     if (key && inflightExpenses.has(key)) {
       const inflightResult = await inflightExpenses.get(key);
@@ -1023,6 +1032,9 @@ export class FinanceRepository {
       throw new Error('Редактирование расходных кассовых ордеров запрещено для вашей роли');
     }
     const db = getDB();
+    if (data && data.amount !== undefined && data.amount !== null) {
+      data.amount = String(data.amount).replace(',', '.').trim();
+    }
 
     const { data: originalRecord } = await db.from('expenses').select('*').eq('id', id).maybeSingle();
     if (!originalRecord) {
@@ -1259,9 +1271,10 @@ export class FinanceRepository {
     const now = new Date().toISOString();
     const fromCurrency = (data.from_currency || 'USD').toUpperCase();
     const toCurrency = (data.to_currency || 'TJS').toUpperCase();
-    const fromAmount = Number(data.from_amount);
-    const rate = Number(data.exchange_rate) || 10.90;
-    const toAmount = Number(data.to_amount) || (fromAmount * rate);
+    const parseNum = (val) => val !== undefined && val !== null && val !== '' ? Number(String(val).replace(',', '.').trim()) : null;
+    const fromAmount = parseNum(data.from_amount) || 0;
+    const rate = parseNum(data.exchange_rate) || 10.90;
+    const toAmount = parseNum(data.to_amount) || (fromAmount * rate);
     const date = data.date || now.split('T')[0];
 
     const fromAmountMinor = Math.round(fromAmount * 100);
@@ -1275,8 +1288,8 @@ export class FinanceRepository {
     const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
     const desks = dictDesks || [];
 
-    let fromCashDeskId = data.from_cash_desk_id || data.source_cash_desk_id || null;
-    let toCashDeskId = data.to_cash_desk_id || data.destination_cash_desk_id || null;
+    let fromCashDeskId = (await resolveCashDeskUuid(db, data.from_cash_desk_id || data.source_cash_desk_id)) || null;
+    let toCashDeskId = (await resolveCashDeskUuid(db, data.to_cash_desk_id || data.destination_cash_desk_id)) || null;
 
     if (!fromCashDeskId) {
       const defaultFrom = desks.find(d => d.code === 'SALES_MANAGER') || desks[0];
@@ -2002,21 +2015,30 @@ export class FinanceRepository {
       idempotency_key
     } = data;
 
+    const parseNum = (val) => {
+      if (val === undefined || val === null || val === '') return null;
+      const parsed = Number(String(val).replace(',', '.').trim());
+      return isNaN(parsed) ? null : parsed;
+    };
+
     let finalAmountTjs = null;
     let finalExchangeRate = null;
     let finalAmountUsd = null;
 
     if (currency === 'TJS') {
-      finalAmountTjs = Number(amount_tjs || amount);
-      finalExchangeRate = Number(exchange_rate);
-      finalAmountUsd = amount_usd ? Number(amount_usd) : Number((finalAmountTjs / finalExchangeRate).toFixed(2));
+      finalAmountTjs = parseNum(amount_tjs || amount);
+      finalExchangeRate = parseNum(exchange_rate);
+      finalAmountUsd = parseNum(amount_usd) || (finalAmountTjs && finalExchangeRate ? Number((finalAmountTjs / finalExchangeRate).toFixed(2)) : null);
     } else {
-      finalAmountUsd = Number(amount_usd || amount);
+      finalAmountUsd = parseNum(amount_usd || amount);
     }
 
+    const resolvedSourceId = (await resolveCashDeskUuid(db, source_cash_desk_id)) || source_cash_desk_id;
+    const resolvedDestId = (await resolveCashDeskUuid(db, destination_cash_desk_id)) || destination_cash_desk_id;
+
     const { data: result, error } = await db.rpc('create_atomic_cash_transfer', {
-      p_source_cash_desk_id: source_cash_desk_id,
-      p_destination_cash_desk_id: destination_cash_desk_id,
+      p_source_cash_desk_id: resolvedSourceId,
+      p_destination_cash_desk_id: resolvedDestId,
       p_operation_type: operation_type,
       p_currency: currency,
       p_amount_tjs: finalAmountTjs,
