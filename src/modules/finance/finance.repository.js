@@ -588,6 +588,18 @@ export class FinanceRepository {
       }
     }
 
+    if (expense) {
+      const amt = (expense.amount_minor || 0) / 100;
+      const cur = (expense.currency || 'USD').toUpperCase();
+      let cleanDesc = (expense.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim();
+      if ((expense.category === 'Конвертация валюты' || expense.operation_type === 'CONVERSION' || expense.reference?.startsWith('КОНВ-')) && cleanDesc.toLowerCase().startsWith('обмен')) {
+        const rateMatch = cleanDesc.match(/курсу\s*([\d\.,]+)/i);
+        const rate = rateMatch ? rateMatch[1] : (expense.exchange_rate || '9.27');
+        cleanDesc = `Обмен ${amt.toFixed(2)} ${cur} в TJS по курсу ${rate}`;
+      }
+      expense.description = cleanDesc;
+    }
+
     return expense;
   }
 
@@ -654,6 +666,13 @@ export class FinanceRepository {
         const cur = (e.currency || 'USD').toUpperCase();
         const amount = (e.amount_minor || 0) / 100;
 
+        let cleanDesc = (e.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim();
+        if ((e.category === 'Конвертация валюты' || e.operation_type === 'CONVERSION' || e.reference?.startsWith('КОНВ-')) && cleanDesc.toLowerCase().startsWith('обмен')) {
+          const rateMatch = cleanDesc.match(/курсу\s*([\d\.,]+)/i);
+          const rate = rateMatch ? rateMatch[1] : (e.exchange_rate || '9.27');
+          cleanDesc = `Обмен ${amount.toFixed(2)} ${cur} в TJS по курсу ${rate}`;
+        }
+
         return {
           id: e.id,
           amount,
@@ -663,7 +682,7 @@ export class FinanceRepository {
           method: e.method || 'CASH',
           reference: e.reference || `РКО-${e.id}`,
           recipient: e.recipient || 'Контрагент',
-          description: (e.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
+          description: cleanDesc,
           exchange_rate: e.exchange_rate ? Number(e.exchange_rate) : null,
           amount_usd: e.amount_usd ? Number(e.amount_usd) : null,
           conversion_expense_id: e.conversion_expense_id || null,
@@ -1193,7 +1212,7 @@ export class FinanceRepository {
           const { data } = await db.from('payments').select('*').eq('conversion_id', originalRecord.conversion_id);
           paired = data || [];
         } else if (refSuffix) {
-          const { data } = await db.from('payments').select('*').ilike('reference', `%${refSuffix}%`);
+          const { data } = await db.from('payments').select('*').in('reference', [`ПКО-${refSuffix}`, `КОНВ-${refSuffix}`, `ОБМЕН-${refSuffix}`]);
           paired = data || [];
         }
 
@@ -1218,7 +1237,7 @@ export class FinanceRepository {
           const { data } = await db.from('expenses').select('*').eq('conversion_id', originalRecord.conversion_id);
           paired = data || [];
         } else if (refSuffix) {
-          const { data } = await db.from('expenses').select('*').ilike('reference', `%${refSuffix}%`);
+          const { data } = await db.from('expenses').select('*').in('reference', [`РКО-${refSuffix}`, `КОНВ-${refSuffix}`, `ОБМЕН-${refSuffix}`]);
           paired = data || [];
         }
 
@@ -1269,7 +1288,7 @@ export class FinanceRepository {
           const { data } = await db.from('payments').select('id').eq('conversion_id', record.conversion_id);
           paired = data || [];
         } else if (refSuffix) {
-          const { data } = await db.from('payments').select('id').ilike('reference', `%${refSuffix}%`);
+          const { data } = await db.from('payments').select('id').in('reference', [`ПКО-${refSuffix}`, `КОНВ-${refSuffix}`, `ОБМЕН-${refSuffix}`]);
           paired = data || [];
         }
         for (const p of paired) {
@@ -1281,7 +1300,7 @@ export class FinanceRepository {
           const { data } = await db.from('expenses').select('id').eq('conversion_id', record.conversion_id);
           paired = data || [];
         } else if (refSuffix) {
-          const { data } = await db.from('expenses').select('id').ilike('reference', `%${refSuffix}%`);
+          const { data } = await db.from('expenses').select('id').in('reference', [`РКО-${refSuffix}`, `КОНВ-${refSuffix}`, `ОБМЕН-${refSuffix}`]);
           paired = data || [];
         }
         for (const e of paired) {
@@ -1751,6 +1770,12 @@ export class FinanceRepository {
       }
       const isBank = p.method === 'BANK_TRANSFER' || p.cash_desk_id === 'BANK_ACCOUNT' || deskName.includes('Расчетный счет');
 
+      let cleanComment = (p.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim();
+      if (cleanComment.toLowerCase().includes('поступление от обмена') && p.amount_usd) {
+        const usdVal = Number(p.amount_usd).toFixed(2);
+        cleanComment = cleanComment.replace(/Поступление от обмена\s+\$?[\d\.]+\s*USD/i, `Поступление от обмена $${usdVal} USD`);
+      }
+
       transactions.push({
         id: `inc-${p.id}`,
         rawId: p.id,
@@ -1819,6 +1844,13 @@ export class FinanceRepository {
       }
       const isBank = e.method === 'BANK_TRANSFER' || e.cash_desk_id === 'BANK_ACCOUNT' || deskName.includes('Расчетный счет');
 
+      let cleanDesc = (e.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim();
+      if ((isConv || e.operation_type === 'CONVERSION' || e.reference?.startsWith('КОНВ-')) && cleanDesc.toLowerCase().startsWith('обмен')) {
+        const rateMatch = cleanDesc.match(/курсу\s*([\d\.,]+)/i);
+        const rate = rateMatch ? rateMatch[1] : (e.exchange_rate || '9.27');
+        cleanDesc = `Обмен ${amt.toFixed(2)} ${cur} в TJS по курсу ${rate}`;
+      }
+
       transactions.push({
         id: `exp-${e.id}`,
         rawId: e.id,
@@ -1833,8 +1865,8 @@ export class FinanceRepository {
         recipient: e.recipient || 'Контрагент',
         method: e.method || 'CASH',
         reference: e.reference || `РКО-${e.id}`,
-        comment: (e.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
-        description: (e.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
+        comment: cleanDesc,
+        description: cleanDesc,
         status: e.status || 'ACTIVE',
         voidReason: e.void_reason || null,
         voidedAt: e.voided_at || null,
