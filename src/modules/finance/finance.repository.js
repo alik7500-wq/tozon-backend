@@ -97,18 +97,16 @@ async function insertExpenseWithIdempotency(db, payload) {
   }
 
   const executeInsert = async () => {
-    const desc = payload.description || '';
-    const taggedPayload = {
+    const desc = (payload.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim();
+    const cleanPayload = {
       ...payload,
-      description: key && !desc.includes('[IDEMP:')
-        ? `${desc} [IDEMP:${key}]`.trim()
-        : desc
+      description: desc
     };
 
-    const { idempotency_key, ...payloadWithoutCol } = taggedPayload;
+    const { idempotency_key, ...payloadWithoutCol } = cleanPayload;
 
     try {
-      const res = await db.from('expenses').insert([taggedPayload]).select().single();
+      const res = await db.from('expenses').insert([cleanPayload]).select().single();
       if (res.error) {
         if (res.error.message && res.error.message.includes('idempotency_key') && res.error.message.includes('schema cache')) {
           const fallbackRes = await db.from('expenses').insert([payloadWithoutCol]).select().single();
@@ -265,7 +263,7 @@ export class FinanceRepository {
           date: p.payment_date,
           method: p.method || 'CASH',
           reference: p.reference || `ПКО-${p.id}`,
-          comment: p.comment || '',
+          comment: (p.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
           contract,
           dealDate,
           deal: dealObj,
@@ -665,7 +663,7 @@ export class FinanceRepository {
           method: e.method || 'CASH',
           reference: e.reference || `РКО-${e.id}`,
           recipient: e.recipient || 'Контрагент',
-          description: e.description || '',
+          description: (e.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
           exchange_rate: e.exchange_rate ? Number(e.exchange_rate) : null,
           amount_usd: e.amount_usd ? Number(e.amount_usd) : null,
           conversion_expense_id: e.conversion_expense_id || null,
@@ -1741,7 +1739,7 @@ export class FinanceRepository {
         payer_name: p.payer_name || p.deals?.leads?.full_name || 'Клиент',
         method: p.method || 'CASH',
         reference: p.reference || `ПКО-${p.id}`,
-        comment: p.comment || '',
+        comment: (p.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
         status: p.status || 'ACTIVE',
         voidReason: p.void_reason || null,
         voidedAt: p.voided_at || null,
@@ -1803,8 +1801,8 @@ export class FinanceRepository {
         recipient: e.recipient || 'Контрагент',
         method: e.method || 'CASH',
         reference: e.reference || `РКО-${e.id}`,
-        comment: e.description || '',
-        description: e.description || '',
+        comment: (e.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
+        description: (e.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
         status: e.status || 'ACTIVE',
         voidReason: e.void_reason || null,
         voidedAt: e.voided_at || null,
