@@ -20,6 +20,10 @@ export const errorHandler = (err, req, res, next) => {
       statusCode = 400;
       status = 'fail';
       message = 'Некорректный идентификатор сущности (ожидается числовое значение)';
+    } else if (err.message.includes('invalid input syntax for type uuid')) {
+      statusCode = 400;
+      status = 'fail';
+      message = 'Некорректный идентификатор кассы (ожидается UUID)';
     } else if (err.message.includes('foreign key constraint') || err.message.includes('violates foreign key')) {
       statusCode = 400;
       status = 'fail';

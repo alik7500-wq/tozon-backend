@@ -38,6 +38,33 @@ const inflightExpenses = new Map();
 
 // Сериализация операций по кассе на время проверки остатка и списания (защита от race condition до миграции 015)
 const deskQueues = new Map();
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function resolveCashDeskUuid(db, rawDesk) {
+  if (!rawDesk) return null;
+  const str = String(rawDesk).trim();
+  if (UUID_REGEX.test(str)) {
+    return str;
+  }
+  try {
+    const { data: dictDesks } = await db.from('dictionaries')
+      .select('id, code, name')
+      .eq('type', 'CASH_DESK')
+      .eq('is_active', true);
+    if (dictDesks && dictDesks.length > 0) {
+      const matched = dictDesks.find(d => 
+        (d.code && d.code.toLowerCase() === str.toLowerCase()) ||
+        (d.name && d.name.toLowerCase() === str.toLowerCase()) ||
+        (d.id && d.id.toLowerCase() === str.toLowerCase())
+      );
+      if (matched) return matched.id;
+    }
+  } catch (err) {
+    console.warn('Error resolving cash desk UUID:', err.message);
+  }
+  return null;
+}
 function withDeskLock(deskId, fn) {
   if (!deskId) return fn();
   const prev = deskQueues.get(deskId) || Promise.resolve();
@@ -120,6 +147,10 @@ async function insertExpenseWithIdempotency(db, payload) {
 }
 
 export class FinanceRepository {
+  static async resolveCashDeskUuid(db, rawDesk) {
+    return resolveCashDeskUuid(db, rawDesk);
+  }
+
   /**
    * Определение динамического диапазона лет на основе данных в БД
    */
@@ -353,14 +384,10 @@ export class FinanceRepository {
 
     let targetCashDeskId = (userAccess && !userAccess.isAdmin) 
       ? userAccess.cashDeskId 
-      : (data.cash_desk_id || null);
+      : (data.cash_desk_id || data.cash_desk || null);
 
-    if (!targetCashDeskId && data.cash_desk) {
-      const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
-      const matched = (dictDesks || []).find(d => d.name.toLowerCase() === data.cash_desk.toLowerCase() || d.id === data.cash_desk || d.code === data.cash_desk);
-      if (matched) {
-        targetCashDeskId = matched.id;
-      }
+    if (targetCashDeskId) {
+      targetCashDeskId = await resolveCashDeskUuid(db, targetCashDeskId);
     }
 
     const { data: newPayment, error } = await db.from('payments').insert([{
@@ -434,13 +461,13 @@ export class FinanceRepository {
     if (data.payer_name !== undefined || data.recipient !== undefined) {
       updatePayload.payer_name = data.payer_name !== undefined ? data.payer_name : data.recipient;
     }
-    if (data.cash_desk_id !== undefined) {
-      updatePayload.cash_desk_id = data.cash_desk_id;
-    } else if (data.cash_desk) {
-      const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
-      const matched = (dictDesks || []).find(d => d.name.toLowerCase() === data.cash_desk.toLowerCase() || d.id === data.cash_desk || d.code === data.cash_desk);
-      if (matched) {
-        updatePayload.cash_desk_id = matched.id;
+    const rawDesk = data.cash_desk_id !== undefined ? data.cash_desk_id : data.cash_desk;
+    if (rawDesk !== undefined) {
+      const resolvedUuid = await resolveCashDeskUuid(db, rawDesk);
+      if (resolvedUuid) {
+        updatePayload.cash_desk_id = resolvedUuid;
+      } else if (rawDesk === null || rawDesk === '') {
+        updatePayload.cash_desk_id = null;
       }
     }
 
@@ -746,14 +773,10 @@ export class FinanceRepository {
       const db = getDB();
       let targetCashDeskId = (userAccess && !userAccess.isAdmin)
         ? userAccess.cashDeskId
-        : (data.cash_desk_id || null);
+        : (data.cash_desk_id || data.cash_desk || null);
 
-      if (!targetCashDeskId && data.cash_desk) {
-        const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
-        const matched = (dictDesks || []).find(d => d.name.toLowerCase() === data.cash_desk.toLowerCase() || d.id === data.cash_desk || d.code === data.cash_desk);
-        if (matched) {
-          targetCashDeskId = matched.id;
-        }
+      if (targetCashDeskId) {
+        targetCashDeskId = await resolveCashDeskUuid(db, targetCashDeskId);
       }
 
       // 1. Проверка в БД: если операция уже существует (между процессами)
@@ -1023,13 +1046,13 @@ export class FinanceRepository {
     if (data.description !== undefined || data.comment !== undefined) {
       updatePayload.description = data.description !== undefined ? data.description : data.comment;
     }
-    if (data.cash_desk_id !== undefined) {
-      updatePayload.cash_desk_id = data.cash_desk_id;
-    } else if (data.cash_desk) {
-      const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
-      const matched = (dictDesks || []).find(d => d.name.toLowerCase() === data.cash_desk.toLowerCase() || d.id === data.cash_desk || d.code === data.cash_desk);
-      if (matched) {
-        updatePayload.cash_desk_id = matched.id;
+    const rawDesk = data.cash_desk_id !== undefined ? data.cash_desk_id : data.cash_desk;
+    if (rawDesk !== undefined) {
+      const resolvedUuid = await resolveCashDeskUuid(db, rawDesk);
+      if (resolvedUuid) {
+        updatePayload.cash_desk_id = resolvedUuid;
+      } else if (rawDesk === null || rawDesk === '') {
+        updatePayload.cash_desk_id = null;
       }
     }
 
