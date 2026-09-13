@@ -471,6 +471,10 @@ export class FinanceRepository {
       }
     }
 
+    if (Object.keys(updatePayload).length === 0) {
+      return originalRecord;
+    }
+
     const { data: updatedRows, error } = await db.from('payments').update(updatePayload).eq('id', id).select();
     if (error) {
       console.error('Error updating income in DB:', error);
@@ -1054,6 +1058,10 @@ export class FinanceRepository {
       } else if (rawDesk === null || rawDesk === '') {
         updatePayload.cash_desk_id = null;
       }
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
+      return originalRecord;
     }
 
     const { data: updatedRows, error } = await db.from('expenses').update(updatePayload).eq('id', id).select();
