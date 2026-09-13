@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { getDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 
@@ -226,7 +227,7 @@ export class FinanceRepository {
 
     const { data: paymentsData, error } = await db.from('payments').select(`
       id, deal_id, schedule_id, amount_minor, currency, payment_date, method, reference, comment, payer_name, created_at,
-      status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs, amount_usd, exchange_rate,
+      status, void_reason, voided_at, voided_by, transfer_id, conversion_id, cash_desk_id, operation_type, amount_tjs, amount_usd, exchange_rate,
       created_by_user_id,
       deals ( id, contract_number, currency, final_price_minor, deal_date, created_at, leads ( full_name, phone, inn ) ),
       users:created_by_user_id ( id, name )
@@ -248,10 +249,13 @@ export class FinanceRepository {
         const dealObj = p.deals ? {
           id: p.deals.id,
           contract_number: p.deals.contract_number,
-          deal_date: dealDate,
-          currency: p.deals.currency,
-          lead_name: p.deals.leads?.full_name,
-          inn: p.deals.leads?.inn
+          currency: p.deals.currency || 'USD',
+          final_price: (p.deals.final_price_minor || 0) / 100,
+          lead: p.deals.leads ? {
+            name: p.deals.leads.full_name,
+            phone: p.deals.leads.phone,
+            inn: p.deals.leads.inn
+          } : null
         } : null;
 
         return {
@@ -264,6 +268,7 @@ export class FinanceRepository {
           method: p.method || 'CASH',
           reference: p.reference || `ПКО-${p.id}`,
           comment: (p.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
+          payerName: p.payer_name || clientName,
           contract,
           dealDate,
           deal: dealObj,
@@ -358,6 +363,31 @@ export class FinanceRepository {
       amount: Number(monthlyIncome[idx].toFixed(2)),
       currency: chartCurrency
     }));
+
+    // Сортировка парных операций вместе
+    const incGroups = new Map();
+    filteredList.forEach(p => {
+      const key = p.transferId ? ('transfer:' + p.transferId) : (p.conversion_id ? ('conversion:' + p.conversion_id) : ('single:' + p.id));
+      if (!incGroups.has(key)) {
+        incGroups.set(key, { key, items: [], maxDate: p.date, maxCreatedAt: p.createdAt });
+      }
+      const g = incGroups.get(key);
+      g.items.push(p);
+      if (new Date(p.date) > new Date(g.maxDate)) g.maxDate = p.date;
+      if (new Date(p.createdAt) > new Date(g.maxCreatedAt)) g.maxCreatedAt = p.createdAt;
+    });
+
+    const sortedIncGroups = Array.from(incGroups.values()).sort((a, b) => {
+      const dDiff = new Date(b.maxDate) - new Date(a.maxDate);
+      if (dDiff !== 0) return dDiff;
+      return new Date(b.maxCreatedAt) - new Date(a.maxCreatedAt);
+    });
+
+    const finalIncList = [];
+    sortedIncGroups.forEach(g => {
+      finalIncList.push(...g.items);
+    });
+    filteredList = finalIncList;
 
     return {
       list: filteredList,
@@ -776,6 +806,52 @@ export class FinanceRepository {
       breakdown: categoryCurrencies[cat]
     }));
 
+    // Сортировка парных операций (КОНВ и РКО) строго вместе
+    const convExpIdMap = new Map();
+    filteredList.forEach(e => {
+      if (e.conversion_expense_id) {
+        convExpIdMap.set(e.conversion_expense_id, e.id);
+        convExpIdMap.set(e.id, e.conversion_expense_id);
+      }
+    });
+
+    const getExpGroupKey = (e) => {
+      if (e.transferId) return 'transfer:' + e.transferId;
+      if (e.conversion_id) return 'conversion:' + e.conversion_id;
+      if (e.conversion_expense_id) return 'conv_exp:' + e.conversion_expense_id;
+      if (convExpIdMap.has(e.id)) return 'conv_exp:' + e.id;
+      return 'single:' + e.id;
+    };
+
+    const expGroups = new Map();
+    filteredList.forEach(e => {
+      let key = getExpGroupKey(e);
+      if (!expGroups.has(key)) {
+        expGroups.set(key, { key, items: [], maxDate: e.date, maxCreatedAt: e.createdAt });
+      }
+      const g = expGroups.get(key);
+      g.items.push(e);
+      if (new Date(e.date) > new Date(g.maxDate)) g.maxDate = e.date;
+      if (new Date(e.createdAt) > new Date(g.maxCreatedAt)) g.maxCreatedAt = e.createdAt;
+    });
+
+    const sortedExpGroups = Array.from(expGroups.values()).sort((a, b) => {
+      const dDiff = new Date(b.maxDate) - new Date(a.maxDate);
+      if (dDiff !== 0) return dDiff;
+      return new Date(b.maxCreatedAt) - new Date(a.maxCreatedAt);
+    });
+
+    const finalExpList = [];
+    sortedExpGroups.forEach(g => {
+      g.items.sort((a, b) => {
+        const aIsConv = a.category === 'Конвертация валюты' || a.reference?.startsWith('КОНВ-') ? 1 : 2;
+        const bIsConv = b.category === 'Конвертация валюты' || b.reference?.startsWith('КОНВ-') ? 1 : 2;
+        return aIsConv - bIsConv;
+      });
+      finalExpList.push(...g.items);
+    });
+    filteredList = finalExpList;
+
     return {
       list: filteredList,
       totals: totalsByCurrency,
@@ -881,6 +957,7 @@ export class FinanceRepository {
         const sourceCurrency = (data.source_currency || 'USD').toUpperCase();
         const convertedSourceAmount = Number((Number(data.amount) / exchangeRate).toFixed(2));
         const sourceMinor = Math.round(convertedSourceAmount * 100);
+        const autoConversionId = crypto.randomUUID();
 
         const { data: convExpense } = await db.from('expenses').insert([{
           amount_minor: sourceMinor,
@@ -893,6 +970,7 @@ export class FinanceRepository {
           description: `Автоконвертация $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} в ${currency} для расхода: ${data.description || data.category || data.recipient || 'РКО'}`,
           cash_desk_id: targetCashDeskId,
           created_by_user_id: parseOptionalBigInt(userId),
+          conversion_id: autoConversionId,
           created_at: now
         }]).select().single();
 
@@ -911,6 +989,7 @@ export class FinanceRepository {
           comment: `Поступление от автоконвертации $${convertedSourceAmount.toFixed(2)} ${sourceCurrency} по курсу ${exchangeRate} для расхода: ${data.description || data.category || data.recipient || 'РКО'}`,
           cash_desk_id: targetCashDeskId,
           created_by_user_id: parseOptionalBigInt(userId),
+          conversion_id: autoConversionId,
           created_at: now
         }]).select().single();
 
@@ -930,6 +1009,7 @@ export class FinanceRepository {
           exchange_rate: exchangeRate,
           amount_usd: convertedSourceAmount,
           conversion_expense_id: convExpenseId,
+          conversion_id: autoConversionId,
           cash_desk_id: targetCashDeskId,
           created_by_user_id: parseOptionalBigInt(userId),
           idempotency_key: key,
@@ -1891,8 +1971,67 @@ export class FinanceRepository {
       });
     });
 
-    // Sort transactions by date descending
-    transactions.sort((a, b) => new Date(b.date) - new Date(a.date) || new Date(b.createdAt) - new Date(a.createdAt));
+    // Сортировка по связанным парам/семействам операций (конвертации, перемещения), чтобы связанные документы всегда стояли строго рядом
+    const convExpToConvId = new Map();
+    transactions.forEach(t => {
+      if (t.conversion_id && t.rawId) {
+        convExpToConvId.set(t.rawId, t.conversion_id);
+      }
+    });
+
+    const getGroupKey = (t) => {
+      if (t.transfer_id) return 'transfer:' + t.transfer_id;
+      if (t.conversion_id) return 'conversion:' + t.conversion_id;
+      if (t.conversion_expense_id && convExpToConvId.has(t.conversion_expense_id)) {
+        return 'conversion:' + convExpToConvId.get(t.conversion_expense_id);
+      }
+      const m = (t.reference || '').match(/(?:КОНВ|ПКО-КОНВ|ОБМЕН|ПЕРЕМ)-(\d+)/i);
+      if (m) {
+        const num = m[1];
+        if (t.reference.includes('ПЕРЕМ')) return 'transfer_num:' + num;
+        return 'conv_num:' + num;
+      }
+      return 'single:' + t.id;
+    };
+
+    const groups = new Map();
+    transactions.forEach(t => {
+      const key = getGroupKey(t);
+      if (!groups.has(key)) {
+        groups.set(key, { key, items: [], maxDate: t.date, maxCreatedAt: t.createdAt });
+      }
+      const g = groups.get(key);
+      g.items.push(t);
+      if (new Date(t.date) > new Date(g.maxDate)) g.maxDate = t.date;
+      if (new Date(t.createdAt) > new Date(g.maxCreatedAt)) g.maxCreatedAt = t.createdAt;
+    });
+
+    const sortedGroups = Array.from(groups.values()).sort((a, b) => {
+      const dDiff = new Date(b.maxDate) - new Date(a.maxDate);
+      if (dDiff !== 0) return dDiff;
+      return new Date(b.maxCreatedAt) - new Date(a.maxCreatedAt);
+    });
+
+    const itemOrder = (item) => {
+      const isConvExp = item.type === 'EXPENSE' && (item.category === 'Конвертация валюты' || item.reference?.startsWith('КОНВ-') || item.reference?.startsWith('ОБМЕН-'));
+      if (isConvExp) return 1;
+      const isConvInc = item.type === 'INCOME' && (item.category === 'Конвертация валюты' || item.reference?.startsWith('ПКО-КОНВ-') || item.reference?.startsWith('ПКО-ОБМЕН-'));
+      if (isConvInc) return 2;
+      const isTransExp = item.type === 'EXPENSE' && (item.operationType === 'INTERNAL_CASH_TRANSFER' || item.reference?.includes('ПЕРЕМ'));
+      if (isTransExp) return 1;
+      const isTransInc = item.type === 'INCOME' && (item.operationType === 'INTERNAL_CASH_TRANSFER' || item.reference?.includes('ПЕРЕМ'));
+      if (isTransInc) return 2;
+      return 3;
+    };
+
+    const sortedTransactions = [];
+    sortedGroups.forEach(g => {
+      g.items.sort((a, b) => itemOrder(a) - itemOrder(b));
+      sortedTransactions.push(...g.items);
+    });
+
+    transactions.length = 0;
+    transactions.push(...sortedTransactions);
 
     let filteredTransactions = transactions;
     if (selectedCurrency) {
