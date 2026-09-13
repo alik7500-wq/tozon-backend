@@ -2477,4 +2477,50 @@ export class FinanceRepository {
       }
     };
   }
+
+  /**
+   * Safe regression guard: Only allows voiding a legacy PKO/RKO pair as REENTERED_VIA_ATOMIC_CASH_TRANSFER
+   * if a matching active cash_transfers row exists in the database.
+   */
+  static async supersedeLegacyTransferPair(expenseId, paymentId, voidReason = 'REENTERED_VIA_ATOMIC_CASH_TRANSFER', userId = 1) {
+    const db = getDB();
+
+    const { data: expense } = await db.from('expenses').select('*').eq('id', expenseId).maybeSingle();
+    const { data: payment } = await db.from('payments').select('*').eq('id', paymentId).maybeSingle();
+
+    if (!expense || !payment) {
+      throw new Error(`LEGACY_TRANSFER_PAIR_NOT_FOUND: Expense #${expenseId} or Payment #${paymentId} does not exist`);
+    }
+
+    const { data: matchingTransfers } = await db.from('cash_transfers')
+      .select('*')
+      .eq('status', 'ACTIVE')
+      .eq('amount_minor', expense.amount_minor)
+      .eq('currency', expense.currency)
+      .eq('source_cash_desk_id', expense.cash_desk_id)
+      .eq('destination_cash_desk_id', payment.cash_desk_id);
+
+    if (!matchingTransfers || matchingTransfers.length === 0) {
+      throw new Error(
+        `CANNOT_VOID_LEGACY_TRANSFER_WITHOUT_ATOMIC_RECORD: No active matching cash_transfers row found for Expense #${expenseId} ($${(expense.amount_minor/100).toFixed(2)}) and Payment #${paymentId} ($${(payment.amount_minor/100).toFixed(2)}).`
+      );
+    }
+
+    await db.from('expenses').update({
+      status: 'VOIDED',
+      void_reason: voidReason,
+      voided_at: new Date().toISOString(),
+      voided_by: userId
+    }).eq('id', expenseId);
+
+    await db.from('payments').update({
+      status: 'VOIDED',
+      void_reason: voidReason,
+      voided_at: new Date().toISOString(),
+      voided_by: userId
+    }).eq('id', paymentId);
+
+    return { success: true, supersededExpenseId: expenseId, supersededPaymentId: paymentId };
+  }
 }
+
