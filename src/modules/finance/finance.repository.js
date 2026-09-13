@@ -921,6 +921,24 @@ export class FinanceRepository {
         const finalRef = data.reference || `РКО-${newExpense.id}`;
         await db.from('expenses').update({ reference: finalRef }).eq('id', newExpense.id);
         newExpense.reference = finalRef;
+        newExpense.conversion = {
+          has_conversion: true,
+          conv_expense_id: convExpenseId,
+          conv_expense_reference: `КОНВ-${convExpenseId}`,
+          conv_payment_id: convPayment?.id || null,
+          conv_payment_reference: convPayment?.id ? `ПКО-КОНВ-${convPayment.id}` : null,
+          main_expense_id: newExpense.id,
+          main_expense_reference: finalRef,
+          source_currency: sourceCurrency,
+          source_amount_usd: convertedSourceAmount,
+          target_currency: currency,
+          target_amount_tjs: Number(data.amount),
+          exchange_rate: exchangeRate,
+          recipient: data.recipient || 'Контрагент',
+          category: data.category || 'Прочее',
+          description: (data.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
+          cash_desk_id: targetCashDeskId
+        };
         return newExpense;
       }
 
@@ -953,6 +971,20 @@ export class FinanceRepository {
         const finalRef = data.reference || `РКО-${newExpense.id}`;
         await db.from('expenses').update({ reference: finalRef }).eq('id', newExpense.id);
         newExpense.reference = finalRef;
+        newExpense.conversion = {
+          has_conversion: true,
+          main_expense_id: newExpense.id,
+          main_expense_reference: finalRef,
+          source_currency: 'USD',
+          source_amount_usd: convertedUsd,
+          target_currency: 'TJS',
+          target_amount_tjs: Number(data.amount),
+          exchange_rate: exchangeRate,
+          recipient: data.recipient || 'Контрагент',
+          category: data.category || 'Прочее',
+          description: (data.description || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
+          cash_desk_id: targetCashDeskId
+        };
         return newExpense;
       }
 
