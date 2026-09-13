@@ -47,6 +47,7 @@ describe('RKO Auto-Conversion & Exchange Fields Tests', () => {
       description: 'Тестовая закупка для проверки автоконвертации',
       reference: testReference,
       method: 'CASH',
+      cash_desk_id: 'ab90800a-73af-4cf7-88c2-397c304e2edf',
       date: new Date().toISOString().split('T')[0]
     }, 1);
 
@@ -115,6 +116,7 @@ describe('RKO Auto-Conversion & Exchange Fields Tests', () => {
       description: 'Без конвертации',
       reference: regReference,
       method: 'CASH',
+      cash_desk_id: 'ab90800a-73af-4cf7-88c2-397c304e2edf',
       date: new Date().toISOString().split('T')[0]
     }, 1);
 

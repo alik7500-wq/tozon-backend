@@ -455,6 +455,10 @@ export class DealsRepository {
     const { data: deal } = await db.from('deals').select('*').eq('id', dealId).single();
     if (!deal) throw new AppError('Сделка не найдена', 404);
 
+    if (!data.cash_desk_id) {
+      throw new AppError('Касса получения средств обязательна для выбора', 400, 'CASH_DESK_REQUIRED');
+    }
+
     if (idempotencyKey) {
       const { data: existingPayment } = await db
         .from('payments')

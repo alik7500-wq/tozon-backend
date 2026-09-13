@@ -413,12 +413,23 @@ export class FinanceRepository {
     const dealId = parseOptionalBigInt(data.deal_id);
     const scheduleId = parseOptionalBigInt(data.schedule_id);
 
-    let targetCashDeskId = (userAccess && !userAccess.isAdmin) 
+    let rawTarget = (userAccess && !userAccess.isAdmin) 
       ? userAccess.cashDeskId 
-      : (data.cash_desk_id || data.cash_desk || null);
+      : (data.cash_desk_id !== undefined ? data.cash_desk_id : data.cash_desk);
 
-    if (targetCashDeskId) {
-      targetCashDeskId = await resolveCashDeskUuid(db, targetCashDeskId);
+    if (!rawTarget) {
+      const err = new Error('Касса зачисления обязательна (cash_desk_id)');
+      err.statusCode = 400;
+      err.code = 'CASH_DESK_REQUIRED';
+      throw err;
+    }
+
+    let targetCashDeskId = await resolveCashDeskUuid(db, rawTarget);
+    if (!targetCashDeskId) {
+      const err = new Error('Указанная касса зачисления не найдена или неактивна');
+      err.statusCode = 400;
+      err.code = 'CASH_DESK_REQUIRED';
+      throw err;
     }
 
     const { data: newPayment, error } = await db.from('payments').insert([{
@@ -497,11 +508,18 @@ export class FinanceRepository {
     }
     const rawDesk = data.cash_desk_id !== undefined ? data.cash_desk_id : data.cash_desk;
     if (rawDesk !== undefined) {
+      if (rawDesk === null || rawDesk === '') {
+        const err = new Error('Отвязка кассы (null) запрещена для активных финансовых документов');
+        err.statusCode = 400;
+        throw err;
+      }
       const resolvedUuid = await resolveCashDeskUuid(db, rawDesk);
       if (resolvedUuid) {
         updatePayload.cash_desk_id = resolvedUuid;
-      } else if (rawDesk === null || rawDesk === '') {
-        updatePayload.cash_desk_id = null;
+      } else {
+        const err = new Error('Указанная касса не найдена');
+        err.statusCode = 400;
+        throw err;
       }
     }
 
@@ -877,12 +895,23 @@ export class FinanceRepository {
 
     const runAddExpense = async () => {
       const db = getDB();
-      let targetCashDeskId = (userAccess && !userAccess.isAdmin)
+      let rawTarget = (userAccess && !userAccess.isAdmin)
         ? userAccess.cashDeskId
-        : (data.cash_desk_id || data.cash_desk || null);
+        : (data.cash_desk_id !== undefined ? data.cash_desk_id : data.cash_desk);
 
-      if (targetCashDeskId) {
-        targetCashDeskId = await resolveCashDeskUuid(db, targetCashDeskId);
+      if (!rawTarget) {
+        const err = new Error('Касса списания обязательна (cash_desk_id)');
+        err.statusCode = 400;
+        err.code = 'CASH_DESK_REQUIRED';
+        throw err;
+      }
+
+      let targetCashDeskId = await resolveCashDeskUuid(db, rawTarget);
+      if (!targetCashDeskId) {
+        const err = new Error('Указанная касса списания не найдена или неактивна');
+        err.statusCode = 400;
+        err.code = 'CASH_DESK_REQUIRED';
+        throw err;
       }
 
       // 1. Проверка в БД: если операция уже существует (между процессами)
@@ -1193,11 +1222,18 @@ export class FinanceRepository {
     }
     const rawDesk = data.cash_desk_id !== undefined ? data.cash_desk_id : data.cash_desk;
     if (rawDesk !== undefined) {
+      if (rawDesk === null || rawDesk === '') {
+        const err = new Error('Отвязка кассы (null) запрещена для активных финансовых документов');
+        err.statusCode = 400;
+        throw err;
+      }
       const resolvedUuid = await resolveCashDeskUuid(db, rawDesk);
       if (resolvedUuid) {
         updatePayload.cash_desk_id = resolvedUuid;
-      } else if (rawDesk === null || rawDesk === '') {
-        updatePayload.cash_desk_id = null;
+      } else {
+        const err = new Error('Указанная касса не найдена');
+        err.statusCode = 400;
+        throw err;
       }
     }
 
@@ -1417,16 +1453,24 @@ export class FinanceRepository {
     const { data: dictDesks } = await db.from('dictionaries').select('*').eq('type', 'CASH_DESK').eq('is_active', true);
     const desks = dictDesks || [];
 
-    let fromCashDeskId = (await resolveCashDeskUuid(db, data.from_cash_desk_id || data.source_cash_desk_id)) || null;
-    let toCashDeskId = (await resolveCashDeskUuid(db, data.to_cash_desk_id || data.destination_cash_desk_id)) || null;
+    const rawFrom = data.from_cash_desk_id || data.source_cash_desk_id;
+    const rawTo = data.to_cash_desk_id || data.destination_cash_desk_id;
 
-    if (!fromCashDeskId) {
-      const defaultFrom = desks.find(d => d.code === 'SALES_MANAGER') || desks[0];
-      fromCashDeskId = defaultFrom?.id || null;
+    if (!rawFrom || !rawTo) {
+      const err = new Error('Для конвертации валют обязательны исходная и целевая кассы');
+      err.statusCode = 400;
+      err.code = 'CONVERSION_CASH_DESKS_REQUIRED';
+      throw err;
     }
-    if (!toCashDeskId) {
-      const defaultTo = desks.find(d => d.code === 'MAIN_CASHIER') || desks[1] || desks[0];
-      toCashDeskId = defaultTo?.id || null;
+
+    let fromCashDeskId = await resolveCashDeskUuid(db, rawFrom);
+    let toCashDeskId = await resolveCashDeskUuid(db, rawTo);
+
+    if (!fromCashDeskId || !toCashDeskId) {
+      const err = new Error('Указанная касса для конвертации валют не найдена или неактивна');
+      err.statusCode = 400;
+      err.code = 'CONVERSION_CASH_DESKS_REQUIRED';
+      throw err;
     }
 
     const fromDeskObj = desks.find(d => d.id === fromCashDeskId);
@@ -1755,7 +1799,8 @@ export class FinanceRepository {
 
     const resolveDeskName = (cashDeskId, rawComment, rawRecipient) => {
       if (cashDeskId) {
-        const directDesk = activeDesks.find(d => d.id === cashDeskId || d.code === cashDeskId);
+        const strId = String(cashDeskId).toLowerCase();
+        const directDesk = activeDesks.find(d => (d.id && String(d.id).toLowerCase() === strId) || (d.code && String(d.code).toLowerCase() === strId));
         if (directDesk) return directDesk.name;
       }
       const text = `${rawComment || ''} ${rawRecipient || ''}`;
@@ -1764,17 +1809,11 @@ export class FinanceRepository {
       if (!parsed && rawRecipient && rawRecipient.startsWith('Касса ')) {
         parsed = rawRecipient.trim();
       }
-      if (!parsed) {
-        return mainCashier.name;
-      }
-      const directMatch = activeDesks.find(d => d.name.toLowerCase() === parsed.toLowerCase());
-      if (directMatch) return directMatch.name;
-
-      const prefixMatch = activeDesks.find(d => parsed.toLowerCase().startsWith(d.name.toLowerCase()) || d.name.toLowerCase().startsWith(parsed.toLowerCase()));
-      if (prefixMatch) return prefixMatch.name;
-
-      if (parsed.includes('Бухгалтерия') || parsed.includes('Главная касса')) {
-        return mainCashier.name;
+      if (parsed) {
+        const directMatch = activeDesks.find(d => d.name.toLowerCase() === parsed.toLowerCase());
+        if (directMatch) return directMatch.name;
+        const prefixMatch = activeDesks.find(d => parsed.toLowerCase().startsWith(d.name.toLowerCase()) || d.name.toLowerCase().startsWith(parsed.toLowerCase()));
+        if (prefixMatch) return prefixMatch.name;
       }
       return mainCashier.name;
     };
@@ -1885,8 +1924,8 @@ export class FinanceRepository {
         conversion_id: p.conversion_id || null,
         cashDeskId: p.cash_desk_id || null,
         cash_desk_id: p.cash_desk_id || null,
-        cashDeskName: deskName,
-        cash_desk_name: deskName,
+        cashDeskName: p.cash_desk_id ? deskName : 'Без кассы',
+        cash_desk_name: p.cash_desk_id ? deskName : 'Без кассы',
         counterpart_cash_desk_name: counterpartDeskName,
         account_id: isBank ? (p.cash_desk_id || 'BANK_ACCOUNT') : null,
         account_name: isBank ? deskName : null,
@@ -1955,8 +1994,8 @@ export class FinanceRepository {
         conversion_id: e.conversion_id || null,
         cashDeskId: e.cash_desk_id || null,
         cash_desk_id: e.cash_desk_id || null,
-        cashDeskName: deskName,
-        cash_desk_name: deskName,
+        cashDeskName: e.cash_desk_id ? deskName : 'Без кассы',
+        cash_desk_name: e.cash_desk_id ? deskName : 'Без кассы',
         counterpart_cash_desk_name: counterpartDeskName,
         account_id: isBank ? (e.cash_desk_id || 'BANK_ACCOUNT') : null,
         account_name: isBank ? deskName : null,
@@ -2140,7 +2179,6 @@ export class FinanceRepository {
         };
       }
     } else {
-      // Синхронизация сводного капитала компании со суммой всех касс
       const totalCapitalUsd = Number(Object.values(cashDesksMap).reduce((sum, d) => sum + (d.USD || 0), 0).toFixed(2));
       const totalCapitalTjs = Number(Object.values(cashDesksMap).reduce((sum, d) => sum + (d.TJS || 0), 0).toFixed(2));
       if (summaryByCurrency['USD']) {
@@ -2234,8 +2272,22 @@ export class FinanceRepository {
       finalAmountUsd = parseNum(amount_usd || amount);
     }
 
-    const resolvedSourceId = (await resolveCashDeskUuid(db, source_cash_desk_id)) || source_cash_desk_id;
-    const resolvedDestId = (await resolveCashDeskUuid(db, destination_cash_desk_id)) || destination_cash_desk_id;
+    if (!source_cash_desk_id || !destination_cash_desk_id) {
+      const err = new Error('Для внутреннего перемещения обязательны исходная и целевая кассы');
+      err.statusCode = 400;
+      err.code = 'TRANSFER_CASH_DESKS_REQUIRED';
+      throw err;
+    }
+
+    const resolvedSourceId = await resolveCashDeskUuid(db, source_cash_desk_id);
+    const resolvedDestId = await resolveCashDeskUuid(db, destination_cash_desk_id);
+
+    if (!resolvedSourceId || !resolvedDestId) {
+      const err = new Error('Указанная касса для внутреннего перемещения не найдена или неактивна');
+      err.statusCode = 400;
+      err.code = 'TRANSFER_CASH_DESKS_REQUIRED';
+      throw err;
+    }
 
     const { data: result, error } = await db.rpc('create_atomic_cash_transfer', {
       p_source_cash_desk_id: resolvedSourceId,

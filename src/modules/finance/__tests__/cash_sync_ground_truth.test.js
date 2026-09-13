@@ -103,6 +103,7 @@ describe('Cash Desk Balance Formula & Read-Only Idempotency Verification', () =>
       category: 'Прочие расходы',
       recipient: 'Тестовый контрагент',
       description: 'Тестовый расход в TJS',
+      cash_desk_id: 'ab90800a-73af-4cf7-88c2-397c304e2edf',
       date: '2026-09-11'
     }, 1);
 

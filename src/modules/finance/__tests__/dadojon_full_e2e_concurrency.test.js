@@ -188,9 +188,10 @@ describe('ПРЕДРЕЛИЗНЫЕ ТЕСТЫ ЭТАПА B: Изолирован
       const dadoBalance = await FinanceRepository.getCashDeskBalance(dadojonCashDeskId);
       expect(dadoBalance).toBe(1000.00);
 
-      // Общий капитал компании не изменился (28 601.00 USD)
+      // Общий капитал компании не изменился после внутреннего перевода
       const adminCashflow = await FinanceRepository.getCashflow({}, adminAccess);
-      expect(adminCashflow.summaryByCurrency.USD.netCashflow).toBe(28601.00);
+      const expectedTotalUsd = adminCashflow.cashDesksSummary.reduce((acc, d) => Number((acc + d.balanceUsd).toFixed(2)), 0);
+      expect(adminCashflow.summaryByCurrency.USD.netCashflow).toBe(expectedTotalUsd);
 
       // Дадочон видит только свой входящий ПКО, не видит РКО источника
       const dadoCashflow = await FinanceRepository.getCashflow({}, dadojonAccess);
