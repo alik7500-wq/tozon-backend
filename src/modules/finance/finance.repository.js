@@ -717,6 +717,23 @@ export class FinanceRepository {
   }
 
   /**
+   * Вспомогательный метод для единого расчета USD-эквивалента финансовой операции
+   */
+  static calculateItemUsdAmount(item, defaultRate = 9.27) {
+    if (!item) return 0;
+    if (item.currency === 'USD') {
+      return Number(item.amount) || 0;
+    }
+    if (item.amount_usd && Number(item.amount_usd) > 0) {
+      return Number(item.amount_usd);
+    }
+    if (item.exchange_rate && Number(item.exchange_rate) > 0) {
+      return Number((Number(item.amount) / Number(item.exchange_rate)).toFixed(2));
+    }
+    return Number((Number(item.amount) / defaultRate).toFixed(2));
+  }
+
+  /**
    * Получить список расходов (расходных ордеров)
    */
   static async getExpenses(filters = {}, userAccess = null) {
@@ -784,14 +801,28 @@ export class FinanceRepository {
     if (!availableCurrencies.includes('USD')) availableCurrencies.push('USD');
     if (!availableCurrencies.includes('TJS')) availableCurrencies.push('TJS');
 
-    // Totals by currency
     const isAllYears = filters.year === 'ALL';
-    const totalsByCurrency = {};
-    availableCurrencies.forEach(c => { totalsByCurrency[c] = 0; });
-    normalizedList.forEach(item => {
+    const eskhataRate = 9.27;
+
+    // Исключаем технические ордера автоконвертации (КОНВ-*) из операционных расходов
+    const operationalItems = normalizedList.filter(item => {
       const eYear = item.date ? new Date(item.date).getFullYear() : null;
-      if (isAllYears || eYear === currentYear) {
-        totalsByCurrency[item.currency] = (totalsByCurrency[item.currency] || 0) + item.amount;
+      if (!isAllYears && eYear !== currentYear) return false;
+      
+      const isInternalTransfer = item.category === 'Конвертация валюты' || 
+        (item.recipient && item.recipient.includes('Касса') && item.recipient.includes('Автоконвертация')) ||
+        (item.reference && item.reference.startsWith('КОНВ-'));
+      return !isInternalTransfer;
+    });
+
+    // Totals by currency с единым расчетом USD-эквивалента
+    const totalsByCurrency = { USD: 0, TJS: 0, RUB: 0 };
+    operationalItems.forEach(item => {
+      totalsByCurrency.USD = Number((totalsByCurrency.USD + this.calculateItemUsdAmount(item, eskhataRate)).toFixed(2));
+      if (item.currency === 'TJS') {
+        totalsByCurrency.TJS = Number((totalsByCurrency.TJS + item.amount).toFixed(2));
+      } else if (item.currency === 'RUB') {
+        totalsByCurrency.RUB = Number(((totalsByCurrency.RUB || 0) + item.amount).toFixed(2));
       }
     });
 
@@ -821,37 +852,24 @@ export class FinanceRepository {
     }
 
     // Categories Breakdown Chart
-    const eskhataRate = 9.27;
     const chartCurrency = selectedCurrency || 'USD';
     const categoryTotals = {};
     const categoryCurrencies = {};
 
-    normalizedList.forEach(item => {
-      const d = new Date(item.date);
-      if (d.getFullYear() === currentYear) {
-        if (selectedCurrency && item.currency !== selectedCurrency) {
-          return;
-        }
-
-        // If 'ALL' is selected, ignore internal cashdesk conversion transfers ('Конвертация валюты') from operational category structure
-        const isInternalTransfer = item.category === 'Конвертация валюты' || 
-          (item.recipient && item.recipient.includes('Касса') && item.recipient.includes('Автоконвертация')) ||
-          (item.reference && item.reference.startsWith('КОНВ-'));
-
-        if (!selectedCurrency && isInternalTransfer) {
-          return;
-        }
-
-        const cat = item.category || 'Прочее';
-        let amountInChartCur = item.amount;
-        if (!selectedCurrency) {
-          amountInChartCur = item.currency === 'USD' ? item.amount : (item.amount / eskhataRate);
-        }
-
-        categoryTotals[cat] = (categoryTotals[cat] || 0) + amountInChartCur;
-        if (!categoryCurrencies[cat]) categoryCurrencies[cat] = {};
-        categoryCurrencies[cat][item.currency] = (categoryCurrencies[cat][item.currency] || 0) + item.amount;
+    operationalItems.forEach(item => {
+      if (selectedCurrency && item.currency !== selectedCurrency) {
+        return;
       }
+
+      const cat = item.category || 'Прочее';
+      let amountInChartCur = item.amount;
+      if (!selectedCurrency) {
+        amountInChartCur = this.calculateItemUsdAmount(item, eskhataRate);
+      }
+
+      categoryTotals[cat] = (categoryTotals[cat] || 0) + amountInChartCur;
+      if (!categoryCurrencies[cat]) categoryCurrencies[cat] = {};
+      categoryCurrencies[cat][item.currency] = (categoryCurrencies[cat][item.currency] || 0) + item.amount;
     });
 
     const categoriesChart = Object.keys(categoryTotals).map(cat => ({
