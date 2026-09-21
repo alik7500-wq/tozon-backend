@@ -307,17 +307,25 @@ export class FinanceRepository {
     if (!availableCurrencies.includes('TJS')) availableCurrencies.push('TJS');
 
     // Totals by currency
+    const isAllYears = filters.year === 'ALL';
     const totalsByCurrency = {};
     availableCurrencies.forEach(c => { totalsByCurrency[c] = 0; });
     normalizedList.forEach(item => {
-      const pYear = new Date(item.date).getFullYear();
-      if (pYear === currentYear) {
+      const pYear = item.date ? new Date(item.date).getFullYear() : null;
+      if (isAllYears || pYear === currentYear) {
         totalsByCurrency[item.currency] = (totalsByCurrency[item.currency] || 0) + item.amount;
       }
     });
 
     // Filtered list for display
     let filteredList = normalizedList;
+    if (!isAllYears) {
+      filteredList = filteredList.filter(item => {
+        if (!item.date) return false;
+        const pYear = new Date(item.date).getFullYear();
+        return pYear === currentYear;
+      });
+    }
     if (selectedCurrency) {
       filteredList = filteredList.filter(item => item.currency === selectedCurrency);
     }
@@ -413,19 +421,26 @@ export class FinanceRepository {
     const dealId = parseOptionalBigInt(data.deal_id);
     const scheduleId = parseOptionalBigInt(data.schedule_id);
 
+    const settlementMethod = (data.settlement_method || 'CASH').toUpperCase();
+    if (settlementMethod === 'INTERNAL_TRANSFER' || settlementMethod === 'CONVERSION') {
+      const err = new Error('Внутренние перемещения и конвертации создаются через специальные разделы');
+      err.statusCode = 400;
+      throw err;
+    }
+
     let rawTarget = (userAccess && !userAccess.isAdmin) 
       ? userAccess.cashDeskId 
       : (data.cash_desk_id !== undefined ? data.cash_desk_id : data.cash_desk);
 
-    if (!rawTarget) {
+    if (settlementMethod === 'CASH' && !rawTarget) {
       const err = new Error('Касса зачисления обязательна (cash_desk_id)');
       err.statusCode = 400;
       err.code = 'CASH_DESK_REQUIRED';
       throw err;
     }
 
-    let targetCashDeskId = await resolveCashDeskUuid(db, rawTarget);
-    if (!targetCashDeskId) {
+    let targetCashDeskId = rawTarget ? await resolveCashDeskUuid(db, rawTarget) : null;
+    if (settlementMethod === 'CASH' && !targetCashDeskId) {
       const err = new Error('Указанная касса зачисления не найдена или неактивна');
       err.statusCode = 400;
       err.code = 'CASH_DESK_REQUIRED';
@@ -439,6 +454,7 @@ export class FinanceRepository {
       currency,
       payment_date: paymentDate,
       method: data.method || 'CASH',
+      settlement_method: settlementMethod,
       reference: data.reference || `ПКО-${Date.now().toString().slice(-6)}`,
       comment: data.comment || null,
       payer_name: data.payer_name || null,
@@ -557,25 +573,35 @@ export class FinanceRepository {
   /**
    * Получить актуальный баланс конкретной кассы (в USD)
    */
+  /**
+   * Получить актуальный баланс конкретной кассы (в USD, только физические деньги)
+   */
   static async getCashDeskBalance(cashDeskId) {
     if (!cashDeskId) return 0;
     const db = getDB();
+    const PROVEN_BARTER_PKO_IDS = [94, 96, 98];
+    const PROVEN_BARTER_RKO_IDS = [165, 167, 169];
+
     const { data: pData } = await db.from('payments')
-      .select('amount_minor, currency')
+      .select('id, amount_minor, currency, settlement_method')
       .eq('cash_desk_id', cashDeskId)
       .neq('status', 'VOIDED');
 
     const { data: eData } = await db.from('expenses')
-      .select('amount_minor, currency')
+      .select('id, amount_minor, currency, settlement_method')
       .eq('cash_desk_id', cashDeskId)
       .neq('status', 'VOIDED');
 
     let balanceUsd = 0;
     (pData || []).forEach(p => {
+      const sm = p.settlement_method || (PROVEN_BARTER_PKO_IDS.includes(p.id) ? 'NON_CASH_BARTER' : 'CASH');
+      if (sm === 'NON_CASH_BARTER' || sm === 'BANK') return;
       const cur = (p.currency || 'USD').toUpperCase();
       if (cur === 'USD') balanceUsd += (p.amount_minor || 0) / 100;
     });
     (eData || []).forEach(e => {
+      const sm = e.settlement_method || (PROVEN_BARTER_RKO_IDS.includes(e.id) ? 'NON_CASH_BARTER' : 'CASH');
+      if (sm === 'NON_CASH_BARTER' || sm === 'BANK') return;
       const cur = (e.currency || 'USD').toUpperCase();
       if (cur === 'USD') balanceUsd -= (e.amount_minor || 0) / 100;
     });
@@ -757,17 +783,25 @@ export class FinanceRepository {
     if (!availableCurrencies.includes('TJS')) availableCurrencies.push('TJS');
 
     // Totals by currency
+    const isAllYears = filters.year === 'ALL';
     const totalsByCurrency = {};
     availableCurrencies.forEach(c => { totalsByCurrency[c] = 0; });
     normalizedList.forEach(item => {
-      const eYear = new Date(item.date).getFullYear();
-      if (eYear === currentYear) {
+      const eYear = item.date ? new Date(item.date).getFullYear() : null;
+      if (isAllYears || eYear === currentYear) {
         totalsByCurrency[item.currency] = (totalsByCurrency[item.currency] || 0) + item.amount;
       }
     });
 
     // Filtered list
     let filteredList = normalizedList;
+    if (!isAllYears) {
+      filteredList = filteredList.filter(item => {
+        if (!item.date) return false;
+        const eYear = new Date(item.date).getFullYear();
+        return eYear === currentYear;
+      });
+    }
     if (selectedCurrency) {
       filteredList = filteredList.filter(item => item.currency === selectedCurrency);
     }
@@ -895,19 +929,26 @@ export class FinanceRepository {
 
     const runAddExpense = async () => {
       const db = getDB();
+      const settlementMethod = (data.settlement_method || 'CASH').toUpperCase();
+      if (settlementMethod === 'INTERNAL_TRANSFER' || settlementMethod === 'CONVERSION') {
+        const err = new Error('Внутренние перемещения и конвертации создаются через специальные разделы');
+        err.statusCode = 400;
+        throw err;
+      }
+
       let rawTarget = (userAccess && !userAccess.isAdmin)
         ? userAccess.cashDeskId
         : (data.cash_desk_id !== undefined ? data.cash_desk_id : data.cash_desk);
 
-      if (!rawTarget) {
+      if (settlementMethod === 'CASH' && !rawTarget) {
         const err = new Error('Касса списания обязательна (cash_desk_id)');
         err.statusCode = 400;
         err.code = 'CASH_DESK_REQUIRED';
         throw err;
       }
 
-      let targetCashDeskId = await resolveCashDeskUuid(db, rawTarget);
-      if (!targetCashDeskId) {
+      let targetCashDeskId = rawTarget ? await resolveCashDeskUuid(db, rawTarget) : null;
+      if (settlementMethod === 'CASH' && !targetCashDeskId) {
         const err = new Error('Указанная касса списания не найдена или неактивна');
         err.statusCode = 400;
         err.code = 'CASH_DESK_REQUIRED';
@@ -1522,7 +1563,7 @@ export class FinanceRepository {
     const availableYears = await this.getAvailableYears();
 
     const { data: paymentsData, error: pErr } = await db.from('payments').select(`
-      id, deal_id, amount_minor, currency, payment_date, method, reference, comment, payer_name, created_at,
+      id, deal_id, amount_minor, currency, payment_date, method, settlement_method, reference, comment, payer_name, created_at,
       status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs, amount_usd, exchange_rate,
       conversion_id,
       deals ( id, contract_number, currency, deal_date, created_at, leads ( full_name, inn ) ),
@@ -1531,7 +1572,7 @@ export class FinanceRepository {
     if (pErr) throw pErr;
 
     const { data: expensesData, error: eErr } = await db.from('expenses').select(`
-      id, amount_minor, currency, expense_date, category, method, reference, recipient, description, created_at,
+      id, amount_minor, currency, expense_date, category, method, settlement_method, reference, recipient, description, created_at,
       exchange_rate, amount_usd, conversion_expense_id,
       status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs,
       conversion_id,
@@ -1707,26 +1748,27 @@ export class FinanceRepository {
     let totalDealsCount = 0;
     let totalContractSumUsd = 0;
     let totalDiscountSumUsd = 0;
-    let totalReceivedSumUsd = 0;
 
     (allDealsData || []).forEach(d => {
       if (d.status !== 'CANCELLED') {
-        totalDealsCount++;
         const area = (d.units?.area_m2_x100 || 0) / 100;
         totalSoldAreaM2 += area;
 
-        const contractAmt = (d.final_price_minor || 0) / 100;
         const discountAmt = (d.discount_minor || 0) / 100;
-        totalContractSumUsd += contractAmt;
         totalDiscountSumUsd += discountAmt;
 
-        const schedules = d.deal_payment_schedules || [];
-        const schedPaid = schedules.reduce((acc, s) => acc + ((s.paid_amount_minor || 0) / 100), 0);
-        const downPaid = (d.down_payment_minor || 0) / 100;
-        const paid = Math.max(schedPaid, downPaid);
-        totalReceivedSumUsd += paid;
+        if (d.status === 'SIGNED' || d.status === 'COMPLETED') {
+          totalDealsCount++;
+          const contractAmt = (d.final_price_minor || 0) / 100;
+          totalContractSumUsd += contractAmt;
+        }
       }
     });
+
+    const totalPaymentsCollectedUsd = activePayments.reduce((acc, p) => acc + ((p.amount_minor || 0) / 100), 0);
+    const { data: schedData } = await db.from('deal_payment_schedules').select('paid_amount_minor');
+    const totalSchedPaidUsd = (schedData || []).reduce((acc, s) => acc + ((s.paid_amount_minor || 0) / 100), 0);
+    const totalReceivedSumUsd = Math.max(totalPaymentsCollectedUsd, totalSchedPaidUsd);
 
     const totalReceivableSumUsd = Math.max(0, totalContractSumUsd - totalReceivedSumUsd);
 
@@ -2110,7 +2152,13 @@ export class FinanceRepository {
       };
     });
 
+    const PROVEN_BARTER_PKO_IDS = [94, 96, 98];
+    const PROVEN_BARTER_RKO_IDS = [165, 167, 169];
+
     activePayments.forEach(p => {
+      const sm = p.settlement_method || (PROVEN_BARTER_PKO_IDS.includes(p.id) ? 'NON_CASH_BARTER' : 'CASH');
+      if (sm === 'NON_CASH_BARTER' || sm === 'BANK') return;
+
       const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
       const amt = (p.amount_minor || 0) / 100;
       const deskName = resolveDeskName(p.cash_desk_id, p.comment, p.payer_name);
@@ -2130,6 +2178,9 @@ export class FinanceRepository {
     });
 
     activeExpenses.forEach(e => {
+      const sm = e.settlement_method || (PROVEN_BARTER_RKO_IDS.includes(e.id) ? 'NON_CASH_BARTER' : 'CASH');
+      if (sm === 'NON_CASH_BARTER' || sm === 'BANK') return;
+
       const cur = (e.currency || 'USD').toUpperCase();
       const amt = (e.amount_minor || 0) / 100;
       const deskName = resolveDeskName(e.cash_desk_id, e.description, e.recipient);
