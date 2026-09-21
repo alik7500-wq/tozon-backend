@@ -237,14 +237,22 @@ export class FinanceRepository {
 
     const allPayments = paymentsData || [];
     
+    // Helper to extract tag from comment
+    const extractTag = (text, tagName) => {
+      if (!text) return null;
+      const match = String(text).match(new RegExp(`\\[${tagName}:\\s*([^\\]]+)\\]`, 'i'));
+      return match ? match[1].trim() : null;
+    };
+
     // Normalize and extract currency for each payment
     let normalizedList = allPayments
       .filter(p => filters.include_voided ? true : p.status !== 'VOIDED')
       .map(p => {
         const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
         const amount = (p.amount_minor || 0) / 100;
-        const clientName = p.payer_name || p.deals?.leads?.full_name || (p.deal_id ? `Клиент по сделке #${p.deal_id}` : 'Прямой плательщик');
-        const contract = p.deals?.contract_number || (p.deal_id ? `СД-${p.deal_id}` : 'Прямой приход');
+        const isInv = p.operation_type === 'INVESTMENT' || (p.comment && p.comment.includes('Инвестиции партнёров'));
+        const clientName = p.payer_name || p.deals?.leads?.full_name || (p.deal_id ? `Клиент по сделке #${p.deal_id}` : (isInv ? 'Инвестор' : 'Прямой плательщик'));
+        const contract = isInv ? 'Инвестиция партнёра' : (p.deals?.contract_number || (p.deal_id ? `СД-${p.deal_id}` : 'Прямой приход'));
         const dealDate = p.deals?.deal_date || (p.deals?.created_at ? p.deals.created_at.split('T')[0] : null);
         const dealObj = p.deals ? {
           id: p.deals.id,
@@ -258,6 +266,10 @@ export class FinanceRepository {
           } : null
         } : null;
 
+        const extractedCategory = extractTag(p.comment, 'Статья');
+        const extractedBasis = extractTag(p.comment, 'Основание');
+        const extractedPurpose = extractTag(p.comment, 'Назначение');
+
         return {
           id: p.id,
           dealId: p.deal_id,
@@ -267,7 +279,7 @@ export class FinanceRepository {
           date: p.payment_date,
           method: p.method || 'CASH',
           reference: p.reference || `ПКО-${p.id}`,
-          comment: (p.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
+          comment: (p.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').replace(/\[(Статья|Основание|Назначение):[^\]]+\]\s*/gi, '').trim(),
           payerName: p.payer_name || clientName,
           contract,
           dealDate,
@@ -284,6 +296,10 @@ export class FinanceRepository {
           amountTjs: p.amount_tjs ? Number(p.amount_tjs) : null,
           amountUsd: p.amount_usd ? Number(p.amount_usd) : null,
           exchangeRate: p.exchange_rate ? Number(p.exchange_rate) : null,
+          projectId: isInv ? 3 : null,
+          category: extractedCategory || (isInv ? 'Инвестиции партнёров' : null),
+          basis: extractedBasis || null,
+          purpose: extractedPurpose || null,
           createdByName: p.users?.name || 'Система',
           createdByUserId: p.created_by_user_id || p.users?.id || null,
           createdAt: p.created_at,
@@ -420,8 +436,8 @@ export class FinanceRepository {
     const amountMinor = Math.round(Number(data.amount) * 100);
     const paymentDate = data.date || data.payment_date || now.split('T')[0];
     const currency = (data.currency || 'USD').toUpperCase();
-    const dealId = parseOptionalBigInt(data.deal_id);
-    const scheduleId = parseOptionalBigInt(data.schedule_id);
+    let dealId = parseOptionalBigInt(data.deal_id);
+    let scheduleId = parseOptionalBigInt(data.schedule_id);
 
     const settlementMethod = (data.settlement_method || 'CASH').toUpperCase();
     if (settlementMethod === 'INTERNAL_TRANSFER' || settlementMethod === 'CONVERSION') {
@@ -449,6 +465,68 @@ export class FinanceRepository {
       throw err;
     }
 
+    // Check if target desk is TOZON_PLAZA_INVESTMENT or operation_type is INVESTMENT
+    let isInvestment = data.operation_type === 'INVESTMENT' || data.is_investment;
+    if (!isInvestment && targetCashDeskId) {
+      const { data: deskObj } = await db.from('dictionaries').select('code').eq('id', targetCashDeskId).maybeSingle();
+      if (deskObj && deskObj.code === 'TOZON_PLAZA_INVESTMENT') {
+        isInvestment = true;
+      }
+    }
+
+    let operationType = isInvestment ? 'INVESTMENT' : (data.operation_type || 'STANDARD');
+    let payerName = data.payer_name || data.partner_name || data.partner || null;
+    let category = data.category || (isInvestment ? 'Инвестиции партнёров' : null);
+    let basis = data.basis || null;
+    let purpose = data.purpose || null;
+    let projectId = data.project_id ? parseOptionalBigInt(data.project_id) : (isInvestment ? 3 : null);
+
+    let exchangeRate = data.exchange_rate ? Number(data.exchange_rate) : null;
+    let amountUsd = data.amount_usd ? Number(data.amount_usd) : null;
+    let amountTjs = data.amount_tjs ? Number(data.amount_tjs) : null;
+
+    if (isInvestment) {
+      dealId = null;
+      scheduleId = null;
+      if (!payerName || !String(payerName).trim()) {
+        const err = new Error('Имя партнера/инвестора обязательно при оформлении инвестиционного ПКО');
+        err.statusCode = 400;
+        throw err;
+      }
+
+      if (currency === 'TJS') {
+        if (!exchangeRate || exchangeRate <= 0) {
+          const err = new Error('Курс обмена обязателен при внесении инвестиции в TJS');
+          err.statusCode = 400;
+          throw err;
+        }
+        amountTjs = Number(data.amount);
+        amountUsd = Math.round((Number(data.amount) / exchangeRate) * 100) / 100;
+      } else if (currency === 'USD') {
+        amountUsd = Number(data.amount);
+        if (exchangeRate && exchangeRate > 0) {
+          amountTjs = Math.round(Number(data.amount) * exchangeRate * 100) / 100;
+        }
+      }
+    }
+
+    // Build comment with embedded tags for basis, purpose, category
+    let commentParts = [];
+    if (category && category !== 'Инвестиции партнёров') {
+      commentParts.push(`[Статья: ${category.trim()}]`);
+    }
+    if (basis && basis.trim()) {
+      commentParts.push(`[Основание: ${basis.trim()}]`);
+    }
+    if (purpose && purpose.trim()) {
+      commentParts.push(`[Назначение: ${purpose.trim()}]`);
+    }
+    const cleanComm = (data.comment || '').replace(/\[(Статья|Основание|Назначение):[^\]]+\]\s*/gi, '').trim();
+    if (cleanComm) {
+      commentParts.push(cleanComm);
+    }
+    const fullComment = commentParts.join(' ').trim();
+
     const { data: newPayment, error } = await db.from('payments').insert([{
       deal_id: dealId,
       schedule_id: scheduleId,
@@ -458,9 +536,13 @@ export class FinanceRepository {
       method: data.method || 'CASH',
       settlement_method: settlementMethod,
       reference: data.reference || `ПКО-${Date.now().toString().slice(-6)}`,
-      comment: data.comment || null,
-      payer_name: data.payer_name || null,
+      comment: fullComment || null,
+      payer_name: payerName,
       cash_desk_id: targetCashDeskId,
+      operation_type: operationType,
+      exchange_rate: exchangeRate,
+      amount_usd: amountUsd,
+      amount_tjs: amountTjs,
       created_by_user_id: parseOptionalBigInt(userId),
       created_at: now
     }]).select().single();
@@ -521,9 +603,16 @@ export class FinanceRepository {
     if (data.comment !== undefined || data.description !== undefined) {
       updatePayload.comment = data.comment !== undefined ? data.comment : data.description;
     }
-    if (data.payer_name !== undefined || data.recipient !== undefined) {
-      updatePayload.payer_name = data.payer_name !== undefined ? data.payer_name : data.recipient;
+    if (data.payer_name !== undefined || data.recipient !== undefined || data.partner_name !== undefined) {
+      updatePayload.payer_name = data.payer_name !== undefined ? data.payer_name : (data.partner_name !== undefined ? data.partner_name : data.recipient);
     }
+    if (data.category !== undefined) updatePayload.category = data.category;
+    if (data.basis !== undefined) updatePayload.basis = data.basis;
+    if (data.purpose !== undefined) updatePayload.purpose = data.purpose;
+    if (data.project_id !== undefined) updatePayload.project_id = parseOptionalBigInt(data.project_id);
+    if (data.exchange_rate !== undefined) updatePayload.exchange_rate = data.exchange_rate ? Number(data.exchange_rate) : null;
+    if (data.amount_usd !== undefined) updatePayload.amount_usd = data.amount_usd ? Number(data.amount_usd) : null;
+    if (data.amount_tjs !== undefined) updatePayload.amount_tjs = data.amount_tjs ? Number(data.amount_tjs) : null;
     const rawDesk = data.cash_desk_id !== undefined ? data.cash_desk_id : data.cash_desk;
     if (rawDesk !== undefined) {
       if (rawDesk === null || rawDesk === '') {
@@ -1935,9 +2024,15 @@ export class FinanceRepository {
         inn: p.deals.leads?.inn
       } : null;
 
+      const isInvestment = p.operation_type === 'INVESTMENT' || p.category === 'Инвестиции партнёров';
       let category = 'Поступления по сделкам';
+      let section = 'Операционная деятельность';
       let title = p.deals?.contract_number ? `Оплата по договору ${p.deals.contract_number}` : 'Приходный кассовый ордер';
-      if (isInternalTransfer) {
+      if (isInvestment) {
+        category = p.category || 'Инвестиции партнёров';
+        section = 'Финансовая деятельность';
+        title = p.purpose || 'Инвестиция партнёра';
+      } else if (isInternalTransfer) {
         category = 'Внутренние перемещения между кассами';
         title = 'Внутреннее перемещение между кассами';
       } else if (isConv) {
@@ -1967,7 +2062,7 @@ export class FinanceRepository {
         deal_id: p.deal_id,
         deal: dealObj,
         dealDate,
-        contract: p.deals?.contract_number || null,
+        contract: isInvestment ? 'Инвестиция партнёра' : (p.deals?.contract_number || null),
         contract_number: p.deals?.contract_number || null,
         type: 'INCOME',
         date: p.payment_date,
@@ -1975,9 +2070,10 @@ export class FinanceRepository {
         amount_minor: p.amount_minor,
         currency: cur,
         category,
+        section,
         title,
-        counterparty: p.payer_name || p.deals?.leads?.full_name || 'Клиент',
-        payer_name: p.payer_name || p.deals?.leads?.full_name || 'Клиент',
+        counterparty: p.payer_name || p.deals?.leads?.full_name || (isInvestment ? 'Инвестор' : 'Клиент'),
+        payer_name: p.payer_name || p.deals?.leads?.full_name || (isInvestment ? 'Инвестор' : 'Клиент'),
         method: p.method || 'CASH',
         reference: p.reference || `ПКО-${p.id}`,
         comment: (p.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
@@ -1996,6 +2092,10 @@ export class FinanceRepository {
         account_name: isBank ? deskName : null,
         operationType: p.operation_type || 'STANDARD',
         operation_type: p.operation_type || 'STANDARD',
+        projectId: p.project_id || null,
+        project_id: p.project_id || null,
+        basis: p.basis || null,
+        purpose: p.purpose || null,
         amount_usd: p.amount_usd ? Number(p.amount_usd) : null,
         amount_tjs: p.amount_tjs ? Number(p.amount_tjs) : null,
         exchange_rate: p.exchange_rate ? Number(p.exchange_rate) : null,
@@ -2140,6 +2240,25 @@ export class FinanceRepository {
     let filteredTransactions = transactions;
     if (selectedCurrency) {
       filteredTransactions = filteredTransactions.filter(t => t.currency === selectedCurrency);
+    }
+    if (filters.cash_desk_id && filters.cash_desk_id !== 'ALL') {
+      filteredTransactions = filteredTransactions.filter(t => t.cashDeskId === filters.cash_desk_id || t.cash_desk_id === filters.cash_desk_id);
+    }
+    if (filters.project_id && filters.project_id !== 'ALL') {
+      filteredTransactions = filteredTransactions.filter(t => Number(t.projectId) === Number(filters.project_id) || Number(t.project_id) === Number(filters.project_id));
+    }
+    if (filters.partner && String(filters.partner).trim()) {
+      const q = String(filters.partner).toLowerCase();
+      filteredTransactions = filteredTransactions.filter(t => (t.counterparty && t.counterparty.toLowerCase().includes(q)) || (t.payer_name && t.payer_name.toLowerCase().includes(q)));
+    }
+    if (filters.category && filters.category !== 'ALL') {
+      filteredTransactions = filteredTransactions.filter(t => t.category === filters.category);
+    }
+    if (filters.date_from) {
+      filteredTransactions = filteredTransactions.filter(t => t.date >= filters.date_from);
+    }
+    if (filters.date_to) {
+      filteredTransactions = filteredTransactions.filter(t => t.date <= filters.date_to);
     }
     if (filters.type && filters.type !== 'ALL') {
       filteredTransactions = filteredTransactions.filter(t => t.type === filters.type);
