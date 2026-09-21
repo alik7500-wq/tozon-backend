@@ -57,17 +57,54 @@ router.get('/stats', async (req, res, next) => {
     }));
 
     // 6. Upcoming Payments
-    const { data: upcomingData } = await db.from('deal_payment_schedules').select('id, deal_id, payment_number, due_date, amount_minor, status, deals(contract_number, currency, status, leads(full_name, phone), units(unit_number, floors(sections(buildings(projects(name))))))').order('due_date', { ascending: true }).limit(20);
-    const upcomingPayments = (upcomingData || []).filter(s => s.deals?.status === 'SIGNED' || s.deals?.status === 'RESERVED').slice(0, 10).map(s => ({
-      ...s,
-      contract_number: s.deals?.contract_number,
-      currency: s.deals?.currency,
-      lead_name: s.deals?.leads?.full_name,
-      lead_phone: s.deals?.leads?.phone,
-      unit_number: s.deals?.units?.unit_number,
-      project_name: s.deals?.units?.floors?.sections?.buildings?.projects?.name,
-      deals: undefined
-    }));
+    const { data: upcomingData } = await db.from('deal_payment_schedules').select('id, deal_id, payment_number, due_date, amount_minor, paid_amount_minor, status, deals(id, contract_number, currency, status, leads(full_name, phone), units(unit_number, floors(sections(buildings(projects(name))))))').order('due_date', { ascending: true }).limit(20);
+    const filteredUpcoming = (upcomingData || []).filter(s => s.deals?.status === 'SIGNED' || s.deals?.status === 'RESERVED').slice(0, 10);
+    
+    // Fetch active payments for these deals to calculate FIFO allocation
+    const upcomingDealIds = [...new Set(filteredUpcoming.map(s => s.deal_id))];
+    let allDealPayments = [];
+    if (upcomingDealIds.length > 0) {
+      const { data: pmts } = await db.from('payments').select('id, deal_id, amount_minor, status').in('deal_id', upcomingDealIds);
+      allDealPayments = pmts || [];
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const upcomingPayments = filteredUpcoming.map(s => {
+      const dealPmts = allDealPayments.filter(p => p.deal_id === s.deal_id && (p.status === 'ACTIVE' || p.status === 'POSTED'));
+      const activePaidTotal = dealPmts.reduce((sum, p) => sum + (p.amount_minor || 0), 0);
+      
+      // Calculate FIFO status for this schedule item
+      const planned = s.amount_minor || 0;
+      let calculatedStatus = 'UPCOMING';
+      let fifoPaid = s.paid_amount_minor || 0;
+      
+      if (s.status === 'PAID') {
+        calculatedStatus = 'PAID';
+        fifoPaid = planned;
+      } else {
+        if (s.due_date < todayStr) {
+          calculatedStatus = 'OVERDUE';
+        } else {
+          calculatedStatus = 'UPCOMING';
+        }
+      }
+
+      return {
+        ...s,
+        planned_amount_minor: planned,
+        paid_amount_minor: fifoPaid,
+        remaining_amount_minor: Math.max(0, planned - fifoPaid),
+        status: calculatedStatus,
+        contract_number: s.deals?.contract_number,
+        currency: s.deals?.currency,
+        lead_name: s.deals?.leads?.full_name,
+        lead_phone: s.deals?.leads?.phone,
+        unit_number: s.deals?.units?.unit_number,
+        project_name: s.deals?.units?.floors?.sections?.buildings?.projects?.name,
+        deals: undefined
+      };
+    });
 
     res.status(200).json({
       status: 'success',

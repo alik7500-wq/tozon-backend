@@ -25,6 +25,8 @@ import {
   requireCashTransferPermission
 } from '../../middleware/cashDeskAuth.middleware.js';
 
+import paymentCalendarRouter from './payment_calendar.router.js';
+
 const router = Router();
 
 // Public rate information
@@ -33,6 +35,8 @@ router.get('/rates/eskhata', getEskhataRate);
 // All other finance operations require authentication and cash desk authorization
 router.use(protect);
 router.use(resolveCashDeskAccess);
+
+router.use(paymentCalendarRouter);
 
 router.get('/income', getIncome);
 router.get('/income/:id', getIncomeById);
