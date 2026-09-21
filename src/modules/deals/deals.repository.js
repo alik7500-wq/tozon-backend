@@ -51,10 +51,10 @@ export class DealsRepository {
       // Flatten the structure to match the old SQL return shape
       const p = deal.units?.floors?.sections?.buildings?.projects || {};
       
-      const paymentsTotal = deal.payments ? deal.payments.reduce((acc, pm) => acc + (pm.amount_minor || 0), 0) : 0;
-      const schedulesTotal = deal.deal_payment_schedules ? deal.deal_payment_schedules.reduce((acc, sc) => acc + (sc.paid_amount_minor || 0), 0) : 0;
-      const totalPaid = Math.max(paymentsTotal, schedulesTotal);
-      const remainingDebt = Math.max(0, deal.final_price_minor - totalPaid);
+      const activePayments = deal.payments ? deal.payments.filter(pm => pm.status !== 'VOIDED') : [];
+      const paidAmountMinor = activePayments.reduce((acc, pm) => acc + (pm.amount_minor || 0), 0);
+      const remainingDebt = Math.max(0, (deal.final_price_minor || 0) - paidAmountMinor);
+      const paidPercent = deal.final_price_minor > 0 ? Number(((paidAmountMinor / deal.final_price_minor) * 100).toFixed(2)) : 0;
       const isOverdue = deal.status === 'RESERVED' && deal.reservation_expires_at && deal.reservation_expires_at < today;
 
       const areaM2 = deal.units?.area_m2_x100 ? (deal.units.area_m2_x100 / 100) : 0;
@@ -83,8 +83,10 @@ export class DealsRepository {
         developer_name: p.developer_name,
         project_currency: p.currency,
         manager_name: deal.users?.name,
-        total_paid_minor: totalPaid,
+        paid_amount_minor: paidAmountMinor,
+        total_paid_minor: paidAmountMinor,
         remaining_debt_minor: remainingDebt,
+        paid_percent: paidPercent,
         is_reservation_expired: !!isOverdue,
         // clean up nested objects to avoid confusion
         leads: undefined, units: undefined, users: undefined, payments: undefined, deal_payment_schedules: undefined
@@ -188,10 +190,10 @@ export class DealsRepository {
       users: undefined
     }));
 
-    const paymentsTotal = payments.reduce((sum, pm) => sum + (pm.amount_minor || 0), 0);
-    const schedulesTotal = schedules.reduce((sum, s) => sum + (s.paid_amount_minor || 0), 0);
-    const total_paid_minor = Math.max(paymentsTotal, schedulesTotal);
-    const remaining_debt_minor = Math.max(0, deal.final_price_minor - total_paid_minor);
+    const activePayments = payments.filter(pm => pm.status !== 'VOIDED');
+    const paid_amount_minor = activePayments.reduce((sum, pm) => sum + (pm.amount_minor || 0), 0);
+    const remaining_debt_minor = Math.max(0, (deal.final_price_minor || 0) - paid_amount_minor);
+    const paid_percent = deal.final_price_minor > 0 ? Number(((paid_amount_minor / deal.final_price_minor) * 100).toFixed(2)) : 0;
 
     const areaM2 = deal.units?.area_m2_x100 ? (deal.units.area_m2_x100 / 100) : 0;
     const computedDealPricePerM2 = deal.deal_price_per_m2_minor || (areaM2 > 0 ? Math.round(deal.final_price_minor / areaM2) : deal.units?.price_per_m2_minor);
@@ -231,8 +233,10 @@ export class DealsRepository {
       manager_email: deal.users?.email,
       schedules,
       payments: formattedPayments,
-      total_paid_minor,
+      paid_amount_minor,
+      total_paid_minor: paid_amount_minor,
       remaining_debt_minor,
+      paid_percent,
       leads: undefined, units: undefined, users: undefined, deal_payment_schedules: undefined
     };
   }
