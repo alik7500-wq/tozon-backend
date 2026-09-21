@@ -117,7 +117,7 @@ export class DealsRepository {
       }
     });
 
-    const { data: pmts } = await db.from('payments').select('amount_minor');
+    const { data: pmts } = await db.from('payments').select('amount_minor, status, deal_id').not('deal_id', 'is', null).neq('status', 'VOIDED');
     const { data: scheds } = await db.from('deal_payment_schedules').select('paid_amount_minor');
     
     const paymentsSum = (pmts || []).reduce((acc, p) => acc + (p.amount_minor || 0), 0);
@@ -455,7 +455,12 @@ export class DealsRepository {
     const { data: deal } = await db.from('deals').select('*').eq('id', dealId).single();
     if (!deal) throw new AppError('Сделка не найдена', 404);
 
-    if (!data.cash_desk_id) {
+    const settlementMethod = (data.settlement_method || 'CASH').toUpperCase();
+    if (settlementMethod === 'INTERNAL_TRANSFER' || settlementMethod === 'CONVERSION') {
+      throw new AppError('Внутренние перемещения и конвертации создаются через специальные разделы', 400);
+    }
+
+    if (settlementMethod === 'CASH' && !data.cash_desk_id) {
       throw new AppError('Касса получения средств обязательна для выбора', 400, 'CASH_DESK_REQUIRED');
     }
 
@@ -484,6 +489,7 @@ export class DealsRepository {
         amount_minor: amountMinor,
         payment_date: paymentDate,
         method: data.method || 'CASH',
+        settlement_method: settlementMethod,
         reference: data.reference || null,
         comment: data.comment || null,
         cash_desk_id: data.cash_desk_id || null,

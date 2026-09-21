@@ -1768,7 +1768,9 @@ export class FinanceRepository {
       }
     });
 
-    const totalPaymentsCollectedUsd = activePayments.reduce((acc, p) => acc + ((p.amount_minor || 0) / 100), 0);
+    const totalPaymentsCollectedUsd = activePayments
+      .filter(p => p.deal_id || p.dealId)
+      .reduce((acc, p) => acc + ((p.amount_minor || 0) / 100), 0);
     const { data: schedData } = await db.from('deal_payment_schedules').select('paid_amount_minor');
     const totalSchedPaidUsd = (schedData || []).reduce((acc, s) => acc + ((s.paid_amount_minor || 0) / 100), 0);
     const totalReceivedSumUsd = Math.max(totalPaymentsCollectedUsd, totalSchedPaidUsd);
