@@ -400,9 +400,11 @@ export class FinanceRepository {
     return {
       list: filteredList,
       totals: totalsByCurrency,
+      totalsByCurrency,
       availableCurrencies,
       availableYears,
-      monthlyChart: chartData
+      monthlyChart: chartData,
+      chartData
     };
   }
 
@@ -907,6 +909,7 @@ export class FinanceRepository {
     return {
       list: filteredList,
       totals: totalsByCurrency,
+      totalsByCurrency,
       availableCurrencies,
       availableYears,
       categoriesChart,
