@@ -62,11 +62,36 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
+  let serviceRoleInfo = null;
+  const rawServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ? process.env.SUPABASE_SERVICE_ROLE_KEY.trim() : null;
+  if (rawServiceKey) {
+    if (rawServiceKey.startsWith('eyJ')) {
+      try {
+        const parts = rawServiceKey.split('.');
+        if (parts.length >= 2) {
+          const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf8');
+          const payload = JSON.parse(payloadJson);
+          serviceRoleInfo = {
+            format: 'JWT',
+            role: payload.role || null,
+            iss: payload.iss || null,
+            ref: payload.ref || null
+          };
+        }
+      } catch (e) {
+        serviceRoleInfo = { format: 'JWT_PARSE_ERROR' };
+      }
+    } else {
+      serviceRoleInfo = { format: 'SECRET_KEY_FORMAT' };
+    }
+  }
+
   res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     env: {
-      hasServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_SERVICE_ROLE_KEY.trim()),
+      hasServiceRoleKey: Boolean(rawServiceKey),
+      serviceRoleInfo,
       hasPayomToken: Boolean(process.env.PAYOM_API_TOKEN && process.env.PAYOM_API_TOKEN.trim()),
       payomMockMode: process.env.PAYOM_MOCK_MODE || 'unset',
       nodeEnv: process.env.NODE_ENV || 'unset'

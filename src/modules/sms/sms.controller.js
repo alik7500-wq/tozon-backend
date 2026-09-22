@@ -124,6 +124,12 @@ export async function testDbWrite(req, res, next) {
       }
     });
   } catch (err) {
-    next(err);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: err.code || 'DB_WRITE_TEST_FAILED',
+        message: err.message || String(err)
+      }
+    });
   }
 }
