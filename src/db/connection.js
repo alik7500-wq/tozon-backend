@@ -1,11 +1,10 @@
 import { createClient } from '@supabase/supabase-js';
-import dotenv from 'dotenv';
+import 'dotenv/config';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
@@ -50,6 +49,7 @@ export const assertSafeTestDatabase = (customEnv = process.env) => {
 };
 
 let db;
+let serviceDb;
 
 export const connectDB = () => {
   if (db) return db;
@@ -77,3 +77,25 @@ export const getDB = () => {
   }
   return db;
 };
+
+export const getServiceDB = () => {
+  if (serviceDb) return serviceDb;
+
+  assertSafeTestDatabase();
+
+  const serviceRoleKey = process.env.NODE_ENV === 'test'
+    ? (process.env.TEST_SUPABASE_SERVICE_ROLE_KEY || process.env.TEST_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)
+    : process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!serviceRoleKey) {
+    throw new Error('SUPABASE_SERVICE_ROLE_KEY_REQUIRED: SUPABASE_SERVICE_ROLE_KEY is required for server-only operations');
+  }
+
+  const activeUrl = process.env.NODE_ENV === 'test'
+    ? (process.env.TEST_SUPABASE_URL || process.env.TEST_DATABASE_URL || supabaseUrl)
+    : supabaseUrl;
+
+  serviceDb = createClient(activeUrl, serviceRoleKey);
+  return serviceDb;
+};
+

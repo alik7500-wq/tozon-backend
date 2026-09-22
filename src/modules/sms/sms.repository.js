@@ -1,9 +1,10 @@
-import { getDB } from '../../db/connection.js';
+import { getServiceDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
+import { AppError } from '../../shared/errors/errorHandler.js';
 
 export class SmsRepository {
   /**
-   * Create an initial record in sms_messages table.
+   * Create an initial record in sms_messages table using server-only service_role connection.
    */
   static async createMessage({
     clientId = null,
@@ -16,7 +17,7 @@ export class SmsRepository {
     status = 'queued',
     createdBy = null
   }) {
-    const db = getDB();
+    const db = getServiceDB();
     const now = new Date().toISOString();
 
     const payload = {
@@ -40,11 +41,17 @@ export class SmsRepository {
       .single();
 
     if (error) {
-      console.warn('DB error inserting sms_messages (will fallback to object):', error.message);
-      return {
-        id: Date.now(),
-        ...payload
-      };
+      console.error('DB error inserting sms_messages:', error.message);
+
+      // Fallback allowed ONLY in unit tests if explicitly enabled
+      if (process.env.NODE_ENV === 'test' && process.env.ALLOW_SMS_REPOSITORY_MOCK_FALLBACK === 'true') {
+        return {
+          id: Date.now(),
+          ...payload
+        };
+      }
+
+      throw new AppError(`Не удалось сохранить запись SMS в базу данных: ${error.message}`, 500, 'SMS_DB_PERSISTENCE_FAILED');
     }
 
     return data;
@@ -61,7 +68,7 @@ export class SmsRepository {
     sentAt = null,
     deliveredAt = null
   }) {
-    const db = getDB();
+    const db = getServiceDB();
     const cleanId = parseOptionalBigInt(id);
     if (!cleanId) return null;
 
@@ -85,7 +92,10 @@ export class SmsRepository {
       .single();
 
     if (error) {
-      console.warn('DB error updating sms_messages status:', error.message);
+      console.error('DB error updating sms_messages status:', error.message);
+      if (process.env.NODE_ENV === 'production') {
+        throw new AppError(`Не удалось обновить статус SMS в базе данных: ${error.message}`, 500, 'SMS_DB_UPDATE_FAILED');
+      }
       return null;
     }
 
@@ -97,7 +107,7 @@ export class SmsRepository {
    */
   static async findByProviderMessageId(providerMessageId) {
     if (!providerMessageId) return null;
-    const db = getDB();
+    const db = getServiceDB();
 
     const { data, error } = await db
       .from('sms_messages')
@@ -113,7 +123,7 @@ export class SmsRepository {
    * Get SMS history with optional client, status, or date filtering.
    */
   static async getHistory(filters = {}) {
-    const db = getDB();
+    const db = getServiceDB();
     let query = db
       .from('sms_messages')
       .select(`
@@ -133,7 +143,7 @@ export class SmsRepository {
     const { data, error } = await query;
 
     if (error) {
-      console.warn('DB error reading sms_messages history:', error.message);
+      console.error('DB error reading sms_messages history:', error.message);
       return [];
     }
 
@@ -151,7 +161,7 @@ export class SmsRepository {
    * Get active SMS templates.
    */
   static async getTemplates() {
-    const db = getDB();
+    const db = getServiceDB();
     const { data, error } = await db
       .from('sms_templates')
       .select('*')
@@ -159,7 +169,7 @@ export class SmsRepository {
       .order('id', { ascending: true });
 
     if (error) {
-      console.warn('DB error reading sms_templates:', error.message);
+      console.error('DB error reading sms_templates:', error.message);
       return [
         { id: 1, code: 'CLIENT_WELCOME', name: 'Приветствие клиента', text: 'Уважаемый(ая) {{client_name}}, спасибо за обращение в отдел продаж ЖК TOZON-PLAZA!' },
         { id: 2, code: 'MEETING_REMINDER', name: 'Напоминание о встрече', text: 'Здравствуйте, {{client_name}}! Напоминаем о встрече в офисе TOZON-PLAZA.' },

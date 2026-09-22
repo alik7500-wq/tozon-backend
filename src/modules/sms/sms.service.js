@@ -10,7 +10,7 @@ export class SmsService {
   }
 
   /**
-   * Main method to send SMS safely.
+   * Main method to send SMS safely with guaranteed audit trail and fail-closed rules.
    */
   async sendSms({
     clientId = null,
@@ -56,7 +56,8 @@ export class SmsService {
 
     const cleanedText = text.trim();
 
-    // 4. Create initial queued record in DB
+    // 4. Create initial queued record in DB FIRST (Audit Trail)
+    // If DB persistence fails, exception will be thrown and Payom will NOT be called.
     const dbRecord = await SmsRepository.createMessage({
       clientId,
       dealId,
@@ -69,12 +70,14 @@ export class SmsService {
       createdBy: userId
     });
 
-    // 5. Update status to 'sending'
-    if (dbRecord && dbRecord.id) {
-      await SmsRepository.updateMessageStatus(dbRecord.id, { status: 'sending' });
+    if (!dbRecord || !dbRecord.id) {
+      throw new AppError('Не удалось зарегистрировать сообщение в базе данных (Audit Trail error)', 500);
     }
 
-    // 6. Call SMS Provider
+    // 5. Update status to 'sending'
+    await SmsRepository.updateMessageStatus(dbRecord.id, { status: 'sending' });
+
+    // 6. Call SMS Provider (Only reached if DB persistence succeeded)
     const providerResult = await this.provider.sendSms({
       phone: normalizedPhone,
       text: cleanedText,
@@ -85,14 +88,17 @@ export class SmsService {
 
     // 7. Process provider outcome & update DB record
     if (providerResult.success) {
-      const updatedRecord = await SmsRepository.updateMessageStatus(dbRecord.id, {
+      await SmsRepository.updateMessageStatus(dbRecord.id, {
         status: 'sent',
         providerMessageId: providerResult.providerMessageId,
         sentAt: now
       });
 
+      const isMock = Boolean(providerResult.isMock);
+
       return {
         success: true,
+        message: isMock ? 'SMS обработано в тестовом режиме (Mock)' : 'SMS успешно отправлено',
         data: {
           id: dbRecord.id,
           clientId,
@@ -102,7 +108,7 @@ export class SmsService {
           senderName,
           status: 'sent',
           providerMessageId: providerResult.providerMessageId,
-          isMock: providerResult.isMock || false,
+          isMock,
           sentAt: now
         }
       };

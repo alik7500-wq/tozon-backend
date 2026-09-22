@@ -50,6 +50,7 @@ describe('SMS API Routes (/api/sms)', () => {
     };
 
     vi.spyOn(dbConn, 'getDB').mockReturnValue(mockSupabase);
+    vi.spyOn(dbConn, 'getServiceDB').mockReturnValue(mockSupabase);
 
     const secret = process.env.JWT_SECRET || 'super-secret-key-for-dev-only';
     adminToken = jwt.sign({ id: 1, role: 'ADMIN' }, secret);

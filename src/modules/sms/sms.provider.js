@@ -12,7 +12,7 @@ export class PayomSmsProvider extends BaseSmsProvider {
   constructor(config = {}) {
     super();
     this.baseUrl = (config.baseUrl || process.env.PAYOM_API_BASE_URL || 'https://gateway.payom.tj/api').replace(/\/+$/, '');
-    this.token = config.token || process.env.PAYOM_API_TOKEN || null;
+    this.explicitToken = config.token || null;
     this.defaultSenderName = config.senderName || process.env.PAYOM_SENDER_NAME || 'TOZON-PLAZA';
     this.timeoutMs = config.timeoutMs || 10000; // 10s default
     this.fetchFn = config.fetchFn || fetch;
@@ -43,19 +43,45 @@ export class PayomSmsProvider extends BaseSmsProvider {
    */
   async sendSms({ phone, text, senderName }) {
     const finalSenderName = senderName || this.defaultSenderName;
+    const activeToken = this.explicitToken || process.env.PAYOM_API_TOKEN || null;
 
-    // Check if token is present or if mock mode is requested
-    if (!this.token || process.env.PAYOM_MOCK_MODE === 'true' || process.env.NODE_ENV === 'test') {
-      // Return safe mock response if token is not configured or in mock/test mode
-      return {
-        success: true,
-        providerMessageId: `MOCK_PAYOM_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-        status: 'sent',
-        isMock: true,
-        senderName: finalSenderName,
-        phone,
-        responseRaw: { status: 'mock_accepted', code: 200 }
-      };
+    const isProduction = process.env.NODE_ENV === 'production';
+    const isMockModeExplicit = process.env.PAYOM_MOCK_MODE === 'true';
+
+    // Fail-Closed Production Safeguards
+    if (isProduction) {
+      if (isMockModeExplicit) {
+        return {
+          success: false,
+          status: 'failed',
+          errorCode: 'PAYOM_MOCK_MODE_PROHIBITED_IN_PRODUCTION',
+          errorMessage: 'PAYOM_MOCK_MODE is prohibited in production environment',
+          isMock: false
+        };
+      }
+
+      if (!activeToken) {
+        return {
+          success: false,
+          status: 'failed',
+          errorCode: 'PAYOM_CONFIGURATION_ERROR',
+          errorMessage: 'PAYOM_API_TOKEN is missing in production environment',
+          isMock: false
+        };
+      }
+    } else {
+      // Non-production (test/development) mock resolution
+      if (!activeToken || isMockModeExplicit || process.env.NODE_ENV === 'test') {
+        return {
+          success: true,
+          providerMessageId: `MOCK_PAYOM_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+          status: 'sent',
+          isMock: true,
+          senderName: finalSenderName,
+          phone,
+          responseRaw: { status: 'mock_accepted', code: 200 }
+        };
+      }
     }
 
     const endpoint = `${this.baseUrl}/message`;
@@ -75,7 +101,7 @@ export class PayomSmsProvider extends BaseSmsProvider {
         headers: {
           'Accept': 'application/json',
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.token}`
+          'Authorization': `Bearer ${activeToken}`
         },
         body: JSON.stringify(payload),
         signal: controller.signal
@@ -127,7 +153,7 @@ export class PayomSmsProvider extends BaseSmsProvider {
       clearTimeout(timer);
 
       const isAbort = err.name === 'AbortError';
-      const sanitizedError = this._sanitizeErrorMessage(err, this.token);
+      const sanitizedError = this._sanitizeErrorMessage(err, activeToken);
 
       return {
         success: false,
