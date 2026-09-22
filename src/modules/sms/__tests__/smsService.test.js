@@ -184,4 +184,177 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
     expect(result.success).toBe(true);
     expect(result.data.phone).toBe('+992927779757');
   });
+
+  describe('SmsService Deal/Client Relation Security Validation', () => {
+    it('REQUIRED TEST 17 — MATCHING DEAL: should allow SMS when deal exists and belongs to specified client', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({
+        id: 10,
+        full_name: 'Клиент A',
+        phone: '+992927770010'
+      });
+
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 200,
+        lead_id: 10
+      });
+
+      vi.spyOn(SmsRepository, 'createMessage').mockResolvedValue({
+        id: 301,
+        client_id: 10,
+        deal_id: 200,
+        phone: '+992927770010',
+        status: 'queued'
+      });
+
+      vi.spyOn(SmsRepository, 'updateMessageStatus').mockResolvedValue({ id: 301, status: 'sent' });
+
+      const mockProvider = {
+        sendSms: vi.fn().mockResolvedValue({ success: true, providerMessageId: 'PAYOM_MOCK_MATCH', isMock: true })
+      };
+
+      const smsService = new SmsService(mockProvider);
+      const result = await smsService.sendSms({
+        clientId: 10,
+        dealId: 200,
+        text: 'Тест валидной сделки'
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockProvider.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it('REQUIRED TEST 18 — MISMATCHED DEAL: should reject SMS and NOT call Payom when deal belongs to a different client', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({
+        id: 10,
+        full_name: 'Клиент A',
+        phone: '+992927770010'
+      });
+
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 200,
+        lead_id: 20 // Belonging to Client B
+      });
+
+      const createMsgSpy = vi.spyOn(SmsRepository, 'createMessage');
+
+      const mockProvider = {
+        sendSms: vi.fn()
+      };
+
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          clientId: 10,
+          dealId: 200,
+          text: 'Тест чужой сделки'
+        })
+      ).rejects.toThrow('Сделка не принадлежит указанному клиенту');
+
+      expect(createMsgSpy).not.toHaveBeenCalled();
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('REQUIRED TEST 19 — NONEXISTENT DEAL: should reject SMS and NOT call Payom when dealId does not exist', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({
+        id: 10,
+        full_name: 'Клиент A',
+        phone: '+992927770010'
+      });
+
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue(null);
+
+      const createMsgSpy = vi.spyOn(SmsRepository, 'createMessage');
+      const mockProvider = {
+        sendSms: vi.fn()
+      };
+
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          clientId: 10,
+          dealId: 999999,
+          text: 'Тест несуществующей сделки'
+        })
+      ).rejects.toThrow('Сделка не найдена');
+
+      expect(createMsgSpy).not.toHaveBeenCalled();
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('REQUIRED TEST 20 — NULL DEAL: should proceed with standard Client SMS flow when dealId is null', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({
+        id: 10,
+        full_name: 'Клиент A',
+        phone: '+992927770010'
+      });
+
+      const getDealSpy = vi.spyOn(DealsRepository, 'getDealById');
+
+      vi.spyOn(SmsRepository, 'createMessage').mockResolvedValue({
+        id: 304,
+        client_id: 10,
+        deal_id: null,
+        phone: '+992927770010',
+        status: 'queued'
+      });
+
+      vi.spyOn(SmsRepository, 'updateMessageStatus').mockResolvedValue({ id: 304, status: 'sent' });
+
+      const mockProvider = {
+        sendSms: vi.fn().mockResolvedValue({ success: true, providerMessageId: 'PAYOM_MOCK_NULL_DEAL', isMock: true })
+      };
+
+      const smsService = new SmsService(mockProvider);
+      const result = await smsService.sendSms({
+        clientId: 10,
+        dealId: null,
+        text: 'Тест null dealId'
+      });
+
+      expect(result.success).toBe(true);
+      expect(getDealSpy).not.toHaveBeenCalled();
+      expect(mockProvider.sendSms).toHaveBeenCalledTimes(1);
+    });
+
+    it('REQUIRED TEST 21 — INVALID CLIENT: should reject SMS and NOT call Payom when clientId does not exist', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue(null);
+
+      const getDealSpy = vi.spyOn(DealsRepository, 'getDealById');
+      const createMsgSpy = vi.spyOn(SmsRepository, 'createMessage');
+      const mockProvider = {
+        sendSms: vi.fn()
+      };
+
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          clientId: 999999,
+          dealId: 200,
+          text: 'Тест несуществующего клиента'
+        })
+      ).rejects.toThrow('Клиент с ID 999999 не найден');
+
+      expect(getDealSpy).not.toHaveBeenCalled();
+      expect(createMsgSpy).not.toHaveBeenCalled();
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+  });
 });

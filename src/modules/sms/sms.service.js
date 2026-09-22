@@ -1,7 +1,9 @@
 import { PayomSmsProvider } from './sms.provider.js';
 import { SmsRepository } from './sms.repository.js';
 import { LeadsRepository } from '../leads/leads.repository.js';
+import { DealsRepository } from '../deals/deals.repository.js';
 import { normalizePhoneNumber } from '../../utils/phoneNormalizer.js';
+import { parseOptionalBigInt } from '../../utils/idNormalizer.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 export class SmsService {
@@ -22,19 +24,34 @@ export class SmsService {
     userId = null,
     senderName = 'TOZON-PLAZA'
   }) {
+    const normClientId = parseOptionalBigInt(clientId);
+    const normDealId = parseOptionalBigInt(dealId);
+
     let targetPhone = phone;
     let clientName = null;
 
     // 1. If clientId is provided, retrieve lead data if available
-    if (clientId) {
-      const lead = await LeadsRepository.findById(clientId);
+    if (normClientId) {
+      const lead = await LeadsRepository.findById(normClientId);
       if (lead) {
         clientName = lead.full_name;
         if (!targetPhone) {
           targetPhone = lead.phone || lead.secondary_phone;
         }
       } else if (!targetPhone) {
-        throw new AppError(`Клиент с ID ${clientId} не найден`, 404);
+        throw new AppError(`Клиент с ID ${normClientId} не найден`, 404);
+      }
+    }
+
+    // 2. If dealId is provided, validate deal existence and relation to client
+    if (normDealId) {
+      const deal = await DealsRepository.getDealById(normDealId);
+      if (!deal) {
+        throw new AppError('Сделка не найдена', 404);
+      }
+      const dealLeadId = parseOptionalBigInt(deal.lead_id);
+      if (normClientId && dealLeadId !== normClientId) {
+        throw new AppError('Сделка не принадлежит указанному клиенту', 400);
       }
     }
 
