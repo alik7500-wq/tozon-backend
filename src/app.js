@@ -62,7 +62,16 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.status(200).json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    env: {
+      hasServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY && process.env.SUPABASE_SERVICE_ROLE_KEY.trim()),
+      hasPayomToken: Boolean(process.env.PAYOM_API_TOKEN && process.env.PAYOM_API_TOKEN.trim()),
+      payomMockMode: process.env.PAYOM_MOCK_MODE || 'unset',
+      nodeEnv: process.env.NODE_ENV || 'unset'
+    }
+  });
 });
 
 app.use('/api/auth', authRouter);

@@ -83,9 +83,11 @@ export const getServiceDB = () => {
 
   assertSafeTestDatabase();
 
-  const serviceRoleKey = process.env.NODE_ENV === 'test'
+  const rawKey = process.env.NODE_ENV === 'test'
     ? (process.env.TEST_SUPABASE_SERVICE_ROLE_KEY || process.env.TEST_SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY)
     : process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  const serviceRoleKey = rawKey ? rawKey.trim() : null;
 
   if (!serviceRoleKey) {
     throw new Error('SUPABASE_SERVICE_ROLE_KEY_REQUIRED: SUPABASE_SERVICE_ROLE_KEY is required for server-only operations');
