@@ -120,9 +120,9 @@ export class SmsRepository {
   }
 
   /**
-   * Get SMS history with optional client, status, or date filtering.
+   * Get SMS history with optional client, status, or user filtering.
    */
-  static async getHistory(filters = {}) {
+  static async getHistory(filters = {}, user = null) {
     const db = getServiceDB();
     let query = db
       .from('sms_messages')
@@ -130,15 +130,30 @@ export class SmsRepository {
         *,
         leads!client_id(full_name, phone),
         users!created_by(name)
-      `)
-      .order('created_at', { ascending: false });
+      `);
 
     const cleanClientId = parseOptionalBigInt(filters.clientId);
-    if (cleanClientId) query = query.eq('client_id', cleanClientId);
+    if (cleanClientId) {
+      query = query.eq('client_id', cleanClientId);
+    } else if (user) {
+      const isGlobalAdminOrDirector =
+        user.role === 'ADMIN' ||
+        user.role === 'DIRECTOR' ||
+        (Array.isArray(user.permissions) && (user.permissions.includes('*') || user.permissions.includes('sms.history.all')));
+
+      if (!isGlobalAdminOrDirector && user.id) {
+        const cleanUserId = parseOptionalBigInt(user.id);
+        if (cleanUserId) {
+          query = query.eq('created_by', cleanUserId);
+        }
+      }
+    }
 
     if (filters.status && filters.status !== 'ALL') {
       query = query.eq('status', filters.status);
     }
+
+    query = query.order('created_at', { ascending: false });
 
     const { data, error } = await query;
 

@@ -21,19 +21,18 @@ describe('SMS API Routes (/api/sms)', () => {
       };
     });
 
+    const queryBuilder = {
+      is: () => queryBuilder,
+      eq: () => queryBuilder,
+      order: () => Promise.resolve({ data: [], error: null }),
+      single: () => Promise.resolve({ data: { id: 1, name: 'Admin User', role: 'ADMIN', is_active: 1 }, error: null }),
+      maybeSingle: () => Promise.resolve({ data: null, error: null }),
+      then: (resolve) => resolve({ data: [], error: null })
+    };
+
     const mockSupabase = {
       from: (table) => ({
-        select: () => ({
-          is: () => ({
-            order: () => Promise.resolve({ data: [], error: null })
-          }),
-          eq: () => ({
-            order: () => Promise.resolve({ data: [], error: null }),
-            single: () => Promise.resolve({ data: { id: 1, name: 'Admin User', role: 'ADMIN', is_active: 1 }, error: null }),
-            maybeSingle: () => Promise.resolve({ data: null, error: null })
-          }),
-          order: () => Promise.resolve({ data: [], error: null })
-        }),
+        select: () => queryBuilder,
         insert: (dataArr) => ({
           select: () => ({
             single: () => Promise.resolve({ data: { id: 99, ...dataArr[0] }, error: null })
@@ -115,5 +114,50 @@ describe('SMS API Routes (/api/sms)', () => {
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(Array.isArray(res.body.data)).toBe(true);
+  });
+
+  it('should include clientId when dispatching SMS for a client', async () => {
+    const res = await request(app)
+      .post('/api/sms/send')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        clientId: 42,
+        phone: '+992927779757',
+        text: 'Уважаемый клиент, Ваша бронь создана.'
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.clientId).toBe(42);
+  });
+
+  it('should filter history by clientId when provided in query parameters', async () => {
+    const res = await request(app)
+      .get('/api/sms/history?clientId=42')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
+  });
+
+  it('should reject access if user lacks permission', async () => {
+    vi.spyOn(UsersRepository, 'findById').mockResolvedValueOnce({
+      id: 99,
+      name: 'Unauthorized User',
+      role: 'GUEST',
+      is_active: 1,
+      permissions: []
+    });
+
+    const secret = process.env.JWT_SECRET || 'super-secret-key-for-dev-only';
+    const guestToken = jwt.sign({ id: 99, role: 'GUEST' }, secret);
+
+    const res = await request(app)
+      .post('/api/sms/send')
+      .set('Authorization', `Bearer ${guestToken}`)
+      .send({ phone: '+992927779757', text: 'Привет' });
+
+    expect(res.status).toBe(403);
   });
 });

@@ -73,11 +73,27 @@ export const checkPermission = (requiredPermission) => {
     if (!req.user) {
       return next(new AppError('You are not logged in', 401));
     }
-    if (req.user.role === 'ADMIN') {
+    if (req.user.role === 'ADMIN' || req.user.role === 'DIRECTOR') {
       return next();
     }
     const permissions = Array.isArray(req.user.permissions) ? req.user.permissions : [];
     if (permissions.includes('*') || permissions.includes(requiredPermission)) {
+      return next();
+    }
+    if (requiredPermission === 'sms.history' && (
+      permissions.includes('sms.send') ||
+      permissions.includes('sms.history') ||
+      permissions.includes('sms.view') ||
+      permissions.includes('leads.view') ||
+      permissions.includes('leads.manage')
+    )) {
+      return next();
+    }
+    if (requiredPermission === 'sms.send' && (
+      permissions.includes('sms.send') ||
+      permissions.includes('leads.manage') ||
+      permissions.includes('deals.manage')
+    )) {
       return next();
     }
     return next(new AppError(`Недостаточно прав доступа (${requiredPermission})`, 403));

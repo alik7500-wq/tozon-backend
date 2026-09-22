@@ -52,7 +52,7 @@ export async function getHistory(req, res, next) {
       status: req.query.status
     };
 
-    const history = await defaultSmsService.getHistory(filters);
+    const history = await defaultSmsService.getHistory(filters, req.user);
 
     return res.status(200).json({
       success: true,

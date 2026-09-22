@@ -25,15 +25,16 @@ export class SmsService {
     let targetPhone = phone;
     let clientName = null;
 
-    // 1. If clientId is provided, retrieve lead data if phone is not explicitly given
+    // 1. If clientId is provided, retrieve lead data if available
     if (clientId) {
       const lead = await LeadsRepository.findById(clientId);
-      if (!lead) {
+      if (lead) {
+        clientName = lead.full_name;
+        if (!targetPhone) {
+          targetPhone = lead.phone || lead.secondary_phone;
+        }
+      } else if (!targetPhone) {
         throw new AppError(`Клиент с ID ${clientId} не найден`, 404);
-      }
-      clientName = lead.full_name;
-      if (!targetPhone) {
-        targetPhone = lead.phone || lead.secondary_phone;
       }
     }
 
@@ -137,8 +138,8 @@ export class SmsService {
   /**
    * Fetch SMS dispatch history.
    */
-  async getHistory(filters = {}) {
-    return await SmsRepository.getHistory(filters);
+  async getHistory(filters = {}, user = null) {
+    return await SmsRepository.getHistory(filters, user);
   }
 
   /**

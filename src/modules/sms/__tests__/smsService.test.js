@@ -123,4 +123,65 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
       errorMessage: 'Bad token'
     }));
   });
+
+  it('should retrieve lead phone and name when clientId is provided', async () => {
+    const { LeadsRepository } = await import('../../leads/leads.repository.js');
+    vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({
+      id: 55,
+      full_name: 'Фарход Каримов',
+      phone: '+992928889988'
+    });
+
+    vi.spyOn(SmsRepository, 'createMessage').mockResolvedValue({
+      id: 200,
+      client_id: 55,
+      phone: '+992928889988',
+      status: 'queued'
+    });
+
+    vi.spyOn(SmsRepository, 'updateMessageStatus').mockResolvedValue({
+      id: 200,
+      status: 'sent'
+    });
+
+    const mockProvider = {
+      sendSms: vi.fn().mockResolvedValue({
+        success: true,
+        providerMessageId: 'PAYOM_MOCK_55',
+        isMock: true
+      })
+    };
+
+    const smsService = new SmsService(mockProvider);
+    const result = await smsService.sendSms({
+      clientId: 55,
+      text: 'Приветственное сообщение'
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data.clientName).toBe('Фарход Каримов');
+    expect(result.data.phone).toBe('+992928889988');
+  });
+
+  it('should normalize local Tajik numbers starting with 92 to +992 format', async () => {
+    vi.spyOn(SmsRepository, 'createMessage').mockResolvedValue({
+      id: 201,
+      phone: '+992927779757',
+      status: 'queued'
+    });
+    vi.spyOn(SmsRepository, 'updateMessageStatus').mockResolvedValue({ id: 201, status: 'sent' });
+
+    const mockProvider = {
+      sendSms: vi.fn().mockResolvedValue({ success: true, providerMessageId: 'P_1', isMock: true })
+    };
+
+    const smsService = new SmsService(mockProvider);
+    const result = await smsService.sendSms({
+      phone: '927779757',
+      text: 'Тест нормализации'
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data.phone).toBe('+992927779757');
+  });
 });

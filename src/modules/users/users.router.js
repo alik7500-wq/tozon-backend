@@ -46,7 +46,8 @@ export const ROLE_PRESET_PERMISSIONS = {
     'deals.view', 'deals.manage',
     'contracts.view', 'contracts.manage',
     'finance.view', 'finance.payments', 'finance.expenses', 'finance.debtors', 'finance.cashflow',
-    'tasks.manage', 'automation.manage', 'settings.manage'
+    'tasks.manage', 'automation.manage', 'settings.manage',
+    'sms.send', 'sms.history'
   ],
   SALES_MANAGER: [
     'inventory.view',
@@ -54,7 +55,8 @@ export const ROLE_PRESET_PERMISSIONS = {
     'deals.view', 'deals.manage',
     'contracts.view',
     'finance.view',
-    'tasks.manage'
+    'tasks.manage',
+    'sms.send', 'sms.history'
   ],
   MANAGER: [
     'inventory.view',
@@ -62,7 +64,8 @@ export const ROLE_PRESET_PERMISSIONS = {
     'deals.view', 'deals.manage',
     'contracts.view',
     'finance.view',
-    'tasks.manage'
+    'tasks.manage',
+    'sms.send', 'sms.history'
   ],
   FINANCE_MANAGER: [
     'analytics.view', 'analytics.reports',

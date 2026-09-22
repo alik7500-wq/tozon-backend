@@ -9,7 +9,7 @@ router.use(protect);
 
 // Routes
 router.post('/send', checkPermission('sms.send'), sendSms);
-router.get('/history', getHistory);
+router.get('/history', checkPermission('sms.history'), getHistory);
 router.get('/templates', getTemplates);
 
 export default router;
