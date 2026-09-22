@@ -1,4 +1,6 @@
 import { defaultSmsService } from './sms.service.js';
+import { SmsRepository } from './sms.repository.js';
+import { getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 export async function sendSms(req, res, next) {
@@ -78,8 +80,6 @@ export async function getTemplates(req, res, next) {
 
 export async function testDbWrite(req, res, next) {
   try {
-    const { SmsRepository } = await import('./sms.repository.js');
-    const { getServiceDB } = await import('../../db/connection.js');
     const userId = req.user?.id;
 
     // 1. Create record directly via SmsRepository (getServiceDB) WITHOUT calling Payom
@@ -106,7 +106,7 @@ export async function testDbWrite(req, res, next) {
       .eq('id', record.id)
       .single();
 
-    // 3. Delete test record
+    // 3. Delete test record immediately
     const { error: deleteErr } = await db
       .from('sms_messages')
       .delete()
