@@ -97,7 +97,13 @@ export const getServiceDB = () => {
     ? (process.env.TEST_SUPABASE_URL || process.env.TEST_DATABASE_URL || supabaseUrl)
     : supabaseUrl;
 
-  serviceDb = createClient(activeUrl, serviceRoleKey);
+  serviceDb = createClient(activeUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false
+    }
+  });
   return serviceDb;
 };
 
