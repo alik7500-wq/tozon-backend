@@ -5,6 +5,7 @@ import { DealsRepository } from '../deals/deals.repository.js';
 import { TasksRepository } from '../tasks/tasks.repository.js';
 import { normalizePhoneNumber } from '../../utils/phoneNormalizer.js';
 import { parseOptionalBigInt } from '../../utils/idNormalizer.js';
+import { getBusinessDate, getBusinessDateTime } from '../../utils/businessTime.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 export class SmsService {
@@ -13,16 +14,95 @@ export class SmsService {
   }
 
   /**
+   * Authoritative helper to calculate meeting context according to V1.4 rules:
+   * - Must belong to targetClientId.
+   * - Task status must be OPEN (not COMPLETED, not CANCELLED).
+   * - Must be a MEETING or title containing 'встреч'.
+   * - Must have a valid due_date.
+   * - Must be CURRENT OR FUTURE relative to Asia/Dushanbe business datetime (due_date + due_time >= now).
+   * - Nearest future meeting is selected (due_date ASC, due_time ASC).
+   */
+  async calculateMeetingContext(targetClientId, taskId = null, nowInput = null) {
+    const { dateStr: todayStr, timeStr: currentTimeStr } = getBusinessDateTime(nowInput);
+
+    if (taskId) {
+      const task = await TasksRepository.findById(taskId);
+      if (!task) {
+        return { task: null, reason: 'Для клиента не найдена указанная встреча' };
+      }
+      if (targetClientId && parseOptionalBigInt(task.lead_id) !== parseOptionalBigInt(targetClientId)) {
+        return { task: null, reason: 'Встреча не принадлежит указанному клиенту' };
+      }
+      if (task.status !== 'OPEN') {
+        return { task: null, reason: 'Указанная встреча уже завершена или отменена' };
+      }
+      const isMeeting = task.type === 'MEETING' || (task.title && task.title.toLowerCase().includes('встреч'));
+      if (!isMeeting) {
+        return { task: null, reason: 'Задача не является встречей' };
+      }
+      const meetingDate = task.due_date || (task.due_at ? task.due_at.split('T')[0] : '');
+      const meetingTime = task.due_time || (task.due_at && task.due_at.includes('T') ? task.due_at.split('T')[1].slice(0, 5) : '10:00');
+      if (!meetingDate) {
+        return { task: null, reason: 'Для встречи не указана дата' };
+      }
+      if (meetingDate < todayStr || (meetingDate === todayStr && meetingTime < currentTimeStr)) {
+        return { task: null, reason: 'Дата встречи уже прошла' };
+      }
+      return { task, meetingDate, meetingTime, reason: null };
+    } else if (targetClientId) {
+      const tasks = await TasksRepository.findAll({ assignedUserId: 'ALL' });
+      const clientMeetings = tasks.filter((t) => {
+        if (parseOptionalBigInt(t.lead_id) !== parseOptionalBigInt(targetClientId)) return false;
+        if (t.status !== 'OPEN') return false;
+        const isMeeting = t.type === 'MEETING' || (t.title && t.title.toLowerCase().includes('встреч'));
+        if (!isMeeting) return false;
+
+        const meetingDate = t.due_date || (t.due_at ? t.due_at.split('T')[0] : '');
+        const meetingTime = t.due_time || (t.due_at && t.due_at.includes('T') ? t.due_at.split('T')[1].slice(0, 5) : '10:00');
+        if (!meetingDate) return false;
+
+        if (meetingDate < todayStr || (meetingDate === todayStr && meetingTime < currentTimeStr)) {
+          return false; // Past meeting!
+        }
+        return true;
+      });
+
+      if (clientMeetings.length === 0) {
+        return { task: null, reason: 'Нет предстоящей запланированной встречи' };
+      }
+
+      // Sort by due_date ASC, due_time ASC
+      clientMeetings.sort((a, b) => {
+        const dateA = a.due_date || (a.due_at ? a.due_at.split('T')[0] : '');
+        const dateB = b.due_date || (b.due_at ? b.due_at.split('T')[0] : '');
+        if (dateA !== dateB) return dateA.localeCompare(dateB);
+
+        const timeA = a.due_time || (a.due_at && a.due_at.includes('T') ? a.due_at.split('T')[1].slice(0, 5) : '10:00');
+        const timeB = b.due_time || (b.due_at && b.due_at.includes('T') ? b.due_at.split('T')[1].slice(0, 5) : '10:00');
+        return timeA.localeCompare(timeB);
+      });
+
+      const nearestTask = clientMeetings[0];
+      const meetingDate = nearestTask.due_date || (nearestTask.due_at ? nearestTask.due_at.split('T')[0] : '');
+      const meetingTime = nearestTask.due_time || (nearestTask.due_at && nearestTask.due_at.includes('T') ? nearestTask.due_at.split('T')[1].slice(0, 5) : '10:00');
+
+      return { task: nearestTask, meetingDate, meetingTime, reason: null };
+    }
+
+    return { task: null, reason: 'Контекст клиента обязателен для шаблона встречи' };
+  }
+
+  /**
    * Helper to calculate deal payment schedule data according to CRM ground truth FIFO rules:
    * - overdue_amount: SUM(amount_minor - paid_amount_minor) for schedules with due_date < today and unpaid balance > 0.
    * - remaining_balance: final_price_minor - total_paid_minor.
-   * - next_schedule: single schedule row with due_date >= today (or first unpaid schedule).
+   * - next_schedule: single schedule row with due_date >= today and unpaid balance > 0 (sorted by due_date ASC, payment_number ASC).
    */
   async calculateDealContext(dealId, todayStr) {
     const deal = await DealsRepository.getDealById(dealId);
     if (!deal) return null;
 
-    const today = todayStr || new Date().toISOString().split('T')[0];
+    const today = getBusinessDate(todayStr);
     const rawSchedules = deal.deal_payment_schedules || [];
 
     // Filter overdue schedules: due_date < today AND remaining unpaid > 0
@@ -42,13 +122,18 @@ export class SmsService {
     const totalPaidMinor = activePayments.reduce((sum, p) => sum + (p.amount_minor || 0), 0);
     const remainingBalanceMinor = Math.max(0, (deal.final_price_minor || 0) - totalPaidMinor);
 
-    // Unpaid schedules for PAYMENT_REMINDER
+    // Unpaid schedules for PAYMENT_REMINDER (future/today only: due_date >= today)
     const unpaidSchedules = [...rawSchedules]
-      .sort((a, b) => a.payment_number - b.payment_number)
       .filter((s) => (s.amount_minor || 0) - (s.paid_amount_minor || 0) > 0);
 
-    const upcomingSchedules = unpaidSchedules.filter((s) => s.due_date >= today);
-    const nextSchedule = upcomingSchedules[0] || unpaidSchedules[0] || null;
+    const upcomingSchedules = unpaidSchedules
+      .filter((s) => s.due_date >= today)
+      .sort((a, b) => {
+        if (a.due_date !== b.due_date) return a.due_date.localeCompare(b.due_date);
+        return (a.payment_number || 0) - (b.payment_number || 0);
+      });
+
+    const nextSchedule = upcomingSchedules[0] || null;
 
     const rawCurrency = deal.currency || deal.project_currency || deal.units?.floors?.sections?.buildings?.projects?.currency || null;
     const ALLOWED_CURRENCIES = ['USD', 'TJS', 'RUB'];
@@ -77,6 +162,116 @@ export class SmsService {
           }
         : null
     };
+  }
+
+  /**
+   * Authoritative server-side template availability endpoint logic.
+   * Returns [{ code, name, available, reason }] without performing DB writes or SMS sends.
+   */
+  async getTemplateAvailability({
+    clientId = null,
+    dealId = null,
+    taskId = null,
+    meetingId = null,
+    todayStr = null
+  }) {
+    const normClientId = parseOptionalBigInt(clientId);
+    const normDealId = parseOptionalBigInt(dealId);
+    const normTaskId = parseOptionalBigInt(taskId || meetingId);
+
+    const templates = await SmsRepository.getTemplates();
+    const activeTemplates = templates.filter((t) => t.is_active);
+
+    let targetClientId = normClientId;
+    if (!targetClientId && normDealId) {
+      const dealObj = await DealsRepository.getDealById(normDealId);
+      if (dealObj) targetClientId = parseOptionalBigInt(dealObj.lead_id);
+    } else if (!targetClientId && normTaskId) {
+      const taskObj = await TasksRepository.findById(normTaskId);
+      if (taskObj) targetClientId = parseOptionalBigInt(taskObj.lead_id);
+    }
+
+    let lead = null;
+    if (targetClientId) {
+      lead = await LeadsRepository.findById(targetClientId);
+    }
+
+    const meetingCtx = await this.calculateMeetingContext(targetClientId, normTaskId, todayStr);
+    let dealCtx = null;
+    if (normDealId) {
+      dealCtx = await this.calculateDealContext(normDealId, todayStr);
+    }
+
+    const result = [];
+
+    for (const tmpl of activeTemplates) {
+      const code = tmpl.code;
+      let available = true;
+      let reason = null;
+
+      if (code === 'CLIENT_WELCOME') {
+        if (!lead) {
+          available = false;
+          reason = 'Клиент не выбран или не найден';
+        } else if (!lead.full_name || !lead.full_name.trim()) {
+          available = false;
+          reason = 'У клиента не указано ФИО';
+        } else if (!lead.phone) {
+          available = false;
+          reason = 'У клиента не указан телефон';
+        }
+      } else if (code === 'MEETING_REMINDER') {
+        if (!meetingCtx || !meetingCtx.task) {
+          available = false;
+          reason = meetingCtx?.reason || 'Нет предстоящей запланированной встречи';
+        }
+      } else if (code === 'DEAL_INFO') {
+        if (!normDealId || !dealCtx || !dealCtx.deal) {
+          available = false;
+          reason = 'Сделка не выбрана или не найдена';
+        } else if (targetClientId && parseOptionalBigInt(dealCtx.deal.lead_id) !== targetClientId) {
+          available = false;
+          reason = 'Сделка не принадлежит указанному клиенту';
+        }
+      } else if (code === 'PAYMENT_REMINDER') {
+        if (!normDealId || !dealCtx || !dealCtx.deal) {
+          available = false;
+          reason = 'Сделка не выбрана или не найдена';
+        } else if (targetClientId && parseOptionalBigInt(dealCtx.deal.lead_id) !== targetClientId) {
+          available = false;
+          reason = 'Сделка не принадлежит указанному клиенту';
+        } else if (!dealCtx.currency) {
+          available = false;
+          reason = 'Не удалось определить валюту сделки';
+        } else if (!dealCtx.nextSchedule) {
+          available = false;
+          reason = 'Нет предстоящего неоплаченного платежа';
+        }
+      } else if (code === 'DEBTOR_REMINDER') {
+        if (!normDealId || !dealCtx || !dealCtx.deal) {
+          available = false;
+          reason = 'Сделка не выбрана или не найдена';
+        } else if (targetClientId && parseOptionalBigInt(dealCtx.deal.lead_id) !== targetClientId) {
+          available = false;
+          reason = 'Сделка не принадлежит указанному клиенту';
+        } else if (!dealCtx.currency) {
+          available = false;
+          reason = 'Не удалось определить валюту сделки';
+        } else if (dealCtx.overdueMinor <= 0) {
+          available = false;
+          reason = 'Просроченная задолженность отсутствует';
+        }
+      }
+
+      result.push({
+        code,
+        name: tmpl.name,
+        available,
+        reason
+      });
+    }
+
+    return { templates: result };
   }
 
   /**
@@ -150,40 +345,12 @@ export class SmsService {
     }
 
     if (requiresMeetingContext || (code === 'MEETING_REMINDER' && targetClientId)) {
-      let task = null;
-      if (normTaskId) {
-        task = await TasksRepository.findById(normTaskId);
-        if (!task) {
-          throw new AppError('Для клиента не найдена запланированная встреча', 404);
-        }
-        if (targetClientId && parseOptionalBigInt(task.lead_id) !== targetClientId) {
-          throw new AppError('Встреча не принадлежит указанному клиенту', 400);
-        }
-      } else if (targetClientId) {
-        const tasks = await TasksRepository.findAll({ assignedUserId: 'ALL' });
-        const meetingTask = tasks.find(
-          (t) =>
-            parseOptionalBigInt(t.lead_id) === targetClientId &&
-            (t.type === 'MEETING' || (t.title && t.title.toLowerCase().includes('встреч'))) &&
-            t.status === 'OPEN'
-        );
-        if (!meetingTask) {
-          throw new AppError('Для клиента не найдена запланированная встреча', 400);
-        }
-        task = meetingTask;
+      const meetingCtx = await this.calculateMeetingContext(targetClientId, normTaskId, todayStr);
+      if (!meetingCtx || !meetingCtx.task) {
+        throw new AppError(meetingCtx?.reason || 'Для клиента не найдена запланированная встреча', 400);
       }
-
-      if (task) {
-        const meetingDate = task.due_date || (task.due_at ? task.due_at.split('T')[0] : '');
-        const meetingTime = task.due_time || (task.due_at && task.due_at.includes('T') ? task.due_at.split('T')[1].slice(0, 5) : '10:00');
-
-        if (!meetingDate) {
-          throw new AppError('Для встречи не указана дата', 400);
-        }
-
-        resolvedText = resolvedText.replace(/\{\{\s*meeting_date\s*\}\}/g, meetingDate);
-        resolvedText = resolvedText.replace(/\{\{\s*meeting_time\s*\}\}/g, meetingTime);
-      }
+      resolvedText = resolvedText.replace(/\{\{\s*meeting_date\s*\}\}/g, meetingCtx.meetingDate);
+      resolvedText = resolvedText.replace(/\{\{\s*meeting_time\s*\}\}/g, meetingCtx.meetingTime);
     }
 
     // 4. Resolve Deal / Payment / Debtor Context
@@ -225,7 +392,7 @@ export class SmsService {
           throw new AppError('Не удалось определить валюту сделки', 400);
         }
         if (!dealContext.nextSchedule) {
-          throw new AppError('Для сделки не найден следующий неоплаченный платёж', 400);
+          throw new AppError('Нет предстоящего неоплаченного платежа', 400);
         }
         resolvedText = resolvedText.replace(/\{\{\s*payment_amount\s*\}\}/g, dealContext.nextSchedule.paymentAmountFormatted);
         resolvedText = resolvedText.replace(/\{\{\s*payment_date\s*\}\}/g, dealContext.nextSchedule.due_date);
@@ -236,7 +403,7 @@ export class SmsService {
           throw new AppError('Не удалось определить валюту сделки', 400);
         }
         if (dealContext.overdueMinor <= 0) {
-          throw new AppError('У клиента отсутствует подтвержденная просроченная задолженность', 400);
+          throw new AppError('Просроченная задолженность отсутствует', 400);
         }
         resolvedText = resolvedText.replace(/\{\{\s*overdue_amount\s*\}\}/g, dealContext.overdueAmountFormatted);
       }

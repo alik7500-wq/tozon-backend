@@ -96,3 +96,23 @@ export async function previewSms(req, res, next) {
     next(err);
   }
 }
+
+export async function getTemplateAvailability(req, res, next) {
+  try {
+    const { clientId, dealId, taskId, meetingId } = req.body;
+
+    const availabilityResult = await defaultSmsService.getTemplateAvailability({
+      clientId,
+      dealId,
+      taskId: taskId || meetingId
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: availabilityResult
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+

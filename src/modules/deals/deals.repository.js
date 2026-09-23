@@ -1,5 +1,6 @@
 import { getDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+import { getBusinessDate } from '../../utils/businessTime.js';
 
 export class DealsRepository {
   static async findAll(filters = {}) {
@@ -13,8 +14,8 @@ export class DealsRepository {
         floors ( floor_number, name, sections ( name, buildings ( name, projects ( id, name, developer_name, currency ) ) ) )
       ),
       users!responsible_user_id ( name ),
-      payments ( amount_minor ),
-      deal_payment_schedules ( paid_amount_minor )
+      payments ( amount_minor, status ),
+      deal_payment_schedules ( due_date, amount_minor, paid_amount_minor, status )
     `).order('created_at', { ascending: false });
 
     if (filters.status && filters.status !== 'ALL') {
@@ -45,7 +46,7 @@ export class DealsRepository {
       );
     }
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getBusinessDate();
 
     return deals.map((deal) => {
       // Flatten the structure to match the old SQL return shape
@@ -56,6 +57,20 @@ export class DealsRepository {
       const remainingDebt = Math.max(0, (deal.final_price_minor || 0) - paidAmountMinor);
       const paidPercent = deal.final_price_minor > 0 ? Number(((paidAmountMinor / deal.final_price_minor) * 100).toFixed(2)) : 0;
       const isOverdue = deal.status === 'RESERVED' && deal.reservation_expires_at && deal.reservation_expires_at < today;
+
+      // Authoritative overdue calculation based on due_date < today
+      const rawSchedules = deal.deal_payment_schedules || [];
+      const overdueSchedules = rawSchedules.filter((s) => {
+        const planned = s.amount_minor || 0;
+        const paid = s.paid_amount_minor || 0;
+        return s.due_date < today && planned - paid > 0;
+      });
+
+      const overdueAmountMinor = overdueSchedules.reduce((sum, s) => {
+        const planned = s.amount_minor || 0;
+        const paid = s.paid_amount_minor || 0;
+        return sum + Math.max(0, planned - paid);
+      }, 0);
 
       const areaM2 = deal.units?.area_m2_x100 ? (deal.units.area_m2_x100 / 100) : 0;
       const computedDealPricePerM2 = deal.deal_price_per_m2_minor || (areaM2 > 0 ? Math.round(deal.final_price_minor / areaM2) : deal.units?.price_per_m2_minor);
@@ -86,6 +101,8 @@ export class DealsRepository {
         paid_amount_minor: paidAmountMinor,
         total_paid_minor: paidAmountMinor,
         remaining_debt_minor: remainingDebt,
+        overdue_amount_minor: overdueAmountMinor,
+        overdue_schedule_count: overdueSchedules.length,
         paid_percent: paidPercent,
         is_reservation_expired: !!isOverdue,
         // clean up nested objects to avoid confusion
@@ -159,7 +176,7 @@ export class DealsRepository {
     if (error && error.code !== 'PGRST116') throw error;
     if (!deal) return null;
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getBusinessDate();
     const p = deal.units?.floors?.sections?.buildings?.projects || {};
 
     // Process Schedules

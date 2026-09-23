@@ -132,17 +132,22 @@ router.post('/:id/extend-reservation', async (req, res, next) => {
 router.post('/:id/payments', resolveCashDeskAccess, async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
-    const { amount_minor, payment_date, method, schedule_id, reference, comment, cash_desk_id, idempotency_key } = req.body;
+    const { amount_minor, payment_date, method, settlement_method, schedule_id, reference, comment, cash_desk_id, idempotency_key } = req.body;
     if (!amount_minor || amount_minor <= 0) {
       return next(new AppError('Сумма платежа обязательна и должна быть больше нуля', 400));
     }
 
-    if (!cash_desk_id) {
+    const sm = (settlement_method || 'CASH').toUpperCase();
+    if (sm === 'INTERNAL_TRANSFER' || sm === 'CONVERSION') {
+      return next(new AppError('Внутренние перемещения и конвертации создаются через специальные разделы', 400));
+    }
+
+    if (sm === 'CASH' && !cash_desk_id) {
       return next(new AppError('Касса получения средств обязательна для выбора', 400));
     }
 
     let finalCashDeskId = cash_desk_id;
-    if (req.cashDeskAccess && !req.cashDeskAccess.isAdmin) {
+    if (sm === 'CASH' && req.cashDeskAccess && !req.cashDeskAccess.isAdmin) {
       // Для менеджера касса зачисления должна входить в список разрешенных для приема платежа (incomeDeskIds)
       if (!req.cashDeskAccess.incomeDeskIds.includes(finalCashDeskId)) {
         return next(new AppError('Выбранная касса недоступна для зачисления средств', 403));
@@ -155,6 +160,7 @@ router.post('/:id/payments', resolveCashDeskAccess, async (req, res, next) => {
         amount_minor,
         payment_date,
         method,
+        settlement_method: sm,
         schedule_id: parseOptionalBigInt(schedule_id),
         reference,
         comment,

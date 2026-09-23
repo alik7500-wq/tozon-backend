@@ -198,7 +198,7 @@ describe('SMS API Routes (/api/sms)', () => {
         .send({ templateCode: 'MEETING_REMINDER', clientId: 10 });
 
       expect(res.status).toBe(400);
-      expect(res.body.message).toContain('Для клиента не найдена запланированная встреча');
+      expect(res.body.message).toContain('запланированной встречи');
     });
   });
 });

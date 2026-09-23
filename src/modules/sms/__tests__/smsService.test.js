@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SmsService } from '../sms.service.js';
 import { SmsRepository } from '../sms.repository.js';
+import { getBusinessDate, getBusinessDateTime } from '../../../utils/businessTime.js';
 import * as dbConn from '../../../db/connection.js';
 
 describe('SmsService Audit Flow & Fail-Closed Rules', () => {
@@ -543,7 +544,7 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
           templateCode: 'DEBTOR_REMINDER',
           text: 'Внесите оплату'
         })
-      ).rejects.toThrow('У клиента отсутствует подтвержденная просроченная задолженность');
+      ).rejects.toThrow('Просроченная задолженность отсутствует');
 
       expect(mockProvider.sendSms).not.toHaveBeenCalled();
     });
@@ -607,7 +608,7 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
           templateCode: 'MEETING_REMINDER',
           text: 'Встреча'
         })
-      ).rejects.toThrow(/не найдена/i);
+      ).rejects.toThrow('Нет предстоящей запланированной встречи');
 
       expect(mockProvider.sendSms).not.toHaveBeenCalled();
     });
@@ -859,7 +860,7 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
       const smsService = new SmsService({ sendSms: vi.fn() });
       await expect(
         smsService.previewSms({ templateCode: 'MEETING_REMINDER', clientId: 10 })
-      ).rejects.toThrow('Для клиента не найдена запланированная встреча');
+      ).rejects.toThrow('Нет предстоящей запланированной встречи');
     });
 
     it('6, 7 & 8. DEAL_INFO resolves contract_number, apartment, and project_name', async () => {
@@ -981,7 +982,7 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
       const smsService = new SmsService({ sendSms: vi.fn() });
       await expect(
         smsService.previewSms({ templateCode: 'DEBTOR_REMINDER', clientId: 10, dealId: 305 })
-      ).rejects.toThrow('У клиента отсутствует подтвержденная просроченная задолженность');
+      ).rejects.toThrow(/Просроченная задолженность/i);
     });
 
     it('19 & 20. Preview makes 0 Payom calls and 0 sms_messages inserts', async () => {
@@ -1032,7 +1033,315 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
       expect(sendResult.data.message).toBe(preview.text);
     });
   });
+
+  describe('SmsService V1.4 Template Availability & Context Rules', () => {
+    beforeEach(async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 50, full_name: 'Акмал Рахимов', phone: '+992927771234' });
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([]);
+    });
+
+    it('1. CLIENT_WELCOME available when valid client with name & phone exists', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 50, full_name: 'Акмал Рахимов', phone: '+992927771234' });
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 50 });
+
+      const welcome = res.templates.find((t) => t.code === 'CLIENT_WELCOME');
+      expect(welcome.available).toBe(true);
+      expect(welcome.reason).toBeNull();
+    });
+
+    it('2. Missing client -> CLIENT_WELCOME unavailable with reason', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue(null);
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 99999 });
+
+      const welcome = res.templates.find((t) => t.code === 'CLIENT_WELCOME');
+      expect(welcome.available).toBe(false);
+      expect(welcome.reason).toContain('не найден');
+    });
+
+    it('3. Future meeting -> MEETING_REMINDER available', async () => {
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+      const futureDate = '2099-12-31';
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([
+        { id: 10, lead_id: 50, type: 'MEETING', status: 'OPEN', due_date: futureDate, due_time: '14:00' }
+      ]);
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 50 });
+
+      const meeting = res.templates.find((t) => t.code === 'MEETING_REMINDER');
+      expect(meeting.available).toBe(true);
+    });
+
+    it('4. Past OPEN meeting -> MEETING_REMINDER unavailable', async () => {
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([
+        { id: 11, lead_id: 50, type: 'MEETING', status: 'OPEN', due_date: '2020-01-01', due_time: '10:00' }
+      ]);
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 50 });
+
+      const meeting = res.templates.find((t) => t.code === 'MEETING_REMINDER');
+      expect(meeting.available).toBe(false);
+      expect(meeting.reason).toContain('Нет предстоящей');
+    });
+
+    it('5. Completed meeting -> MEETING_REMINDER unavailable', async () => {
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([
+        { id: 12, lead_id: 50, type: 'MEETING', status: 'COMPLETED', due_date: '2099-12-31', due_time: '10:00' }
+      ]);
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 50 });
+
+      const meeting = res.templates.find((t) => t.code === 'MEETING_REMINDER');
+      expect(meeting.available).toBe(false);
+    });
+
+    it('6. Cancelled meeting -> MEETING_REMINDER unavailable', async () => {
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([
+        { id: 13, lead_id: 50, type: 'MEETING', status: 'CANCELLED', due_date: '2099-12-31', due_time: '10:00' }
+      ]);
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 50 });
+
+      const meeting = res.templates.find((t) => t.code === 'MEETING_REMINDER');
+      expect(meeting.available).toBe(false);
+    });
+
+    it('7. Multiple future meetings -> nearest datetime selected', async () => {
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([
+        { id: 20, lead_id: 50, type: 'MEETING', status: 'OPEN', due_date: '2099-10-01', due_time: '15:00' },
+        { id: 21, lead_id: 50, type: 'MEETING', status: 'OPEN', due_date: '2099-05-01', due_time: '10:00' }
+      ]);
+
+      const smsService = new SmsService();
+      const ctx = await smsService.calculateMeetingContext(50);
+
+      expect(ctx.task.id).toBe(21); // Nearest date (May 2099)
+    });
+
+    it('8. Future unpaid schedule -> PAYMENT_REMINDER available', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 70,
+        lead_id: 50,
+        currency: 'USD',
+        final_price_minor: 1000000,
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2099-12-01', amount_minor: 100000, paid_amount_minor: 0 }
+        ],
+        payments: []
+      });
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 50, dealId: 70 });
+
+      const payment = res.templates.find((t) => t.code === 'PAYMENT_REMINDER');
+      expect(payment.available).toBe(true);
+    });
+
+    it('9. Partial future payment -> remaining schedule amount used', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 71,
+        lead_id: 50,
+        currency: 'USD',
+        final_price_minor: 1000000,
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2099-12-01', amount_minor: 100000, paid_amount_minor: 40000 }
+        ],
+        payments: []
+      });
+
+      const smsService = new SmsService();
+      const ctx = await smsService.calculateDealContext(71, '2026-09-23');
+
+      expect(ctx.nextSchedule.unpaid_amount_minor).toBe(60000); // 100,000 - 40,000 = 60,000
+    });
+
+    it('11. Only overdue schedules -> PAYMENT_REMINDER unavailable', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 72,
+        lead_id: 50,
+        currency: 'USD',
+        final_price_minor: 1000000,
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2020-01-01', amount_minor: 100000, paid_amount_minor: 0 }
+        ],
+        payments: []
+      });
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 50, dealId: 72 });
+
+      const payment = res.templates.find((t) => t.code === 'PAYMENT_REMINDER');
+      expect(payment.available).toBe(false);
+      expect(payment.reason).toContain('Нет предстоящего');
+    });
+
+    it('12. overdue_amount > 0 -> DEBTOR_REMINDER available', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 73,
+        lead_id: 50,
+        currency: 'USD',
+        final_price_minor: 1000000,
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2020-01-01', amount_minor: 100000, paid_amount_minor: 0 }
+        ],
+        payments: []
+      });
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 50, dealId: 73, todayStr: '2026-09-23' });
+
+      const debtor = res.templates.find((t) => t.code === 'DEBTOR_REMINDER');
+      expect(debtor.available).toBe(true);
+    });
+
+    it('13. remaining_balance > 0 but overdue_amount = 0 -> DEBTOR_REMINDER unavailable', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 74,
+        lead_id: 50,
+        currency: 'USD',
+        final_price_minor: 1000000,
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2099-12-01', amount_minor: 100000, paid_amount_minor: 0 }
+        ],
+        payments: []
+      });
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 50, dealId: 74, todayStr: '2026-09-23' });
+
+      const debtor = res.templates.find((t) => t.code === 'DEBTOR_REMINDER');
+      expect(debtor.available).toBe(false);
+      expect(debtor.reason).toContain('отсутствует');
+    });
+
+    it('15 & 16. Availability endpoint -> zero DB inserts & zero Payom calls', async () => {
+      const mockProvider = { sendSms: vi.fn() };
+      const createMsgSpy = vi.spyOn(SmsRepository, 'createMessage');
+
+      const smsService = new SmsService(mockProvider);
+      const res = await smsService.getTemplateAvailability({ clientId: 50 });
+
+      expect(res.templates).toBeDefined();
+      expect(createMsgSpy).not.toHaveBeenCalled();
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('SmsService V1.4 Asia/Dushanbe Business Time & Boundary Tests', () => {
+    it('CASE 1: UTC 2026-09-22 20:30 => Asia/Dushanbe 2026-09-23 01:30 (Expected Date: 2026-09-23)', () => {
+      const utcTime = '2026-09-22T20:30:00Z';
+      const bDate = getBusinessDate(utcTime);
+      const { dateStr, timeStr } = getBusinessDateTime(utcTime);
+
+      expect(bDate).toBe('2026-09-23');
+      expect(dateStr).toBe('2026-09-23');
+      expect(timeStr).toBe('01:30');
+    });
+
+    it('CASE 2: UTC 2026-09-22 18:30 => Asia/Dushanbe 2026-09-22 23:30 (Expected Date: 2026-09-22)', () => {
+      const utcTime = '2026-09-22T18:30:00Z';
+      const bDate = getBusinessDate(utcTime);
+      const { dateStr, timeStr } = getBusinessDateTime(utcTime);
+
+      expect(bDate).toBe('2026-09-22');
+      expect(dateStr).toBe('2026-09-22');
+      expect(timeStr).toBe('23:30');
+    });
+
+    it('CASE 3 & CASE 4: Schedule due_date boundary comparisons relative to business date', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 88,
+        lead_id: 50,
+        currency: 'USD',
+        final_price_minor: 2000000,
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-09-22', amount_minor: 500000, paid_amount_minor: 0 },
+          { id: 2, payment_number: 2, due_date: '2026-09-23', amount_minor: 500000, paid_amount_minor: 0 }
+        ],
+        payments: []
+      });
+
+      const smsService = new SmsService();
+      // On business date 2026-09-23:
+      // - Schedule 1 (2026-09-22) is PAST DUE (< 2026-09-23) -> Overdue
+      // - Schedule 2 (2026-09-23) is NOT OVERDUE (>= 2026-09-23) -> Qualifies as next upcoming schedule
+      const ctx = await smsService.calculateDealContext(88, '2026-09-23');
+
+      expect(ctx.overdueMinor).toBe(500000); // Only Schedule 1 is overdue
+      expect(ctx.nextSchedule.due_date).toBe('2026-09-23'); // Schedule 2 is upcoming
+      expect(ctx.nextSchedule.unpaid_amount_minor).toBe(500000);
+    });
+
+    it('MEETING TIMEZONE TEST: Business datetime 2026-09-23 00:30 Asia/Dushanbe', async () => {
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+      const nowUtc = '2026-09-22T19:30:00Z'; // 19:30 UTC = 00:30 Dushanbe on 2026-09-23
+
+      const pastMeeting = { id: 101, lead_id: 50, type: 'MEETING', status: 'OPEN', due_date: '2026-09-22', due_time: '23:30' };
+      const futureMeeting = { id: 102, lead_id: 50, type: 'MEETING', status: 'OPEN', due_date: '2026-09-23', due_time: '01:30' };
+
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([pastMeeting, futureMeeting]);
+
+      const smsService = new SmsService();
+      const ctx = await smsService.calculateMeetingContext(50, null, nowUtc);
+
+      // Past meeting (2026-09-22 23:30) is filtered out. Future meeting (2026-09-23 01:30) is selected!
+      expect(ctx.task.id).toBe(102);
+      expect(ctx.meetingDate).toBe('2026-09-23');
+      expect(ctx.meetingTime).toBe('01:30');
+    });
+
+    it('DEBTORS / SMS CONSISTENCY: DealsRepository and SmsService produce identical overdue amounts', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      const testDealData = {
+        id: 99,
+        lead_id: 50,
+        contract_number: '999',
+        currency: 'USD',
+        final_price_minor: 1000000,
+        units: { unit_number: '101', area_m2_x100: 5000, price_per_m2_minor: 20000 },
+        leads: { full_name: 'Акмал' },
+        users: { name: 'Менеджер' },
+        payments: [],
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-01-01', amount_minor: 300000, paid_amount_minor: 100000 },
+          { id: 2, payment_number: 2, due_date: '2026-09-23', amount_minor: 300000, paid_amount_minor: 0 }
+        ]
+      };
+
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue(testDealData);
+
+      const smsService = new SmsService();
+      const smsCtx = await smsService.calculateDealContext(99, '2026-09-23');
+
+      // Schedule 1 is overdue: 300,000 - 100,000 = 200,000 minor
+      // Schedule 2 is due today (2026-09-23): NOT overdue
+      expect(smsCtx.overdueMinor).toBe(200000);
+      expect(smsCtx.overdueAmountFormatted.replace(/\u00a0/g, ' ')).toBe('2 000');
+    });
+  });
 });
+
 
 
 
