@@ -103,7 +103,7 @@ export class SmsService {
     if (!deal) return null;
 
     const today = getBusinessDate(todayStr);
-    const rawSchedules = deal.deal_payment_schedules || [];
+    const rawSchedules = deal.schedules || deal.deal_payment_schedules || [];
 
     // Filter overdue schedules: due_date < today AND remaining unpaid > 0
     const overdueSchedules = rawSchedules.filter((s) => {
@@ -120,7 +120,8 @@ export class SmsService {
 
     const activePayments = (deal.payments || []).filter((p) => p.status !== 'VOIDED');
     const totalPaidMinor = activePayments.reduce((sum, p) => sum + (p.amount_minor || 0), 0);
-    const remainingBalanceMinor = Math.max(0, (deal.final_price_minor || 0) - totalPaidMinor);
+    const finalPriceMinor = deal.final_price_minor || 0;
+    const remainingBalanceMinor = Math.max(0, finalPriceMinor - totalPaidMinor);
 
     // Unpaid schedules for PAYMENT_REMINDER (future/today only: due_date >= today)
     const unpaidSchedules = [...rawSchedules]
@@ -141,13 +142,21 @@ export class SmsService {
       ? rawCurrency.trim().toUpperCase()
       : null;
 
+    const areaM2X100 = deal.units?.area_m2_x100 || deal.area_m2_x100 || 0;
+    const apartmentAreaFormatted = areaM2X100 > 0 ? (areaM2X100 / 100).toString().replace('.', ',') : '';
+
     return {
       deal,
       currency,
       overdueMinor,
       overdueAmountFormatted: (overdueMinor / 100).toLocaleString('ru-RU'),
+      totalPaidMinor,
+      totalPaidFormatted: (totalPaidMinor / 100).toLocaleString('ru-RU'),
+      finalPriceMinor,
+      contractTotalFormatted: (finalPriceMinor / 100).toLocaleString('ru-RU'),
       remainingBalanceMinor,
       remainingBalanceFormatted: (remainingBalanceMinor / 100).toLocaleString('ru-RU'),
+      apartmentAreaFormatted,
       nextSchedule: nextSchedule
         ? {
             id: nextSchedule.id,
@@ -370,6 +379,10 @@ export class SmsService {
         resolvedText.includes('{{overdue_amount}}') ||
         resolvedText.includes('{{currency}}') ||
         resolvedText.includes('{{apartment}}') ||
+        resolvedText.includes('{{apartment_area}}') ||
+        resolvedText.includes('{{contract_total}}') ||
+        resolvedText.includes('{{total_paid}}') ||
+        resolvedText.includes('{{remaining_balance}}') ||
         resolvedText.includes('{{project_name}}')
       ));
 
@@ -410,6 +423,10 @@ export class SmsService {
 
       resolvedText = resolvedText.replace(/\{\{\s*contract_number\s*\}\}/g, contractNumber);
       resolvedText = resolvedText.replace(/\{\{\s*apartment\s*\}\}/g, apartment);
+      resolvedText = resolvedText.replace(/\{\{\s*apartment_area\s*\}\}/g, dealContext.apartmentAreaFormatted || '');
+      resolvedText = resolvedText.replace(/\{\{\s*contract_total\s*\}\}/g, dealContext.contractTotalFormatted || '');
+      resolvedText = resolvedText.replace(/\{\{\s*total_paid\s*\}\}/g, dealContext.totalPaidFormatted || '');
+      resolvedText = resolvedText.replace(/\{\{\s*remaining_balance\s*\}\}/g, dealContext.remainingBalanceFormatted || '');
       resolvedText = resolvedText.replace(/\{\{\s*project_name\s*\}\}/g, projectName);
       resolvedText = resolvedText.replace(/\{\{\s*currency\s*\}\}/g, dealContext.currency || '');
     }

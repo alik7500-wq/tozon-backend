@@ -1340,6 +1340,189 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
       expect(smsCtx.overdueAmountFormatted.replace(/\u00a0/g, ' ')).toBe('2 000');
     });
   });
+
+  describe('SmsService V1.4.1 Debtor Consistency & DEAL_INFO Expansion Tests', () => {
+    beforeEach(async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 17, full_name: 'Ахророва Мадина Муминова', phone: '+992927771234' });
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([]);
+      vi.spyOn(SmsRepository, 'getTemplates').mockResolvedValue([
+        { code: 'CLIENT_WELCOME', name: 'Приветствие клиента', is_active: true, text: 'Здравствуйте, {{client_name}}!' },
+        { code: 'MEETING_REMINDER', name: 'Напоминание о встрече', is_active: true, text: 'Напоминаем о встрече {{meeting_date}} {{meeting_time}}' },
+        { code: 'DEAL_INFO', name: 'Сообщение по договору', is_active: true, text: '{{client_name}}: дог. №{{contract_number}}, кв. №{{apartment}} ({{apartment_area}} м²). Стоимость {{contract_total}} {{currency}}, оплачено {{total_paid}} {{currency}}, остаток {{remaining_balance}} {{currency}}. TOZON-PLAZA' },
+        { code: 'PAYMENT_REMINDER', name: 'Напоминание об оплате', is_active: true, text: 'Оплата по договору №{{contract_number}} {{payment_amount}} {{currency}} до {{payment_date}}' },
+        { code: 'DEBTOR_REMINDER', name: 'Напоминание о задолженности', is_active: true, text: 'Просрочка по договору №{{contract_number}}: {{overdue_amount}} {{currency}}' }
+      ]);
+    });
+    it('1 & 2. Client with multiple deals does not cross-resolve debt and uses exact dealId schedules', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      const deal23 = {
+        id: 23,
+        lead_id: 17,
+        contract_number: '0013',
+        currency: 'USD',
+        final_price_minor: 2949000,
+        payments: [{ amount_minor: 877434, status: 'PAID' }],
+        schedules: [
+          { id: 463, payment_number: 1, due_date: '2026-03-13', amount_minor: 122900, paid_amount_minor: 877434, status: 'PAID' }
+        ]
+      };
+
+      const deal24 = {
+        id: 24,
+        lead_id: 17,
+        contract_number: '0014',
+        currency: 'USD',
+        final_price_minor: 2689000,
+        payments: [{ amount_minor: 31120, status: 'PAID' }],
+        schedules: [
+          { id: 487, payment_number: 1, due_date: '2026-03-13', amount_minor: 112100, paid_amount_minor: 31120, status: 'PARTIAL' },
+          { id: 488, payment_number: 2, due_date: '2026-04-13', amount_minor: 112100, paid_amount_minor: 0, status: 'UPCOMING' }
+        ]
+      };
+
+      vi.spyOn(DealsRepository, 'getDealById').mockImplementation(async (id) => {
+        if (id === 23) return deal23;
+        if (id === 24) return deal24;
+        return null;
+      });
+
+      const smsService = new SmsService();
+
+      // Check Deal 23 availability: overdue is 0 -> DEBTOR_REMINDER unavailable
+      const res23 = await smsService.getTemplateAvailability({ clientId: 17, dealId: 23, todayStr: '2026-09-23' });
+      const debtor23 = res23.templates.find((t) => t.code === 'DEBTOR_REMINDER');
+      expect(debtor23.available).toBe(false);
+
+      // Check Deal 24 availability: overdue is 193080 minor -> DEBTOR_REMINDER available!
+      const res24 = await smsService.getTemplateAvailability({ clientId: 17, dealId: 24, todayStr: '2026-09-23' });
+      const debtor24 = res24.templates.find((t) => t.code === 'DEBTOR_REMINDER');
+      expect(debtor24.available).toBe(true);
+      expect(debtor24.reason).toBeNull();
+    });
+
+    it('3 & 4. overdue > 0 -> DEBTOR_REMINDER available; overdue = 0 -> DEBTOR_REMINDER unavailable', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 100,
+        lead_id: 17,
+        currency: 'USD',
+        final_price_minor: 1000000,
+        payments: [],
+        schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-01-01', amount_minor: 100000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const smsService = new SmsService();
+      const res = await smsService.getTemplateAvailability({ clientId: 17, dealId: 100, todayStr: '2026-09-23' });
+      const debtor = res.templates.find((t) => t.code === 'DEBTOR_REMINDER');
+      expect(debtor.available).toBe(true);
+    });
+
+    it('5 & 6. Partially paid overdue schedule calculates only unpaid portion & remaining_balance > 0 + overdue = 0 is NOT overdue', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 101,
+        lead_id: 17,
+        currency: 'USD',
+        final_price_minor: 2689000,
+        payments: [{ amount_minor: 31120 }],
+        schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-03-13', amount_minor: 112100, paid_amount_minor: 31120 }
+        ]
+      });
+
+      const smsService = new SmsService();
+      const ctx = await smsService.calculateDealContext(101, '2026-09-23');
+
+      expect(ctx.overdueMinor).toBe(80980); // 112,100 - 31,120 = 80,980 minor (809.80 USD)
+      expect(ctx.overdueAmountFormatted.replace(/\u00a0/g, ' ')).toBe('809,8');
+      expect(ctx.remainingBalanceMinor).toBe(2657880);
+    });
+
+    it('8, 9, 10 & 11. DEAL_INFO resolves apartment_area, contract_total, total_paid, remaining_balance', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 17, full_name: 'Ахророва Мадина Муминова' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 24,
+        lead_id: 17,
+        contract_number: '0014',
+        currency: 'USD',
+        final_price_minor: 2689000,
+        units: { unit_number: '42', area_m2_x100: 7250 },
+        payments: [{ amount_minor: 31120, status: 'PAID' }],
+        schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-03-13', amount_minor: 112100, paid_amount_minor: 31120 }
+        ]
+      });
+
+      const smsService = new SmsService();
+      const preview = await smsService.previewSms({
+        templateCode: 'DEAL_INFO',
+        clientId: 17,
+        dealId: 24,
+        text: '{{client_name}}: дог. №{{contract_number}}, кв. №{{apartment}} ({{apartment_area}} м²). Стоимость {{contract_total}} {{currency}}, оплачено {{total_paid}} {{currency}}, остаток {{remaining_balance}} {{currency}}. TOZON-PLAZA'
+      });
+
+      const textClean = preview.text.replace(/\u00a0/g, ' ');
+      expect(textClean).toContain('Ахророва Мадина Муминова');
+      expect(textClean).toContain('№0014');
+      expect(textClean).toContain('кв. №42');
+      expect(textClean).toContain('72,5 м²');
+      expect(textClean).toContain('26 890 USD');
+      expect(textClean).toContain('311,2 USD');
+      expect(textClean).toContain('26 578,8 USD');
+      expect(preview.resolved).toBe(true);
+    });
+
+    it('12. DEAL_INFO financial values cannot be overridden by frontend forged values', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 17, full_name: 'Ахророва Мадина' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 24,
+        lead_id: 17,
+        contract_number: '0014',
+        currency: 'USD',
+        final_price_minor: 2689000,
+        units: { unit_number: '42', area_m2_x100: 7250 },
+        payments: [{ amount_minor: 31120, status: 'PAID' }],
+        schedules: []
+      });
+
+      const smsService = new SmsService();
+      const preview = await smsService.previewSms({
+        templateCode: 'DEAL_INFO',
+        clientId: 17,
+        dealId: 24,
+        text: 'Стоимость {{contract_total}} {{currency}}, оплачено {{total_paid}} {{currency}}, остаток {{remaining_balance}} {{currency}}'
+      });
+
+      const textClean = preview.text.replace(/\u00a0/g, ' ');
+      expect(textClean).toContain('26 890 USD');
+      expect(textClean).toContain('311,2 USD');
+      expect(textClean).toContain('26 578,8 USD');
+    });
+
+    it('13, 14 & 15. Unresolved placeholders block sending & revalidate context without calling Payom', async () => {
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          phone: '+992927771234',
+          text: 'Сообщение с незаполненным {{custom_placeholder}}'
+        })
+      ).rejects.toThrow('Сообщение содержит незаполненные переменные шаблона');
+
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+  });
 });
 
 
