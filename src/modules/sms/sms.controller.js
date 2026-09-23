@@ -75,3 +75,24 @@ export async function getTemplates(req, res, next) {
     next(err);
   }
 }
+
+export async function previewSms(req, res, next) {
+  try {
+    const { templateCode, text, clientId, dealId, taskId, meetingId } = req.body;
+
+    const previewResult = await defaultSmsService.previewSms({
+      templateCode,
+      text,
+      clientId,
+      dealId,
+      taskId: taskId || meetingId
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: previewResult
+    });
+  } catch (err) {
+    next(err);
+  }
+}

@@ -160,4 +160,45 @@ describe('SMS API Routes (/api/sms)', () => {
 
     expect(res.status).toBe(403);
   });
+
+  describe('POST /api/sms/preview Endpoint', () => {
+    it('should reject unauthenticated preview request with 401', async () => {
+      const res = await request(app)
+        .post('/api/sms/preview')
+        .send({ templateCode: 'CLIENT_WELCOME', clientId: 10 });
+
+      expect(res.status).toBe(401);
+    });
+
+    it('should return 200 OK with resolved preview data for CLIENT_WELCOME', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Шохида Каримова' });
+
+      const res = await request(app)
+        .post('/api/sms/preview')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ templateCode: 'CLIENT_WELCOME', clientId: 10 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.text).toContain('Здравствуйте, Шохида Каримова!');
+      expect(res.body.data.resolved).toBe(true);
+    });
+
+    it('should return HTTP 400 when preview resolution fails', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([]);
+
+      const res = await request(app)
+        .post('/api/sms/preview')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ templateCode: 'MEETING_REMINDER', clientId: 10 });
+
+      expect(res.status).toBe(400);
+      expect(res.body.message).toContain('Для клиента не найдена запланированная встреча');
+    });
+  });
 });

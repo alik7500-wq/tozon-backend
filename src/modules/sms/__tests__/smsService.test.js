@@ -357,4 +357,683 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
       expect(mockProvider.sendSms).not.toHaveBeenCalled();
     });
   });
+
+  describe('SMS V1.3 Context-Aware Templates & Unresolved Placeholder Protection', () => {
+    it('REQUIRED TEST V1.3 — UNRESOLVED PLACEHOLDER: should reject SMS and NOT call Payom when message contains {{placeholder}}', async () => {
+      const mockProvider = {
+        sendSms: vi.fn()
+      };
+      const createMsgSpy = vi.spyOn(SmsRepository, 'createMessage');
+
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          phone: '+992927779757',
+          text: 'Уважаемый {{client_name}}, ваш платеж {{overdue_amount}} сомони просрочен.'
+        })
+      ).rejects.toThrow('Сообщение содержит незаполненные переменные шаблона');
+
+      expect(createMsgSpy).not.toHaveBeenCalled();
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('REQUIRED TEST V1.3 — PROPERLY INTERPOLATED: should send SMS when all placeholders are substituted', async () => {
+      vi.spyOn(SmsRepository, 'createMessage').mockResolvedValue({
+        id: 401,
+        phone: '+992927779757',
+        status: 'queued'
+      });
+      vi.spyOn(SmsRepository, 'updateMessageStatus').mockResolvedValue({ id: 401, status: 'sent' });
+
+      const mockProvider = {
+        sendSms: vi.fn().mockResolvedValue({
+          success: true,
+          providerMessageId: 'PAYOM_V1_3_INTERPOLATED',
+          isMock: true
+        })
+      };
+
+      const smsService = new SmsService(mockProvider);
+      const result = await smsService.sendSms({
+        phone: '+992927779757',
+        text: 'Уважаемый Фарход, ваш платеж 12 000 TJS по договору 105 просрочен.'
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockProvider.sendSms).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('SMS V1.3.1 Data Semantics Hotfix & Ground-Truth Context Validation', () => {
+    const mockToday = '2026-09-23';
+
+    it('TEST V1.3.1 - 1 & 4: overdue_amount != remaining_balance & partially paid schedule accounts only for unpaid part', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 701,
+        lead_id: 10,
+        final_price_minor: 10000000, // 100 000 USD
+        payments: [{ status: 'POSTED', amount_minor: 2000000 }], // 20 000 paid total
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-01-01', amount_minor: 1000000, paid_amount_minor: 600000 }, // Overdue unpaid 400000 (4000 USD)
+          { id: 2, payment_number: 2, due_date: '2026-10-01', amount_minor: 1000000, paid_amount_minor: 0 } // Future
+        ]
+      });
+
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+
+      const context = await smsService.calculateDealContext(701, mockToday);
+
+      expect(context.remainingBalanceMinor).toBe(8000000); // 80 000 USD
+      expect(context.overdueMinor).toBe(400000); // 4 000 USD (ONLY unpaid portion of past due item)
+      expect(context.overdueMinor).not.toBe(context.remainingBalanceMinor);
+    });
+
+    it('TEST V1.3.1 - 2: future schedule is excluded from overdue_amount', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 702,
+        lead_id: 10,
+        final_price_minor: 5000000,
+        payments: [],
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2099-12-31', amount_minor: 1000000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+      const context = await smsService.calculateDealContext(702, mockToday);
+
+      expect(context.overdueMinor).toBe(0);
+    });
+
+    it('TEST V1.3.1 - 3: fully paid overdue schedule is excluded from overdue_amount', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 703,
+        lead_id: 10,
+        final_price_minor: 5000000,
+        payments: [{ status: 'POSTED', amount_minor: 1000000 }],
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-01-01', amount_minor: 1000000, paid_amount_minor: 1000000 }
+        ]
+      });
+
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+      const context = await smsService.calculateDealContext(703, mockToday);
+
+      expect(context.overdueMinor).toBe(0);
+    });
+
+    it('TEST V1.3.1 - 5: payment_amount and payment_date are taken from the SAME single schedule row', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 705,
+        lead_id: 10,
+        final_price_minor: 10000000,
+        payments: [],
+        deal_payment_schedules: [
+          { id: 10, payment_number: 1, due_date: '2026-10-15', amount_minor: 1500000, paid_amount_minor: 0 },
+          { id: 11, payment_number: 2, due_date: '2026-11-15', amount_minor: 2000000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+      const context = await smsService.calculateDealContext(705, mockToday);
+
+      expect(context.nextSchedule.id).toBe(10);
+      expect(context.nextSchedule.due_date).toBe('2026-10-15');
+      expect(context.nextSchedule.amount_minor).toBe(1500000);
+    });
+
+    it('TEST V1.3.1 - 6: schedule of another deal is rejected', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Клиент A', phone: '+992927770010' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({ id: 706, lead_id: 20 }); // Client B
+
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          clientId: 10,
+          dealId: 706,
+          templateCode: 'PAYMENT_REMINDER',
+          text: 'Оплата'
+        })
+      ).rejects.toThrow('Сделка не принадлежит указанному клиенту');
+
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('TEST V1.3.1 - 7: debtor template without confirmed overdue is rejected (PAYOM_CALLS = 0)', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Клиент A', phone: '+992927770010' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 707,
+        lead_id: 10,
+        currency: 'USD',
+        final_price_minor: 5000000,
+        payments: [],
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2099-01-01', amount_minor: 1000000, paid_amount_minor: 0 } // Future only
+        ]
+      });
+
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          clientId: 10,
+          dealId: 707,
+          templateCode: 'DEBTOR_REMINDER',
+          text: 'Внесите оплату'
+        })
+      ).rejects.toThrow('У клиента отсутствует подтвержденная просроченная задолженность');
+
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('TEST V1.3.1 - 8: forged frontend overdue_amount cannot override server calculation', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 708,
+        lead_id: 10,
+        final_price_minor: 5000000,
+        payments: [],
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-01-01', amount_minor: 500000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+      const context = await smsService.calculateDealContext(708, mockToday);
+
+      // Server calculated overdue is 5000 minor (50 TJS/USD)
+      expect(context.overdueMinor).toBe(500000);
+      expect(context.overdueAmountFormatted.replace(/\u00a0/g, ' ')).toBe('5 000');
+    });
+
+    it('TEST V1.3.1 - 9 & 10: meeting belongs to clientId; meeting of another client is rejected', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Клиент A', phone: '+992927770010' });
+      vi.spyOn(TasksRepository, 'findById').mockResolvedValue({ id: 99, lead_id: 20 }); // Client B task
+
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          clientId: 10,
+          taskId: 99,
+          templateCode: 'MEETING_REMINDER',
+          text: 'Встреча'
+        })
+      ).rejects.toThrow('Встреча не принадлежит указанному клиенту');
+
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('TEST V1.3.1 - 11: missing meeting data blocks template send (PAYOM_CALLS = 0)', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Клиент A', phone: '+992927770010' });
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([]); // No tasks for client
+
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          clientId: 10,
+          templateCode: 'MEETING_REMINDER',
+          text: 'Встреча'
+        })
+      ).rejects.toThrow(/не найдена/i);
+
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('TEST V1.3.1 - 12: unresolved placeholder => PAYOM_CALLS = 0', async () => {
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          phone: '+992927779757',
+          text: 'Здравствуйте {{client_name}}, ваш баланс {{overdue_amount}}'
+        })
+      ).rejects.toThrow('Сообщение содержит незаполненные переменные шаблона');
+
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('SMS V1.3 Template Source-of-Truth & Placeholder Contract Matrix', () => {
+    it('1. DB CLIENT_WELCOME returns clean template row from repository', async () => {
+      const templates = await SmsRepository.getTemplates();
+      const clientWelcome = templates.find((t) => t.code === 'CLIENT_WELCOME');
+      expect(clientWelcome).toBeDefined();
+      expect(clientWelcome.text).toContain('{{client_name}}');
+    });
+
+    it('2. DB MEETING_REMINDER contains meeting_date and meeting_time placeholders', async () => {
+      const templates = await SmsRepository.getTemplates();
+      const meetingTmpl = templates.find((t) => t.code === 'MEETING_REMINDER');
+      expect(meetingTmpl).toBeDefined();
+      expect(meetingTmpl.text).toContain('{{meeting_date}}');
+      expect(meetingTmpl.text).toContain('{{meeting_time}}');
+    });
+
+    it('3. CUSTOM_MESSAGE code is inactive / filtered out from getTemplates()', async () => {
+      const templates = await SmsRepository.getTemplates();
+      const customMsg = templates.find((t) => t.code === 'CUSTOM_MESSAGE' || t.text === '{{text}}');
+      expect(customMsg).toBeUndefined();
+    });
+
+    it('4 & 14. Unknown/invalid templateCode throws error or rejects gracefully', async () => {
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      await expect(
+        smsService.sendSms({
+          phone: '+992927779757',
+          templateCode: 'UNKNOWN_CODE',
+          text: '{{unknown_placeholder}}'
+        })
+      ).rejects.toThrow('Сообщение содержит незаполненные переменные шаблона');
+    });
+  });
+
+  describe('SMS V1.3 Final Currency Placeholder Hotfix Regression Tests', () => {
+    const mockToday = '2026-09-23';
+
+    it('1. PAYMENT_REMINDER resolves currency from validated deal context', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 801,
+        currency: 'TJS',
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-10-15', amount_minor: 1500000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const context = await smsService.calculateDealContext(801, mockToday);
+      expect(context.currency).toBe('TJS');
+    });
+
+    it('2. DEBTOR_REMINDER resolves currency from validated debtor context', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 802,
+        currency: 'USD',
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-01-01', amount_minor: 500000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const context = await smsService.calculateDealContext(802, mockToday);
+      expect(context.currency).toBe('USD');
+      expect(context.overdueMinor).toBe(500000);
+    });
+
+    it('3. Frontend forged currency is ignored, server calculated currency used', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 803,
+        currency: 'TJS',
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-10-15', amount_minor: 1500000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const context = await smsService.calculateDealContext(803, mockToday);
+      expect(context.currency).toBe('TJS');
+      expect(context.currency).not.toBe('EUR');
+    });
+
+    it('4 & 5. Missing/unresolvable currency => HTTP 400 & PAYOM_CALLS = 0', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Клиент A', phone: '+992927770010' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 804,
+        lead_id: 10,
+        currency: null,
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-10-15', amount_minor: 1500000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          clientId: 10,
+          dealId: 804,
+          templateCode: 'PAYMENT_REMINDER',
+          text: 'Оплата'
+        })
+      ).rejects.toThrow('Не удалось определить валюту сделки');
+
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('6. payment amount/date/currency belong to same validated deal context', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 806,
+        currency: 'TJS',
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-10-15', amount_minor: 1500000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const context = await smsService.calculateDealContext(806, mockToday);
+      expect(context.currency).toBe('TJS');
+      expect(context.nextSchedule.due_date).toBe('2026-10-15');
+      expect(context.nextSchedule.amount_minor).toBe(1500000);
+    });
+
+    it('7. overdue amount/currency belong to same validated debtor context', async () => {
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 807,
+        currency: 'USD',
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-01-01', amount_minor: 2500000, paid_amount_minor: 500000 }
+        ]
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const context = await smsService.calculateDealContext(807, mockToday);
+      expect(context.currency).toBe('USD');
+      expect(context.overdueMinor).toBe(2000000);
+    });
+
+    it('8. Final rendered PAYMENT_REMINDER contains no unresolved placeholders', async () => {
+      const templateText = 'Здравствуйте, {{client_name}}! Напоминаем об очередной оплате по договору №{{contract_number}} в размере {{payment_amount}} {{currency}} до {{payment_date}}. TOZON-PLAZA.';
+      const rendered = templateText
+        .replace(/\{\{\s*client_name\s*\}\}/g, 'Фарход')
+        .replace(/\{\{\s*contract_number\s*\}\}/g, '105')
+        .replace(/\{\{\s*payment_amount\s*\}\}/g, '15 000')
+        .replace(/\{\{\s*currency\s*\}\}/g, 'TJS')
+        .replace(/\{\{\s*payment_date\s*\}\}/g, '2026-10-15');
+
+      expect(/\{\{\s*[a-zA-Z0-9_]+\s*\}\}/.test(rendered)).toBe(false);
+      expect(rendered).toBe('Здравствуйте, Фарход! Напоминаем об очередной оплате по договору №105 в размере 15 000 TJS до 2026-10-15. TOZON-PLAZA.');
+    });
+
+    it('9. Final rendered DEBTOR_REMINDER contains no unresolved placeholders', async () => {
+      const templateText = 'Уважаемый(ая) {{client_name}}! Просим внести просроченную оплату {{overdue_amount}} {{currency}} по договору №{{contract_number}}. TOZON-PLAZA.';
+      const rendered = templateText
+        .replace(/\{\{\s*client_name\s*\}\}/g, 'Фарход')
+        .replace(/\{\{\s*contract_number\s*\}\}/g, '105')
+        .replace(/\{\{\s*overdue_amount\s*\}\}/g, '5 000')
+        .replace(/\{\{\s*currency\s*\}\}/g, 'TJS');
+
+      expect(/\{\{\s*[a-zA-Z0-9_]+\s*\}\}/.test(rendered)).toBe(false);
+      expect(rendered).toBe('Уважаемый(ая) Фарход! Просим внести просроченную оплату 5 000 TJS по договору №105. TOZON-PLAZA.');
+    });
+  });
+
+  describe('SMS V1.3 Dynamic Resolution & Preview Safety Tests', () => {
+    it('1. CLIENT_WELCOME preview resolves client_name from lead', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Шохида Каримова' });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const preview = await smsService.previewSms({ templateCode: 'CLIENT_WELCOME', clientId: 10 });
+
+      expect(preview.resolved).toBe(true);
+      expect(preview.text).toContain('Здравствуйте, Шохида Каримова!');
+      expect(preview.text).not.toContain('{{client_name}}');
+    });
+
+    it('2 & 3. MEETING_REMINDER preview resolves meeting_date and meeting_time', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+      vi.spyOn(TasksRepository, 'findById').mockResolvedValue({
+        id: 99,
+        lead_id: 10,
+        due_date: '2026-10-20',
+        due_time: '14:30',
+        type: 'MEETING',
+        status: 'OPEN'
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const preview = await smsService.previewSms({ templateCode: 'MEETING_REMINDER', clientId: 10, taskId: 99 });
+
+      expect(preview.resolved).toBe(true);
+      expect(preview.text).toContain('2026-10-20');
+      expect(preview.text).toContain('14:30');
+      expect(preview.text).not.toContain('{{meeting_date}}');
+      expect(preview.text).not.toContain('{{meeting_time}}');
+    });
+
+    it('4. Wrong-client meeting is rejected by preview', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+      vi.spyOn(TasksRepository, 'findById').mockResolvedValue({ id: 99, lead_id: 20 });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      await expect(
+        smsService.previewSms({ templateCode: 'MEETING_REMINDER', clientId: 10, taskId: 99 })
+      ).rejects.toThrow('Встреча не принадлежит указанному клиенту');
+    });
+
+    it('5. Ambiguous/missing meeting handled safely (controlled 400 error)', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { TasksRepository } = await import('../../tasks/tasks.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+      vi.spyOn(TasksRepository, 'findAll').mockResolvedValue([]);
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      await expect(
+        smsService.previewSms({ templateCode: 'MEETING_REMINDER', clientId: 10 })
+      ).rejects.toThrow('Для клиента не найдена запланированная встреча');
+    });
+
+    it('6, 7 & 8. DEAL_INFO resolves contract_number, apartment, and project_name', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 301,
+        lead_id: 10,
+        contract_number: '105-A',
+        unit_number: '42',
+        project_name: 'TOZON-PLAZA-BLOCK-B'
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const preview = await smsService.previewSms({ templateCode: 'DEAL_INFO', clientId: 10, dealId: 301 });
+
+      expect(preview.text).toContain('№105-A');
+      expect(preview.text).toContain('кв. №42');
+      expect(preview.text).toContain('TOZON-PLAZA-BLOCK-B');
+      expect(preview.text).not.toContain('{{contract_number}}');
+    });
+
+    it('9. Wrong deal/client is rejected by preview', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({ id: 301, lead_id: 99 });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      await expect(
+        smsService.previewSms({ templateCode: 'DEAL_INFO', clientId: 10, dealId: 301 })
+      ).rejects.toThrow('Сделка не принадлежит указанному клиенту');
+    });
+
+    it('10, 11, 12 & 13. PAYMENT_REMINDER resolves payment_amount, payment_date, currency from same schedule', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 302,
+        lead_id: 10,
+        contract_number: '202-B',
+        currency: 'TJS',
+        deal_payment_schedules: [
+          { id: 101, payment_number: 1, due_date: '2026-11-15', amount_minor: 1800000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const preview = await smsService.previewSms({ templateCode: 'PAYMENT_REMINDER', clientId: 10, dealId: 302 });
+
+      expect(preview.text.replace(/\u00a0/g, ' ')).toContain('18 000 TJS');
+      expect(preview.text).toContain('2026-11-15');
+      expect(preview.text).toContain('№202-B');
+      expect(preview.text).not.toContain('{{payment_amount}}');
+    });
+
+    it('14 & 18. Forged frontend values are ignored during server resolution', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 303,
+        lead_id: 10,
+        contract_number: '303',
+        currency: 'USD',
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-01-01', amount_minor: 5000000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const preview = await smsService.previewSms({ templateCode: 'DEBTOR_REMINDER', clientId: 10, dealId: 303, text: 'Просим оплатить 1 USD' });
+
+      expect(preview.text.replace(/\u00a0/g, ' ')).toContain('50 000 USD');
+    });
+
+    it('15 & 16. DEBTOR_REMINDER resolves overdue_amount and currency', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 304,
+        lead_id: 10,
+        contract_number: '304',
+        currency: 'TJS',
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2026-01-01', amount_minor: 1200000, paid_amount_minor: 200000 }
+        ]
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      const preview = await smsService.previewSms({ templateCode: 'DEBTOR_REMINDER', clientId: 10, dealId: 304 });
+
+      expect(preview.text.replace(/\u00a0/g, ' ')).toContain('10 000 TJS');
+      expect(preview.text).toContain('просроченную оплату');
+    });
+
+    it('17. Zero or negative overdue debt is rejected by preview', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 305,
+        lead_id: 10,
+        currency: 'TJS',
+        deal_payment_schedules: [
+          { id: 1, payment_number: 1, due_date: '2099-01-01', amount_minor: 1000000, paid_amount_minor: 0 }
+        ]
+      });
+
+      const smsService = new SmsService({ sendSms: vi.fn() });
+      await expect(
+        smsService.previewSms({ templateCode: 'DEBTOR_REMINDER', clientId: 10, dealId: 305 })
+      ).rejects.toThrow('У клиента отсутствует подтвержденная просроченная задолженность');
+    });
+
+    it('19 & 20. Preview makes 0 Payom calls and 0 sms_messages inserts', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Фарход' });
+
+      const createMsgSpy = vi.spyOn(SmsRepository, 'createMessage');
+      const mockProvider = { sendSms: vi.fn() };
+
+      const smsService = new SmsService(mockProvider);
+      const preview = await smsService.previewSms({ templateCode: 'CLIENT_WELCOME', clientId: 10 });
+
+      expect(preview.resolved).toBe(true);
+      expect(createMsgSpy).not.toHaveBeenCalled();
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('22 & 23. Backend unresolved placeholder => HTTP 400 & 0 Payom calls', async () => {
+      const mockProvider = { sendSms: vi.fn() };
+      const createMsgSpy = vi.spyOn(SmsRepository, 'createMessage');
+
+      const smsService = new SmsService(mockProvider);
+
+      await expect(
+        smsService.sendSms({
+          phone: '+992927779757',
+          text: 'Здравствуйте {{client_name}}, ваш баланс {{custom_unresolved}}'
+        })
+      ).rejects.toThrow('Сообщение содержит незаполненные переменные шаблона');
+
+      expect(createMsgSpy).not.toHaveBeenCalled();
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('25. Preview and send use the exact same template resolver', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 10, full_name: 'Алиев Рахим', phone: '+992927771122' });
+
+      vi.spyOn(SmsRepository, 'createMessage').mockResolvedValue({ id: 999, phone: '+992927771122', status: 'queued' });
+      vi.spyOn(SmsRepository, 'updateMessageStatus').mockResolvedValue({ id: 999, status: 'sent' });
+
+      const mockProvider = { sendSms: vi.fn().mockResolvedValue({ success: true, providerMessageId: 'P_PREVIEW_SAME' }) };
+      const smsService = new SmsService(mockProvider);
+
+      const preview = await smsService.previewSms({ templateCode: 'CLIENT_WELCOME', clientId: 10 });
+      const sendResult = await smsService.sendSms({ templateCode: 'CLIENT_WELCOME', clientId: 10 });
+
+      expect(sendResult.data.message).toBe(preview.text);
+    });
+  });
 });
+
+
+
+

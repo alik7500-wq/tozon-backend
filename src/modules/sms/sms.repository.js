@@ -173,25 +173,35 @@ export class SmsRepository {
   }
 
   /**
-   * Get active SMS templates.
+   * Get active SMS templates directly from DB (Single Source of Truth).
    */
   static async getTemplates() {
-    const db = getServiceDB();
-    const { data, error } = await db
-      .from('sms_templates')
-      .select('*')
-      .eq('is_active', true)
-      .order('id', { ascending: true });
+    const defaultTemplates = [
+      { id: 1, code: 'CLIENT_WELCOME', name: 'Приветствие клиента', text: 'Здравствуйте, {{client_name}}! Спасибо за обращение в отдел продаж ЖК TOZON-PLAZA.', is_active: true },
+      { id: 2, code: 'MEETING_REMINDER', name: 'Напоминание о встрече', text: 'Здравствуйте, {{client_name}}! Напоминаем о запланированной встрече {{meeting_date}} в {{meeting_time}}. TOZON-PLAZA.', is_active: true },
+      { id: 3, code: 'DEAL_INFO', name: 'Сообщение по договору', text: 'Здравствуйте, {{client_name}}! Информация по вашему договору №{{contract_number}} (кв. №{{apartment}}, {{project_name}}). TOZON-PLAZA.', is_active: true },
+      { id: 4, code: 'PAYMENT_REMINDER', name: 'Напоминание об оплате', text: 'Здравствуйте, {{client_name}}! Напоминаем об очередной оплате по договору №{{contract_number}} в размере {{payment_amount}} {{currency}} до {{payment_date}}. TOZON-PLAZA.', is_active: true },
+      { id: 5, code: 'DEBTOR_REMINDER', name: 'Напоминание о задолженности', text: 'Уважаемый(ая) {{client_name}}! Просим внести просроченную оплату {{overdue_amount}} {{currency}} по договору №{{contract_number}}. TOZON-PLAZA.', is_active: true }
+    ];
 
-    if (error) {
-      console.error('DB error reading sms_templates:', error.message);
-      return [
-        { id: 1, code: 'CLIENT_WELCOME', name: 'Приветствие клиента', text: 'Уважаемый(ая) {{client_name}}, спасибо за обращение в отдел продаж ЖК TOZON-PLAZA!' },
-        { id: 2, code: 'MEETING_REMINDER', name: 'Напоминание о встрече', text: 'Здравствуйте, {{client_name}}! Напоминаем о встрече в офисе TOZON-PLAZA.' },
-        { id: 3, code: 'CUSTOM_MESSAGE', name: 'Произвольное сообщение', text: '{{text}}' }
-      ];
+    try {
+      const db = getServiceDB();
+      const { data, error } = await db
+        .from('sms_templates')
+        .select('id, code, name, text, is_active')
+        .eq('is_active', true)
+        .order('id', { ascending: true });
+
+      if (error || !data || data.length === 0) {
+        return defaultTemplates;
+      }
+
+      return data.filter((t) => t.code !== 'CUSTOM_MESSAGE');
+    } catch (err) {
+      return defaultTemplates;
     }
-
-    return data || [];
   }
 }
+
+
+
