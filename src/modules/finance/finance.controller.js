@@ -144,6 +144,24 @@ export const getCashflow = async (req, res, next) => {
   }
 };
 
+export const exportCashflowExcel = async (req, res, next) => {
+  try {
+    const { CashflowExcelService } = await import('./cashflow_excel.service.js');
+    const filters = req.query || {};
+    const buffer = await CashflowExcelService.generateExcelBuffer(filters, req.cashDeskAccess, req.user);
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const filename = `DDS_TOZON_PLAZA_${todayStr}.xlsx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    console.error('Error exporting cashflow excel:', error);
+    next(error);
+  }
+};
+
 export const getPlanFactReport = async (req, res, next) => {
   try {
     const filters = req.query || {};

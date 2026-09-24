@@ -12,6 +12,7 @@ import {
   deleteExpense,
   convertCurrency, 
   getCashflow, 
+  exportCashflowExcel,
   getPlanFactReport,
   getEskhataRate,
   createCashTransfer
@@ -54,6 +55,8 @@ router.delete('/expenses/:id', requireCashDeskMutation, deleteExpense);
 
 router.post('/transfers', requireCashTransferPermission, createCashTransfer);
 router.post('/convert', requireCashTransferPermission, convertCurrency);
+router.get('/cashflow/export.xlsx', exportCashflowExcel);
+router.get('/cashflow/export', exportCashflowExcel);
 router.get('/cashflow', getCashflow);
 router.get('/plan-fact', getPlanFactReport);
 
