@@ -119,7 +119,7 @@ describe('SMS Outbox Core V1.5B.1 Tests', () => {
       vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue(null);
       vi.spyOn(SmsEventsRepository, 'getById').mockResolvedValue({ id: 101, status: 'SENT' });
 
-      await expect(smsEventsService.confirmEvent({ id: 101, userId: 1 })).rejects.toThrow('Событие не может быть подтверждено');
+      await expect(smsEventsService.confirmEvent({ id: 101, userId: 1 })).rejects.toThrow('не может быть повторно отправлено');
     });
 
     it('19, 20 & 21. markSent, markFailed, and markDeliveryUnknown update status correctly', async () => {
@@ -163,7 +163,9 @@ describe('SMS Outbox Core V1.5B.1 Tests', () => {
       vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({ id: 39, lead_id: 13 });
       vi.spyOn(DealsRepository, 'getPaymentById').mockResolvedValue({ id: 400, deal_id: 39, status: 'VOIDED' });
 
-      await expect(smsEventsService.previewEvent(101)).rejects.toThrow('Платёж был аннулирован');
+      const res = await smsEventsService.previewEvent(101);
+      expect(res.isApplicable).toBe(false);
+      expect(res.cancelReason).toContain('Платёж был аннулирован');
     });
 
     it('26, 27 & 28. Payload financial spoofing is ignored; preview uses authoritative server-side DB context & latest canonical template', async () => {
@@ -224,15 +226,15 @@ describe('SMS Outbox Core V1.5B.1 Tests', () => {
       vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({ id: 39, lead_id: 13 });
 
       const origEnv = process.env.NODE_ENV;
-      const origAllow = process.env.SMS_OUTBOX_ALLOW_SEND;
+      const origAllow = process.env.SMS_OUTBOX_CONFIRM_ENABLED;
       process.env.NODE_ENV = 'production';
-      process.env.SMS_OUTBOX_ALLOW_SEND = 'false';
+      process.env.SMS_OUTBOX_CONFIRM_ENABLED = 'false';
 
       try {
-        await expect(smsEventsService.confirmEvent({ id: 101, userId: 1 })).rejects.toThrow('заблокирована до следующего этапа релиза');
+        await expect(smsEventsService.confirmEvent({ id: 101, userId: 1 })).rejects.toThrow('SMS_OUTBOX_CONFIRM_ENABLED');
       } finally {
         process.env.NODE_ENV = origEnv;
-        process.env.SMS_OUTBOX_ALLOW_SEND = origAllow;
+        process.env.SMS_OUTBOX_CONFIRM_ENABLED = origAllow;
       }
     });
   });

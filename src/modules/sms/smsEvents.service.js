@@ -1,8 +1,10 @@
+import crypto from 'crypto';
 import { SmsEventsRepository } from './smsEvents.repository.js';
 import { defaultSmsService } from './sms.service.js';
 import { LeadsRepository } from '../leads/leads.repository.js';
 import { DealsRepository } from '../deals/deals.repository.js';
 import { TasksRepository } from '../tasks/tasks.repository.js';
+import { SmsRepository } from './sms.repository.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 function parseOptionalBigInt(val) {
@@ -14,6 +16,13 @@ function parseOptionalBigInt(val) {
 export class SmsEventsService {
   constructor(smsService = defaultSmsService) {
     this.smsService = smsService;
+  }
+
+  /**
+   * Helper to compute deterministic preview hash.
+   */
+  computePreviewHash(text, eventId) {
+    return crypto.createHash('sha256').update(`${text}:${eventId}`).digest('hex');
   }
 
   /**
@@ -36,6 +45,7 @@ export class SmsEventsService {
 
   /**
    * Re-validate source context integrity against authoritative DB tables.
+   * Auto-cancels stale events if context is no longer applicable.
    */
   async validateEventContext(event) {
     const clientId = parseOptionalBigInt(event.client_id);
@@ -56,6 +66,9 @@ export class SmsEventsService {
       if (!deal) {
         throw new AppError(`Сделка с ID ${dealId} не найдена`, 404);
       }
+      if (deal.status === 'CANCELLED') {
+        throw new AppError('Сделка отменена (EVENT_NO_LONGER_APPLICABLE)', 400, 'DEAL_CANCELLED');
+      }
       if (clientId && parseOptionalBigInt(deal.lead_id) !== clientId) {
         throw new AppError('Сделка не принадлежит указанному клиенту', 400);
       }
@@ -67,7 +80,7 @@ export class SmsEventsService {
         throw new AppError(`Платёж с ID ${paymentId} не найден`, 404);
       }
       if (payment.status === 'VOIDED') {
-        throw new AppError('Платёж был аннулирован', 400);
+        throw new AppError('Платёж был аннулирован (EVENT_NO_LONGER_APPLICABLE)', 400, 'PAYMENT_VOIDED');
       }
       if (dealId && parseOptionalBigInt(payment.deal_id) !== dealId) {
         throw new AppError('Платёж не относится к указанной сделке', 400);
@@ -78,8 +91,11 @@ export class SmsEventsService {
       const deal = await DealsRepository.getDealById(dealId);
       const schedules = deal?.schedules || deal?.deal_payment_schedules || [];
       const sched = schedules.find((s) => parseOptionalBigInt(s.id) === scheduleId);
-      if (!sched && schedules.length > 0) {
-        throw new AppError('График платежа не найден в указанной сделке', 400);
+      if (sched) {
+        const unpaidMinor = (sched.amount_minor || 0) - (sched.paid_amount_minor || 0);
+        if (unpaidMinor <= 0) {
+          throw new AppError('График платежа уже полностью оплачен (EVENT_NO_LONGER_APPLICABLE)', 400, 'SCHEDULE_ALREADY_PAID');
+        }
       }
     }
 
@@ -87,6 +103,9 @@ export class SmsEventsService {
       const task = await TasksRepository.findById(taskId);
       if (!task) {
         throw new AppError(`Задача с ID ${taskId} не найдена`, 404);
+      }
+      if (task.status === 'COMPLETED' || task.status === 'CANCELLED') {
+        throw new AppError('Запланированная встреча завершена или отменена (EVENT_NO_LONGER_APPLICABLE)', 400, 'MEETING_CLOSED_OR_CANCELLED');
       }
     }
 
@@ -99,7 +118,26 @@ export class SmsEventsService {
    */
   async previewEvent(id) {
     const event = await this.getEventById(id);
-    await this.validateEventContext(event);
+    
+    try {
+      await this.validateEventContext(event);
+    } catch (err) {
+      if (['SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(err.code)) {
+        if (event.status === 'AWAITING_CONFIRMATION') {
+          await SmsEventsRepository.cancelEvent({ id: event.id, reason: err.message });
+        }
+        return {
+          event: { ...event, status: 'CANCELLED', cancel_reason: err.message },
+          isApplicable: false,
+          cancelReason: err.message,
+          text: '',
+          characterCount: 0,
+          smsSegments: 0,
+          previewHash: null
+        };
+      }
+      throw err;
+    }
 
     const previewResult = await this.smsService.previewSms({
       templateCode: event.template_code,
@@ -109,12 +147,16 @@ export class SmsEventsService {
       taskId: event.task_id
     });
 
+    const previewHash = this.computePreviewHash(previewResult.text, event.id);
+
     return {
       event,
+      isApplicable: true,
       text: previewResult.text,
       characterCount: previewResult.characterCount,
       smsSegments: previewResult.smsSegments,
-      isUnicode: previewResult.isUnicode
+      isUnicode: previewResult.isUnicode,
+      previewHash
     };
   }
 
@@ -142,24 +184,37 @@ export class SmsEventsService {
   }
 
   /**
-   * Confirm and process event with atomic state claim.
-   * On V1.5B.1, real production dispatch is protected by feature flag / controlled stub.
+   * Confirm and process event with atomic state claim & pre-send re-validation.
    */
-  async confirmEvent({ id, userId = null }) {
+  async confirmEvent({ id, userId = null, previewHash = null }) {
+    const checkEvent = await SmsEventsRepository.getById(id);
+    if (!checkEvent) {
+      throw new AppError(`Событие SMS Outbox с ID ${id} не найдено`, 404);
+    }
+
+    if (['SENT', 'CANCELLED', 'DELIVERY_UNKNOWN'].includes(checkEvent.status)) {
+      throw new AppError(`Событие с статусом [${checkEvent.status}] не может быть повторно отправлено`, 400, 'EVENT_NOT_CONFIRMABLE');
+    }
+
     // 1. Atomic claim: transition AWAITING_CONFIRMATION -> PROCESSING
     const claimedEvent = await SmsEventsRepository.atomicStartProcessing(id);
     if (!claimedEvent) {
-      const checkEvent = await SmsEventsRepository.getById(id);
-      if (!checkEvent) {
-        throw new AppError(`Событие SMS Outbox с ID ${id} не найдено`, 404);
-      }
       throw new AppError(`Событие не может быть подтверждено: текущий статус [${checkEvent.status}]`, 400, 'EVENT_NOT_CONFIRMABLE');
     }
 
     try {
-      // 2. Validate source context & re-resolve template
-      await this.validateEventContext(claimedEvent);
+      // 2. Re-validate source context
+      try {
+        await this.validateEventContext(claimedEvent);
+      } catch (staleErr) {
+        if (['SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(staleErr.code)) {
+          await SmsEventsRepository.cancelEvent({ id: claimedEvent.id, userId, reason: staleErr.message });
+          throw new AppError(`Событие больше не актуально: ${staleErr.message}`, 400, 'EVENT_NO_LONGER_APPLICABLE');
+        }
+        throw staleErr;
+      }
 
+      // 3. Re-resolve canonical template & text
       const previewResult = await this.smsService.previewSms({
         templateCode: claimedEvent.template_code,
         clientId: claimedEvent.client_id,
@@ -168,17 +223,41 @@ export class SmsEventsService {
         taskId: claimedEvent.task_id
       });
 
-      // 3. Feature Flag / Mode Protection for V1.5B.1
-      const isTestEnv = process.env.NODE_ENV === 'test';
-      const isMockAllowed = process.env.SMS_OUTBOX_ALLOW_SEND === 'true';
-
-      if (!isTestEnv && !isMockAllowed) {
-        // Revert to AWAITING_CONFIRMATION or return controlled feature-disabled response
-        await SmsEventsRepository.cancelEvent({ id: claimedEvent.id, userId, reason: 'V1.5B.1_CONFIRM_SEND_NOT_ENABLED' });
-        throw new AppError('Отправка SMS из Outbox V1.5B.1 заблокирована до следующего этапа релиза', 400, 'OUTBOX_SEND_NOT_ENABLED');
+      const currentHash = this.computePreviewHash(previewResult.text, claimedEvent.id);
+      if (previewHash && currentHash !== previewHash) {
+        // Preview text changed since manager viewed it! Revert status back to AWAITING_CONFIRMATION (0 Payom calls executed).
+        await SmsEventsRepository.revertToAwaitingConfirmation(claimedEvent.id);
+        throw new AppError('Текст сообщения изменился. Пожалуйста, проверьте обновлённый текст перед отправкой', 400, 'PREVIEW_CHANGED');
       }
 
-      // 4. Dispatch via SmsService
+      // 4. Feature Flag Protection for V1.5B.2
+      const isTestEnv = process.env.NODE_ENV === 'test';
+      const isConfirmEnabled = process.env.SMS_OUTBOX_CONFIRM_ENABLED === 'true';
+
+      if (!isTestEnv && !isConfirmEnabled) {
+        await SmsEventsRepository.cancelEvent({ id: claimedEvent.id, userId, reason: 'SMS_OUTBOX_CONFIRM_ENABLED_FALSE' });
+        throw new AppError('Отправка SMS из Outbox заблокирована настройкой SMS_OUTBOX_CONFIRM_ENABLED', 400, 'OUTBOX_SEND_NOT_ENABLED');
+      }
+
+      // 5. Create pre-provider delivery attempt record in sms_messages linked by event_id
+      let preAttemptId = null;
+      try {
+        const attemptMsg = await SmsRepository.createMessage({
+          clientId: claimedEvent.client_id,
+          phone: 'PENDING',
+          message: previewResult.text,
+          status: 'queued',
+          createdBy: userId,
+          dealId: claimedEvent.deal_id,
+          paymentId: claimedEvent.payment_id,
+          eventId: claimedEvent.id
+        });
+        preAttemptId = attemptMsg?.id || null;
+      } catch (e) {
+        console.warn('Failed to pre-record sms_messages attempt:', e.message);
+      }
+
+      // 6. Dispatch via SmsService (Exactly ONE Payom POST call)
       const sendResult = await this.smsService.sendSms({
         clientId: claimedEvent.client_id,
         text: previewResult.text,
@@ -201,7 +280,7 @@ export class SmsEventsService {
         }
       }
 
-      const smsMessageId = sendResult.data?.id || null;
+      const smsMessageId = sendResult.data?.id || preAttemptId;
       const updatedEvent = await SmsEventsRepository.markSent({
         id: claimedEvent.id,
         smsMessageId,
@@ -215,7 +294,7 @@ export class SmsEventsService {
       };
 
     } catch (err) {
-      if (err.code !== 'OUTBOX_SEND_NOT_ENABLED') {
+      if (!['OUTBOX_SEND_NOT_ENABLED', 'PREVIEW_CHANGED', 'EVENT_NO_LONGER_APPLICABLE'].includes(err.code)) {
         await SmsEventsRepository.markFailed({
           id: claimedEvent.id,
           failureCode: err.code || 'CONTEXT_VALIDATION_FAILED',

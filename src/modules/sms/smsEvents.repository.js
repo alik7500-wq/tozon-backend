@@ -124,7 +124,10 @@ export class SmsEventsRepository {
       query = query.eq('deal_id', cleanDealId);
     }
 
-    query = query.order('created_at', { ascending: false }).range(offset, offset + limit - 1);
+    query = query
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(offset, offset + limit - 1);
 
     const { data, count, error } = await query;
 
@@ -169,6 +172,28 @@ export class SmsEventsRepository {
       return null;
     }
 
+    return data;
+  }
+
+  /**
+   * Revert PROCESSING event back to AWAITING_CONFIRMATION (e.g. when preview text changed before dispatch).
+   */
+  static async revertToAwaitingConfirmation(id) {
+    const cleanId = parseOptionalBigInt(id);
+    if (!cleanId) return null;
+
+    const db = getServiceDB();
+    const { data, error } = await db
+      .from('sms_events')
+      .update({
+        status: 'AWAITING_CONFIRMATION',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', cleanId)
+      .select('*')
+      .maybeSingle();
+
+    if (error || !data) return null;
     return data;
   }
 

@@ -76,11 +76,13 @@ export async function cancelEvent(req, res, next) {
 export async function confirmEvent(req, res, next) {
   try {
     const { id } = req.params;
+    const { previewHash } = req.body || {};
     const userId = req.user?.id;
 
     const confirmResult = await defaultSmsEventsService.confirmEvent({
       id,
-      userId
+      userId,
+      previewHash
     });
 
     return res.status(200).json({
