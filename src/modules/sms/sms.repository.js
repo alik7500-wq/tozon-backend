@@ -10,6 +10,7 @@ export class SmsRepository {
     clientId = null,
     dealId = null,
     contractId = null,
+    paymentId = null,
     phone,
     message,
     provider = 'PAYOM',
@@ -24,6 +25,7 @@ export class SmsRepository {
       client_id: parseOptionalBigInt(clientId),
       deal_id: parseOptionalBigInt(dealId),
       contract_id: parseOptionalBigInt(contractId),
+      payment_id: parseOptionalBigInt(paymentId),
       phone,
       message,
       provider,
@@ -42,6 +44,10 @@ export class SmsRepository {
 
     if (error) {
       console.error('DB error inserting sms_messages:', error.message);
+
+      if (error.code === '23505') {
+        throw new AppError('Подтверждение оплаты для данного платежа уже было отправлено', 400, 'SMS_DUPLICATE_PAYMENT_RECEIVED');
+      }
 
       // Fallback allowed ONLY in unit tests if explicitly enabled
       if (process.env.NODE_ENV === 'test' && process.env.ALLOW_SMS_REPOSITORY_MOCK_FALLBACK === 'true') {
@@ -181,7 +187,8 @@ export class SmsRepository {
       { id: 2, code: 'MEETING_REMINDER', name: 'Напоминание о встрече', text: 'Здравствуйте, {{client_name}}! Напоминаем о запланированной встрече {{meeting_date}} в {{meeting_time}}. TOZON-PLAZA.', is_active: true },
       { id: 3, code: 'DEAL_INFO', name: 'Сообщение по договору', text: 'Здравствуйте, {{client_name}}! Информация по вашему договору №{{contract_number}} (кв. №{{apartment}}, {{project_name}}). TOZON-PLAZA.', is_active: true },
       { id: 4, code: 'PAYMENT_REMINDER', name: 'Напоминание об оплате', text: 'Здравствуйте, {{client_name}}! Напоминаем об очередной оплате по договору №{{contract_number}} в размере {{payment_amount}} {{currency}} до {{payment_date}}. TOZON-PLAZA.', is_active: true },
-      { id: 5, code: 'DEBTOR_REMINDER', name: 'Напоминание о задолженности', text: 'Уважаемый(ая) {{client_name}}! Просим внести просроченную оплату {{overdue_amount}} {{currency}} по договору №{{contract_number}}. TOZON-PLAZA.', is_active: true }
+      { id: 5, code: 'DEBTOR_REMINDER', name: 'Напоминание о задолженности', text: 'Уважаемый(ая) {{client_name}}! Просим внести просроченную оплату {{overdue_amount}} {{currency}} по договору №{{contract_number}}. TOZON-PLAZA.', is_active: true },
+      { id: 6, code: 'PAYMENT_RECEIVED', name: 'Подтверждение оплаты', text: 'Уважаемый(ая) {{client_name}}! Оплата по договору №{{contract_number}} на сумму {{payment_amount}} {{payment_currency}} принята. Всего оплачено {{total_paid}} {{contract_currency}}. Остаток по договору: {{remaining_balance}} {{contract_currency}}. Спасибо! TOZON-PLAZA.', is_active: true }
     ];
 
     try {

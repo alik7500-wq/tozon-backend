@@ -758,5 +758,28 @@ export class DealsRepository {
 
     return this.getDealById(id);
   }
+
+  static async getPaymentById(paymentId) {
+    if (!paymentId) return null;
+    const db = getDB();
+    const { data, error } = await db.from('payments').select('*').eq('id', paymentId).maybeSingle();
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || null;
+  }
+
+  static async getLatestPaymentByDealId(dealId) {
+    if (!dealId) return null;
+    const db = getDB();
+    const { data, error } = await db.from('payments')
+      .select('*')
+      .eq('deal_id', dealId)
+      .neq('status', 'VOIDED')
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || null;
+  }
 }
+
 

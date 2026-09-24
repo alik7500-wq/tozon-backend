@@ -3,7 +3,7 @@ import { AppError } from '../../shared/errors/errorHandler.js';
 
 export async function sendSms(req, res, next) {
   try {
-    const { clientId, phone, text, templateCode, dealId, contractId } = req.body;
+    const { clientId, phone, text, templateCode, dealId, contractId, paymentId } = req.body;
     const userId = req.user?.id;
 
     if (!clientId && !phone) {
@@ -21,6 +21,7 @@ export async function sendSms(req, res, next) {
       templateCode,
       dealId,
       contractId,
+      paymentId,
       userId,
       senderName: 'TOZON-PLAZA'
     });
@@ -78,13 +79,14 @@ export async function getTemplates(req, res, next) {
 
 export async function previewSms(req, res, next) {
   try {
-    const { templateCode, text, clientId, dealId, taskId, meetingId } = req.body;
+    const { templateCode, text, clientId, dealId, paymentId, taskId, meetingId } = req.body;
 
     const previewResult = await defaultSmsService.previewSms({
       templateCode,
       text,
       clientId,
       dealId,
+      paymentId,
       taskId: taskId || meetingId
     });
 
@@ -99,11 +101,12 @@ export async function previewSms(req, res, next) {
 
 export async function getTemplateAvailability(req, res, next) {
   try {
-    const { clientId, dealId, taskId, meetingId } = req.body;
+    const { clientId, dealId, paymentId, taskId, meetingId } = req.body;
 
     const availabilityResult = await defaultSmsService.getTemplateAvailability({
       clientId,
       dealId,
+      paymentId,
       taskId: taskId || meetingId
     });
 

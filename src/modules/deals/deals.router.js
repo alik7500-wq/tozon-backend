@@ -179,6 +179,7 @@ router.post('/:id/payments', resolveCashDeskAccess, async (req, res, next) => {
       data: {
         deal: dealData,
         payment: paymentData,
+        payment_id: paymentData?.id || null,
         is_duplicate: Boolean(result.isDuplicate)
       }
     });

@@ -1,3 +1,4 @@
+import { getDB } from '../../db/connection.js';
 import { PayomSmsProvider } from './sms.provider.js';
 import { SmsRepository } from './sms.repository.js';
 import { LeadsRepository } from '../leads/leads.repository.js';
@@ -50,7 +51,12 @@ export class SmsService {
       }
       return { task, meetingDate, meetingTime, reason: null };
     } else if (targetClientId) {
-      const tasks = await TasksRepository.findAll({ assignedUserId: 'ALL' });
+      let tasks = [];
+      try {
+        tasks = await TasksRepository.findAll({ assignedUserId: 'ALL' });
+      } catch (e) {
+        tasks = [];
+      }
       const clientMeetings = tasks.filter((t) => {
         if (parseOptionalBigInt(t.lead_id) !== parseOptionalBigInt(targetClientId)) return false;
         if (t.status !== 'OPEN') return false;
@@ -174,18 +180,105 @@ export class SmsService {
   }
 
   /**
+   * Authoritative helper to calculate payment context for PAYMENT_RECEIVED template.
+   * - Fetches payment by paymentId (or latest active payment for dealId).
+   * - Validates payment exists, is not VOIDED, belongs to dealId, and deal belongs to targetClientId.
+   * - Re-reads post-commit deal state.
+   */
+  async calculatePaymentContext(paymentId = null, dealId = null, targetClientId = null) {
+    const normPaymentId = parseOptionalBigInt(paymentId);
+    const normDealId = parseOptionalBigInt(dealId);
+
+    let paymentRecord = null;
+    try {
+      if (normPaymentId) {
+        paymentRecord = await DealsRepository.getPaymentById(normPaymentId);
+      }
+      if (!paymentRecord && normDealId) {
+        paymentRecord = await DealsRepository.getLatestPaymentByDealId(normDealId);
+      }
+    } catch (e) {
+      paymentRecord = null;
+    }
+
+    if (!paymentRecord) {
+      return { payment: null, reason: 'Платёж не найден' };
+    }
+
+    if (paymentRecord.status === 'VOIDED') {
+      return { payment: null, reason: 'Платёж был аннулирован' };
+    }
+
+    const effectiveDealId = parseOptionalBigInt(paymentRecord.deal_id);
+    if (normDealId && effectiveDealId !== normDealId) {
+      return { payment: null, reason: 'Платёж не относится к указанной сделке' };
+    }
+
+    const deal = await DealsRepository.getDealById(effectiveDealId);
+    if (!deal) {
+      return { payment: null, reason: 'Сделка не найдена' };
+    }
+
+    if (targetClientId && parseOptionalBigInt(deal.lead_id) !== parseOptionalBigInt(targetClientId)) {
+      return { payment: null, reason: 'Сделка не принадлежит указанному клиенту' };
+    }
+
+    const activePayments = (deal.payments || []).filter((p) => p.status !== 'VOIDED');
+    const totalPaidMinor = activePayments.reduce((sum, p) => sum + (p.amount_minor || 0), 0);
+    const finalPriceMinor = deal.final_price_minor || 0;
+    const remainingBalanceMinor = Math.max(0, finalPriceMinor - totalPaidMinor);
+
+    const contractCurrency = (deal.currency || deal.project_currency || 'USD').toUpperCase();
+    const paymentCurrency = (paymentRecord.currency || contractCurrency).toUpperCase();
+
+    const isMultiCurrency = Boolean(paymentRecord.amount_tjs && paymentRecord.amount_usd && paymentRecord.exchange_rate);
+
+    let paymentAmountFormatted = '';
+    let paymentEquivalentFormatted = '';
+    let exchangeRateFormatted = '';
+
+    if (isMultiCurrency) {
+      paymentAmountFormatted = Number(paymentRecord.amount_tjs).toLocaleString('ru-RU');
+      paymentEquivalentFormatted = Number(paymentRecord.amount_usd).toLocaleString('ru-RU');
+      exchangeRateFormatted = Number(paymentRecord.exchange_rate).toLocaleString('ru-RU');
+    } else {
+      const pMinor = paymentRecord.amount_minor || (paymentRecord.amount ? Math.round(paymentRecord.amount * 100) : 0);
+      paymentAmountFormatted = (pMinor / 100).toLocaleString('ru-RU');
+    }
+
+    return {
+      payment: paymentRecord,
+      deal,
+      paymentId: paymentRecord.id,
+      paymentCurrency,
+      paymentAmountFormatted,
+      isMultiCurrency,
+      paymentEquivalentFormatted,
+      exchangeRateFormatted,
+      contractCurrency,
+      totalPaidMinor,
+      totalPaidFormatted: (totalPaidMinor / 100).toLocaleString('ru-RU'),
+      remainingBalanceMinor,
+      remainingBalanceFormatted: (remainingBalanceMinor / 100).toLocaleString('ru-RU'),
+      paymentDate: paymentRecord.payment_date || (paymentRecord.created_at ? paymentRecord.created_at.split('T')[0] : '')
+    };
+  }
+
+  /**
    * Authoritative server-side template availability endpoint logic.
    * Returns [{ code, name, available, reason }] without performing DB writes or SMS sends.
    */
   async getTemplateAvailability({
     clientId = null,
     dealId = null,
+    paymentId = null,
     taskId = null,
     meetingId = null,
     todayStr = null
   }) {
     const normClientId = parseOptionalBigInt(clientId);
     const normDealId = parseOptionalBigInt(dealId);
+    const normPaymentId = parseOptionalBigInt(paymentId);
     const normTaskId = parseOptionalBigInt(taskId || meetingId);
 
     const templates = await SmsRepository.getTemplates();
@@ -202,13 +295,21 @@ export class SmsService {
 
     let lead = null;
     if (targetClientId) {
-      lead = await LeadsRepository.findById(targetClientId);
+      try {
+        lead = await LeadsRepository.findById(targetClientId);
+      } catch (e) {
+        lead = null;
+      }
     }
 
     const meetingCtx = await this.calculateMeetingContext(targetClientId, normTaskId, todayStr);
     let dealCtx = null;
     if (normDealId) {
-      dealCtx = await this.calculateDealContext(normDealId, todayStr);
+      try {
+        dealCtx = await this.calculateDealContext(normDealId, todayStr);
+      } catch (e) {
+        dealCtx = null;
+      }
     }
 
     const result = [];
@@ -270,6 +371,12 @@ export class SmsService {
           available = false;
           reason = 'Просроченная задолженность отсутствует';
         }
+      } else if (code === 'PAYMENT_RECEIVED') {
+        const payCtx = await this.calculatePaymentContext(normPaymentId, normDealId, targetClientId);
+        if (!payCtx || !payCtx.payment) {
+          available = false;
+          reason = payCtx?.reason || 'Платёж не найден для данной сделки';
+        }
       }
 
       result.push({
@@ -291,23 +398,26 @@ export class SmsService {
     text = null,
     clientId = null,
     dealId = null,
+    paymentId = null,
     taskId = null,
     meetingId = null,
     todayStr = null
   }) {
     const normClientId = parseOptionalBigInt(clientId);
     const normDealId = parseOptionalBigInt(dealId);
+    const normPaymentId = parseOptionalBigInt(paymentId);
     const normTaskId = parseOptionalBigInt(taskId || meetingId);
 
     let templateText = text;
     let code = templateCode;
+    let tmplObj = null;
 
     // 1. If template code is specified and not CUSTOM_MESSAGE, fetch canonical template text from DB
     if (code && code !== 'CUSTOM_MESSAGE') {
       const templates = await SmsRepository.getTemplates();
-      const tmpl = templates.find((t) => t.code === code && t.is_active);
-      if (tmpl) {
-        templateText = tmpl.text;
+      tmplObj = templates.find((t) => t.code === code && t.is_active);
+      if (tmplObj) {
+        templateText = tmplObj.text;
       } else if (!templateText) {
         throw new AppError(`Шаблон ${code} не найден или неактивен`, 404);
       }
@@ -319,7 +429,7 @@ export class SmsService {
 
     let resolvedText = templateText.trim();
 
-    // 2. Fetch Lead Context if clientId is present or can be resolved from deal/task
+    // 2. Fetch Lead Context if clientId is present or can be resolved from deal/task/payment
     let lead = null;
     let targetClientId = normClientId;
 
@@ -332,7 +442,11 @@ export class SmsService {
     }
 
     if (targetClientId) {
-      lead = await LeadsRepository.findById(targetClientId);
+      try {
+        lead = await LeadsRepository.findById(targetClientId);
+      } catch (e) {
+        lead = null;
+      }
       if (!lead && (code === 'CLIENT_WELCOME' || code === 'MEETING_REMINDER' || code === 'DEAL_INFO' || code === 'PAYMENT_REMINDER' || code === 'DEBTOR_REMINDER')) {
         throw new AppError(`Клиент с ID ${targetClientId} не найден`, 404);
       }
@@ -362,7 +476,36 @@ export class SmsService {
       resolvedText = resolvedText.replace(/\{\{\s*meeting_time\s*\}\}/g, meetingCtx.meetingTime);
     }
 
-    // 4. Resolve Deal / Payment / Debtor Context
+    // 4. Resolve Payment Received Context (PAYMENT_RECEIVED)
+    if (code === 'PAYMENT_RECEIVED') {
+      if (!normDealId && !normPaymentId) {
+        throw new AppError('Контекст сделки или платежа обязателен для шаблона подтверждения оплаты', 400);
+      }
+    }
+
+    if (code === 'PAYMENT_RECEIVED' || (normPaymentId && (resolvedText.includes('{{payment_amount}}') || resolvedText.includes('{{payment_currency}}')))) {
+      const payCtx = await this.calculatePaymentContext(normPaymentId, normDealId, targetClientId);
+      if (!payCtx || !payCtx.payment) {
+        throw new AppError(payCtx?.reason || 'Платёж не найден для формирования шаблона', 400);
+      }
+
+      if (payCtx.isMultiCurrency && code === 'PAYMENT_RECEIVED' && (!text || text === tmplObj?.text)) {
+        resolvedText = 'Уважаемый(ая) {{client_name}}! По договору №{{contract_number}} принята оплата {{payment_amount}} TJS по курсу {{exchange_rate}} (эквивалент {{payment_equivalent}} USD). Всего оплачено {{total_paid}} USD. Остаток: {{remaining_balance}} USD. Спасибо! TOZON-PLAZA.';
+        resolvedText = resolvedText.replace(/\{\{\s*client_name\s*\}\}/g, clientName);
+      }
+
+      resolvedText = resolvedText.replace(/\{\{\s*contract_number\s*\}\}/g, payCtx.deal?.contract_number || '');
+      resolvedText = resolvedText.replace(/\{\{\s*payment_amount\s*\}\}/g, payCtx.paymentAmountFormatted);
+      resolvedText = resolvedText.replace(/\{\{\s*payment_currency\s*\}\}/g, payCtx.paymentCurrency);
+      resolvedText = resolvedText.replace(/\{\{\s*exchange_rate\s*\}\}/g, payCtx.exchangeRateFormatted || '');
+      resolvedText = resolvedText.replace(/\{\{\s*payment_equivalent\s*\}\}/g, payCtx.paymentEquivalentFormatted || '');
+      resolvedText = resolvedText.replace(/\{\{\s*total_paid\s*\}\}/g, payCtx.totalPaidFormatted);
+      resolvedText = resolvedText.replace(/\{\{\s*remaining_balance\s*\}\}/g, payCtx.remainingBalanceFormatted);
+      resolvedText = resolvedText.replace(/\{\{\s*contract_currency\s*\}\}/g, payCtx.contractCurrency);
+      resolvedText = resolvedText.replace(/\{\{\s*payment_date\s*\}\}/g, payCtx.paymentDate);
+    }
+
+    // 5. Resolve Deal / Payment / Debtor Context
     if (code === 'DEAL_INFO' || code === 'PAYMENT_REMINDER' || code === 'DEBTOR_REMINDER') {
       if (!normDealId) {
         throw new AppError('Контекст сделки обязателен для данного шаблона', 400);
@@ -370,10 +513,8 @@ export class SmsService {
     }
 
     const requiresDealContext =
-      code === 'DEAL_INFO' ||
-      code === 'PAYMENT_REMINDER' ||
-      code === 'DEBTOR_REMINDER' ||
-      (normDealId && (
+      (code === 'DEAL_INFO' || code === 'PAYMENT_REMINDER' || code === 'DEBTOR_REMINDER') ||
+      (code !== 'PAYMENT_RECEIVED' && normDealId && (
         resolvedText.includes('{{contract_number}}') ||
         resolvedText.includes('{{payment_amount}}') ||
         resolvedText.includes('{{overdue_amount}}') ||
@@ -400,7 +541,7 @@ export class SmsService {
       const apartment = String(deal.unit_number || deal.units?.unit_number || '');
       const projectName = deal.project_name || deal.units?.floors?.sections?.buildings?.projects?.name || 'ЖК TOZON-PLAZA';
 
-      if (code === 'PAYMENT_REMINDER' || resolvedText.includes('{{payment_amount}}')) {
+      if (code === 'PAYMENT_REMINDER' || (resolvedText.includes('{{payment_amount}}') && code !== 'PAYMENT_RECEIVED')) {
         if (!dealContext.currency) {
           throw new AppError('Не удалось определить валюту сделки', 400);
         }
@@ -429,9 +570,10 @@ export class SmsService {
       resolvedText = resolvedText.replace(/\{\{\s*remaining_balance\s*\}\}/g, dealContext.remainingBalanceFormatted || '');
       resolvedText = resolvedText.replace(/\{\{\s*project_name\s*\}\}/g, projectName);
       resolvedText = resolvedText.replace(/\{\{\s*currency\s*\}\}/g, dealContext.currency || '');
+      resolvedText = resolvedText.replace(/\{\{\s*contract_currency\s*\}\}/g, dealContext.currency || '');
     }
 
-    // 5. Final check for remaining unresolved placeholders
+    // 6. Final check for remaining unresolved placeholders
     if (/\{\{\s*[a-zA-Z0-9_]+\s*\}\}/.test(resolvedText)) {
       throw new AppError('Сообщение содержит незаполненные переменные шаблона', 400);
     }
@@ -455,12 +597,13 @@ export class SmsService {
   /**
    * Preview template resolution (read-only, no DB insert, no Payom call).
    */
-  async previewSms({ templateCode = null, text = null, clientId = null, dealId = null, taskId = null, meetingId = null }) {
+  async previewSms({ templateCode = null, text = null, clientId = null, dealId = null, paymentId = null, taskId = null, meetingId = null }) {
     return await this.resolveTemplate({
       templateCode,
       text,
       clientId,
       dealId,
+      paymentId,
       taskId: taskId || meetingId
     });
   }
@@ -475,6 +618,7 @@ export class SmsService {
     templateCode = null,
     dealId = null,
     contractId = null,
+    paymentId = null,
     taskId = null,
     meetingId = null,
     userId = null,
@@ -482,7 +626,26 @@ export class SmsService {
   }) {
     const normClientId = parseOptionalBigInt(clientId);
     const normDealId = parseOptionalBigInt(dealId);
+    const normPaymentId = parseOptionalBigInt(paymentId);
     const normTaskId = parseOptionalBigInt(taskId || meetingId);
+
+    // Duplicate send protection for PAYMENT_RECEIVED
+    if (templateCode === 'PAYMENT_RECEIVED' && normPaymentId) {
+      try {
+        const db = getDB();
+        const { data: existingSms } = await db.from('sms_messages')
+          .select('id, status')
+          .eq('payment_id', normPaymentId)
+          .in('status', ['sent', 'queued', 'sending', 'delivered'])
+          .maybeSingle();
+
+        if (existingSms) {
+          throw new AppError('Подтверждение оплаты для данного платежа уже было отправлено', 400, 'SMS_DUPLICATE_PAYMENT_RECEIVED');
+        }
+      } catch (e) {
+        if (e instanceof AppError) throw e;
+      }
+    }
 
     // 1. Resolve template text using unified server-side resolver
     let messageText = text;
@@ -492,6 +655,7 @@ export class SmsService {
         text,
         clientId: normClientId,
         dealId: normDealId,
+        paymentId: normPaymentId,
         taskId: normTaskId
       });
       messageText = resolvedInfo.text;
@@ -547,6 +711,7 @@ export class SmsService {
       clientId: normClientId,
       dealId: normDealId,
       contractId,
+      paymentId: normPaymentId,
       phone: normalizedPhone,
       message: cleanedText,
       provider: 'PAYOM',

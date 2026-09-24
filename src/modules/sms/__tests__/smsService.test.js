@@ -1523,6 +1523,250 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
       expect(mockProvider.sendSms).not.toHaveBeenCalled();
     });
   });
+
+  describe('SMS Center V1.5A — PAYMENT_RECEIVED Tests', () => {
+    it('1. Valid USD payment resolves post-commit financial context', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 17, full_name: 'Ахророва Мадина' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 24,
+        lead_id: 17,
+        contract_number: '0014',
+        currency: 'USD',
+        final_price_minor: 2689000,
+        payments: [{ id: 50, amount_minor: 100000, payment_date: '2026-09-23', status: 'ACTIVE' }]
+      });
+
+      const smsService = new SmsService();
+      vi.spyOn(smsService, 'calculatePaymentContext').mockResolvedValue({
+        payment: { id: 50, amount_minor: 100000, currency: 'USD', payment_date: '2026-09-23', status: 'ACTIVE' },
+        deal: { id: 24, lead_id: 17, contract_number: '0014' },
+        paymentId: 50,
+        paymentCurrency: 'USD',
+        paymentAmountFormatted: '1 000',
+        isMultiCurrency: false,
+        contractCurrency: 'USD',
+        totalPaidMinor: 100000,
+        totalPaidFormatted: '1 000',
+        remainingBalanceMinor: 2589000,
+        remainingBalanceFormatted: '25 890',
+        paymentDate: '2026-09-23'
+      });
+
+      const preview = await smsService.previewSms({
+        templateCode: 'PAYMENT_RECEIVED',
+        clientId: 17,
+        dealId: 24,
+        paymentId: 50
+      });
+
+      const textClean = preview.text.replace(/\u00a0/g, ' ');
+      expect(textClean).toContain('Ахророва Мадина');
+      expect(textClean).toContain('№0014');
+      expect(textClean).toContain('1 000 USD');
+      expect(textClean).toContain('Остаток по договору: 25 890 USD');
+      expect(preview.resolved).toBe(true);
+    });
+
+    it('2 & 3. Valid TJS payment for USD contract (Multi-Currency resolution)', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 17, full_name: 'Ахророва Мадина' });
+
+      const smsService = new SmsService();
+      vi.spyOn(smsService, 'calculatePaymentContext').mockResolvedValue({
+        payment: { id: 51, amount_tjs: 10000, amount_usd: 1078.75, exchange_rate: 9.27, currency: 'TJS', status: 'ACTIVE' },
+        deal: { id: 24, lead_id: 17, contract_number: '0014' },
+        paymentId: 51,
+        paymentCurrency: 'TJS',
+        paymentAmountFormatted: '10 000',
+        isMultiCurrency: true,
+        paymentEquivalentFormatted: '1 078,75',
+        exchangeRateFormatted: '9,27',
+        contractCurrency: 'USD',
+        totalPaidMinor: 107875,
+        totalPaidFormatted: '1 078,75',
+        remainingBalanceMinor: 2581125,
+        remainingBalanceFormatted: '25 811,25',
+        paymentDate: '2026-09-23'
+      });
+
+      const preview = await smsService.previewSms({
+        templateCode: 'PAYMENT_RECEIVED',
+        clientId: 17,
+        dealId: 24,
+        paymentId: 51
+      });
+
+      const textClean = preview.text.replace(/\u00a0/g, ' ');
+      expect(textClean).toContain('10 000 TJS по курсу 9,27');
+      expect(textClean).toContain('эквивалент 1 078,75 USD');
+      expect(textClean).toContain('Всего оплачено 1 078,75 USD');
+      expect(textClean).toContain('Остаток: 25 811,25 USD');
+    });
+
+    it('5 & 6. Payment/Deal & Deal/Client mismatch rejects resolution with 400', async () => {
+      const smsService = new SmsService();
+
+      vi.spyOn(smsService, 'calculatePaymentContext').mockResolvedValue({
+        payment: null,
+        reason: 'Платёж не относится к указанной сделке'
+      });
+
+      await expect(
+        smsService.previewSms({
+          templateCode: 'PAYMENT_RECEIVED',
+          clientId: 17,
+          dealId: 24,
+          paymentId: 999
+        })
+      ).rejects.toThrow('Платёж не относится к указанной сделке');
+    });
+
+    it('7 & 8. Nonexistent & VOIDED payment rejects resolution with 400', async () => {
+      const smsService = new SmsService();
+
+      vi.spyOn(smsService, 'calculatePaymentContext').mockResolvedValue({
+        payment: null,
+        reason: 'Платёж был аннулирован'
+      });
+
+      await expect(
+        smsService.previewSms({
+          templateCode: 'PAYMENT_RECEIVED',
+          clientId: 17,
+          dealId: 24,
+          paymentId: 52
+        })
+      ).rejects.toThrow('Платёж был аннулирован');
+    });
+
+    it('11 & 14. Frontend financial values are ignored and overwritten by server-side context', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 17, full_name: 'Ахророва Мадина' });
+
+      const smsService = new SmsService();
+      vi.spyOn(smsService, 'calculatePaymentContext').mockResolvedValue({
+        payment: { id: 50, amount_minor: 100000, currency: 'USD' },
+        deal: { id: 24, lead_id: 17, contract_number: '0014' },
+        paymentId: 50,
+        paymentCurrency: 'USD',
+        paymentAmountFormatted: '1 000',
+        isMultiCurrency: false,
+        contractCurrency: 'USD',
+        totalPaidMinor: 100000,
+        totalPaidFormatted: '1 000',
+        remainingBalanceMinor: 2589000,
+        remainingBalanceFormatted: '25 890',
+        paymentDate: '2026-09-23'
+      });
+
+      const preview = await smsService.previewSms({
+        templateCode: 'PAYMENT_RECEIVED',
+        clientId: 17,
+        dealId: 24,
+        paymentId: 50,
+        text: 'Оплата {{payment_amount}} {{payment_currency}}, остаток {{remaining_balance}} {{contract_currency}}'
+      });
+
+      const textClean = preview.text.replace(/\u00a0/g, ' ');
+      expect(textClean).toContain('1 000 USD');
+      expect(textClean).toContain('25 890 USD');
+    });
+
+    it('12 & 13. Preview and Availability do NOT call SMS provider', async () => {
+      const mockProvider = { sendSms: vi.fn() };
+      const smsService = new SmsService(mockProvider);
+
+      vi.spyOn(smsService, 'calculatePaymentContext').mockResolvedValue({
+        payment: { id: 50, amount_minor: 100000 },
+        paymentCurrency: 'USD',
+        paymentAmountFormatted: '1 000',
+        contractCurrency: 'USD',
+        totalPaidFormatted: '1 000',
+        remainingBalanceFormatted: '25 890',
+        paymentDate: '2026-09-23'
+      });
+
+      await smsService.previewSms({
+        templateCode: 'PAYMENT_RECEIVED',
+        clientId: 17,
+        dealId: 24,
+        paymentId: 50
+      });
+
+      await smsService.getTemplateAvailability({
+        clientId: 17,
+        dealId: 24,
+        paymentId: 50
+      });
+
+      expect(mockProvider.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('14 & 20. Valid send persists payment_id and passes server validation', async () => {
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({
+        id: 17,
+        full_name: 'Ахророва Мадина',
+        phone: '+992927770014'
+      });
+
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({
+        id: 24,
+        lead_id: 17,
+        contract_number: '0014'
+      });
+
+      const createMsgSpy = vi.spyOn(SmsRepository, 'createMessage').mockResolvedValue({
+        id: 101,
+        payment_id: 50,
+        status: 'queued'
+      });
+
+      vi.spyOn(SmsRepository, 'updateMessageStatus').mockResolvedValue({ id: 101, status: 'sent' });
+
+      const mockProvider = {
+        sendSms: vi.fn().mockResolvedValue({ success: true, providerMessageId: 'prov_pko_101', isMock: true })
+      };
+
+      const smsService = new SmsService(mockProvider);
+
+      vi.spyOn(smsService, 'calculatePaymentContext').mockResolvedValue({
+        payment: { id: 50, amount_minor: 100000 },
+        paymentCurrency: 'USD',
+        paymentAmountFormatted: '1 000',
+        contractCurrency: 'USD',
+        totalPaidFormatted: '1 000',
+        remainingBalanceFormatted: '25 890',
+        paymentDate: '2026-09-23'
+      });
+
+      const res = await smsService.sendSms({
+        clientId: 17,
+        dealId: 24,
+        paymentId: 50,
+        templateCode: 'PAYMENT_RECEIVED',
+        phone: '+992927770014'
+      });
+
+      expect(res.success).toBe(true);
+      expect(createMsgSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientId: 17,
+          dealId: 24,
+          paymentId: 50,
+          phone: '+992927770014'
+        })
+      );
+      expect(mockProvider.sendSms).toHaveBeenCalled();
+    });
+  });
 });
 
 
