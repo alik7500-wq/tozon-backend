@@ -42,6 +42,45 @@ const deskQueues = new Map();
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const CATEGORY_CODE_MAP = {
+  'PARTNER_INVESTMENT': ['Инвестиции партнёров', 'PARTNER_INVESTMENT'],
+  'SALES_INCOME': ['Поступления по сделкам', 'SALES_INCOME'],
+  'BUILDING_MATERIALS': ['Строительные материалы', 'BUILDING_MATERIALS'],
+  'SALARY': ['Заработная плата', 'SALARY'],
+  'RENT': ['Аренда и коммунальные услуги', 'RENT'],
+  'MARKETING': ['Маркетинг и реклама', 'MARKETING'],
+  'TAXES': ['Налоги и сборы', 'TAXES'],
+  'UTILITIES': ['Хозяйственные расходы', 'UTILITIES'],
+  'INTERNAL_TRANSFER': ['Внутренние перемещения между кассами', 'INTERNAL_TRANSFER'],
+  'CURRENCY_CONVERSION': ['Конвертация валюты', 'CURRENCY_CONVERSION'],
+  'OTHER': ['Прочее', 'OTHER']
+};
+
+export function matchesCategory(itemCategory, filterCategory) {
+  if (!filterCategory || filterCategory === 'ALL') return true;
+  if (!itemCategory) return false;
+
+  const targetStr = String(filterCategory).trim();
+  const itemStr = String(itemCategory).trim();
+
+  if (itemStr.toLowerCase() === targetStr.toLowerCase()) return true;
+
+  const mapped = CATEGORY_CODE_MAP[targetStr.toUpperCase()];
+  if (mapped && mapped.some(m => m.toLowerCase() === itemStr.toLowerCase())) {
+    return true;
+  }
+
+  for (const [code, variants] of Object.entries(CATEGORY_CODE_MAP)) {
+    if (variants.some(v => v.toLowerCase() === targetStr.toLowerCase())) {
+      if (itemStr.toUpperCase() === code || variants.some(v => v.toLowerCase() === itemStr.toLowerCase())) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 async function resolveCashDeskUuid(db, rawDesk) {
   if (!rawDesk) return null;
   const str = String(rawDesk).trim();
@@ -928,7 +967,7 @@ export class FinanceRepository {
       filteredList = filteredList.filter(item => item.currency === selectedCurrency);
     }
     if (filters.category && filters.category !== 'ALL') {
-      filteredList = filteredList.filter(item => item.category === filters.category);
+      filteredList = filteredList.filter(item => matchesCategory(item.category, filters.category));
     }
     if (filters.search) {
       const q = filters.search.toLowerCase();
@@ -2252,7 +2291,7 @@ export class FinanceRepository {
       filteredTransactions = filteredTransactions.filter(t => (t.counterparty && t.counterparty.toLowerCase().includes(q)) || (t.payer_name && t.payer_name.toLowerCase().includes(q)));
     }
     if (filters.category && filters.category !== 'ALL') {
-      filteredTransactions = filteredTransactions.filter(t => t.category === filters.category);
+      filteredTransactions = filteredTransactions.filter(t => matchesCategory(t.category, filters.category));
     }
     if (filters.date_from) {
       filteredTransactions = filteredTransactions.filter(t => t.date >= filters.date_from);
