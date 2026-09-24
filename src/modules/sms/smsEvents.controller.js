@@ -94,3 +94,47 @@ export async function confirmEvent(req, res, next) {
     next(err);
   }
 }
+
+export async function dryRunPaymentReminderDetector(req, res, next) {
+  try {
+    const { PaymentReminderDetector } = await import('./paymentReminderDetector.js');
+    const { businessDate } = req.body || {};
+
+    const result = await PaymentReminderDetector.detectPaymentReminders({
+      businessDate,
+      isDryRun: true
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: result
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function runPaymentReminderDetector(req, res, next) {
+  try {
+    const isEnabled = process.env.SMS_PAYMENT_REMINDER_DETECTOR_ENABLED === 'true';
+    if (!isEnabled && process.env.NODE_ENV !== 'test') {
+      throw new AppError('Детектор PAYMENT_REMINDER отключен настройкой SMS_PAYMENT_REMINDER_DETECTOR_ENABLED', 400, 'DETECTOR_NOT_ENABLED');
+    }
+
+    const { PaymentReminderDetector } = await import('./paymentReminderDetector.js');
+    const { businessDate } = req.body || {};
+
+    const result = await PaymentReminderDetector.detectPaymentReminders({
+      businessDate,
+      isDryRun: false
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Детектор PAYMENT_REMINDER успешно выполнен',
+      data: result
+    });
+  } catch (err) {
+    next(err);
+  }
+}

@@ -1,7 +1,7 @@
 import { Router } from 'express';
-import { protect, checkPermission } from '../../middleware/auth.middleware.js';
+import { protect, checkPermission, restrictTo } from '../../middleware/auth.middleware.js';
 import { sendSms, getHistory, getTemplates, previewSms, getTemplateAvailability } from './sms.controller.js';
-import { listEvents, getEventById, previewEvent, cancelEvent, confirmEvent } from './smsEvents.controller.js';
+import { listEvents, getEventById, previewEvent, cancelEvent, confirmEvent, dryRunPaymentReminderDetector, runPaymentReminderDetector } from './smsEvents.controller.js';
 
 const router = Router();
 
@@ -14,6 +14,10 @@ router.get('/events/:id', checkPermission('sms.history'), getEventById);
 router.post('/events/:id/preview', checkPermission('sms.send'), previewEvent);
 router.post('/events/:id/cancel', checkPermission('sms.send'), cancelEvent);
 router.post('/events/:id/confirm', checkPermission('sms.send'), confirmEvent);
+
+// Detector Endpoints (Admin/Director Restricted)
+router.post('/detectors/payment-reminder/dry-run', restrictTo('ADMIN', 'DIRECTOR'), dryRunPaymentReminderDetector);
+router.post('/detectors/payment-reminder/run', restrictTo('ADMIN', 'DIRECTOR'), runPaymentReminderDetector);
 
 // Standard Direct SMS Routes
 router.post('/template-availability', checkPermission('sms.send'), getTemplateAvailability);

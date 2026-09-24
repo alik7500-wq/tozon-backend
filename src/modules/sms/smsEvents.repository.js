@@ -124,6 +124,11 @@ export class SmsEventsRepository {
       query = query.eq('deal_id', cleanDealId);
     }
 
+    const cleanScheduleId = parseOptionalBigInt(filters.scheduleId);
+    if (cleanScheduleId) {
+      query = query.eq('schedule_id', cleanScheduleId);
+    }
+
     query = query
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
