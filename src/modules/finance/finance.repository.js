@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { getDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+import { recalculateDealSchedules } from '../../utils/recalculateDealSchedules.js';
 
 // Проверка идемпотентности напрямую в БД без использования in-memory кэша (для многопроцессной архитектуры)
 async function checkIdempotentExpense(db, key) {
@@ -589,17 +590,14 @@ export class FinanceRepository {
 
     if (error) throw error;
 
-    // If tied to a schedule, update it
-    if (scheduleId) {
-      const { data: schedule } = await db.from('deal_payment_schedules').select('*').eq('id', scheduleId).single();
-      if (schedule) {
-        const newPaid = (schedule.paid_amount_minor || 0) + amountMinor;
-        const newStatus = newPaid >= schedule.amount_minor ? 'PAID' : 'PARTIAL';
-        await db.from('deal_payment_schedules').update({
-          paid_amount_minor: newPaid,
-          status: newStatus,
-          updated_at: now
-        }).eq('id', scheduleId);
+    // Recalculate deal schedules via FIFO allocation if deal is linked
+    if (targetDealId) {
+      try {
+        await recalculateDealSchedules(targetDealId);
+      } catch (schedErr) {
+        // Compensating ROLLBACK: delete created payment to maintain strict atomicity
+        await db.from('payments').delete().eq('id', newPayment.id);
+        throw new Error(`PKO_TRANSACTION_ABORTED: Payment creation rolled back due to schedule recalculation error: ${schedErr.message}`);
       }
     }
 
@@ -682,14 +680,21 @@ export class FinanceRepository {
 
     const updated = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
 
-    // Recalculate schedule if linked
-    if (updated && updated.schedule_id) {
-      const { data: schedPayments } = await db.from('payments').select('amount_minor').eq('schedule_id', updated.schedule_id);
-      const totalPaid = (schedPayments || []).reduce((sum, p) => sum + (p.amount_minor || 0), 0);
-      const { data: schedule } = await db.from('deal_payment_schedules').select('amount_minor').eq('id', updated.schedule_id).single();
-      if (schedule) {
-        const newStatus = totalPaid >= schedule.amount_minor ? 'PAID' : totalPaid > 0 ? 'PARTIAL' : 'PENDING';
-        await db.from('deal_payment_schedules').update({ paid_amount_minor: totalPaid, status: newStatus, updated_at: now }).eq('id', updated.schedule_id);
+    // Recalculate deal schedules via FIFO allocation if deal is linked
+    const targetDealId = updated?.deal_id || originalRecord?.deal_id;
+    if (targetDealId) {
+      try {
+        await recalculateDealSchedules(targetDealId);
+      } catch (schedErr) {
+        // Compensating ROLLBACK: restore original payment record state
+        if (originalRecord) {
+          await db.from('payments').update({
+            amount_minor: originalRecord.amount_minor,
+            status: originalRecord.status,
+            deal_id: originalRecord.deal_id
+          }).eq('id', id);
+        }
+        throw new Error(`PKO_TRANSACTION_ABORTED: Payment update rolled back due to schedule recalculation error: ${schedErr.message}`);
       }
     }
 
@@ -828,14 +833,14 @@ export class FinanceRepository {
     const { error } = await db.from('payments').delete().eq('id', id);
     if (error) throw error;
 
-    // Recalculate schedule if linked
-    if (scheduleId) {
-      const { data: schedPayments } = await db.from('payments').select('amount_minor').eq('schedule_id', scheduleId);
-      const totalPaid = (schedPayments || []).reduce((sum, p) => sum + (p.amount_minor || 0), 0);
-      const { data: schedule } = await db.from('deal_payment_schedules').select('amount_minor').eq('id', scheduleId).maybeSingle();
-      if (schedule) {
-        const newStatus = totalPaid >= schedule.amount_minor ? 'PAID' : totalPaid > 0 ? 'PARTIAL' : 'PENDING';
-        await db.from('deal_payment_schedules').update({ paid_amount_minor: totalPaid, status: newStatus, updated_at: now }).eq('id', scheduleId);
+    // Recalculate deal schedules via FIFO allocation if deal is linked
+    if (payment && payment.deal_id) {
+      try {
+        await recalculateDealSchedules(payment.deal_id);
+      } catch (schedErr) {
+        // Compensating ROLLBACK: re-insert deleted payment record
+        await db.from('payments').insert([payment]);
+        throw new Error(`PKO_TRANSACTION_ABORTED: Payment deletion rolled back due to schedule recalculation error: ${schedErr.message}`);
       }
     }
 

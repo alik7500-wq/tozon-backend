@@ -64,10 +64,10 @@ export function allocatePaymentsFIFO(schedules, payments, dealDownPaymentMinor =
     let computedStatus = 'UPCOMING';
     if (remaining === 0 && planned > 0) {
       computedStatus = 'PAID';
-    } else if (paid > 0 && paid < planned) {
-      computedStatus = 'PARTIALLY_PAID';
     } else if (remaining > 0 && s.due_date < today) {
       computedStatus = 'OVERDUE';
+    } else if (paid > 0 && paid < planned) {
+      computedStatus = 'PARTIAL';
     } else {
       computedStatus = 'UPCOMING';
     }
@@ -77,6 +77,7 @@ export function allocatePaymentsFIFO(schedules, payments, dealDownPaymentMinor =
 
     return {
       ...s,
+      paid_amount_minor_db: s.paid_amount_minor || 0,
       planned_amount_minor: planned,
       fifo_allocated_minor: allocated,
       paid_amount_minor: paid,
