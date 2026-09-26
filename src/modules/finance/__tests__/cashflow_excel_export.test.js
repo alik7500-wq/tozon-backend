@@ -1,14 +1,17 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import ExcelJS from 'exceljs';
+import request from 'supertest';
+import jwt from 'jsonwebtoken';
 import { CashflowExcelService } from '../cashflow_excel.service.js';
 import { FinanceRepository } from '../finance.repository.js';
 import { connectDB, getDB } from '../../../db/connection.js';
+import { app } from '../../../app.js';
 
 describe('Cashflow Excel Export & Reconciliation Suite', () => {
-  beforeAll(async () => {
-    process.env.NODE_ENV = 'development';
-    await connectDB();
-  });
+  let adminToken, directorToken, financeToken, managerToken;
+  const alienDeskUuid = '6b5c2380-1ab6-4e39-877a-4f4519a5ab65'; // Investment cash desk
+  const managerOwnDeskUuid = 'ab90800a-73af-4cf7-88c2-397c304e2edf'; // Own desk
+
   const adminAccess = {
     isAdmin: true,
     allDesks: true,
@@ -25,6 +28,25 @@ describe('Cashflow Excel Export & Reconciliation Suite', () => {
     incomeDeskIds: ['SALES_MANAGER_Dadojon', 'SALES_MANAGER', 'MAIN_CASHIER'],
     expenseDeskIds: ['SALES_MANAGER_Dadojon']
   };
+
+  beforeAll(async () => {
+    process.env.NODE_ENV = 'development';
+    await connectDB();
+
+    const db = getDB();
+    const { data: users } = await db.from('users').select('id, role, email');
+
+    const adminUser = users?.find(u => u.role === 'ADMIN') || { id: 1 };
+    const directorUser = users?.find(u => u.role === 'DIRECTOR') || adminUser;
+    const financeUser = users?.find(u => u.role === 'FINANCE_MANAGER') || adminUser;
+    const managerUser = users?.find(u => u.role === 'SALES_MANAGER') || { id: 3 };
+
+    const secret = process.env.JWT_SECRET || 'super-secret-key-for-dev-only';
+    adminToken = jwt.sign({ id: adminUser.id }, secret);
+    directorToken = jwt.sign({ id: directorUser.id }, secret);
+    financeToken = jwt.sign({ id: financeUser.id }, secret);
+    managerToken = jwt.sign({ id: managerUser.id }, secret);
+  });
 
   it('1. Generates valid Excel buffer with 4 required worksheets', async () => {
     const buffer = await CashflowExcelService.generateExcelBuffer({}, adminAccess, { name: 'Admin', role: 'ADMIN' });
@@ -60,7 +82,6 @@ describe('Cashflow Excel Export & Reconciliation Suite', () => {
     expect(cashflowData.summaryByCurrency.USD).toBeDefined();
     expect(cashflowData.summaryByCurrency.TJS).toBeDefined();
 
-    // Verify USD and TJS total Incomes/Expenses are numeric and distinct
     expect(typeof cashflowData.summaryByCurrency.USD.totalIncome).toBe('number');
     expect(typeof cashflowData.summaryByCurrency.TJS.totalIncome).toBe('number');
   });
@@ -90,20 +111,39 @@ describe('Cashflow Excel Export & Reconciliation Suite', () => {
     });
   });
 
-  it('6. Investment cash desk metrics match historical controls: 399,656.52 - 266,778.73 = 132,877.79 USD', async () => {
-    const cashflowData = await FinanceRepository.getCashflow({}, adminAccess);
-    const investDesk = cashflowData.cashDesksSummary.find(d => d.name.includes('Инвестиционная касса TOZON PLAZA') || d.name.includes('TOZON PLAZA'));
+  it('6. Current Production Investment cash desk control metrics for year=ALL: 58 ACTIVE PKOs (416,778.72 USD), 57 ACTIVE RKOs (416,778.73 USD), Net Balance = -0.01 USD', async () => {
+    const cashflowData = await FinanceRepository.getCashflow({ year: 'ALL' }, adminAccess);
+    const investDesk = cashflowData.cashDesksSummary.find(d => d.name.includes('Инвестиционная касса TOZON PLAZA') || d.id === alienDeskUuid);
     expect(investDesk).toBeDefined();
 
-    const transactions = cashflowData.transactions.filter(t => t.cashDeskName && (t.cashDeskName.includes('Инвестиционная касса TOZON PLAZA') || t.cashDeskName.includes('TOZON PLAZA')));
-    const pkoImported = transactions.filter(t => t.type === 'INCOME');
-    const rkoImported = transactions.filter(t => t.type === 'EXPENSE');
+    expect(investDesk.totalIncomeUsd).toBe(416778.72);
 
-    const pkoSum = pkoImported.reduce((s, t) => s + t.amount, 0);
-    const rkoSum = rkoImported.reduce((s, t) => s + t.amount, 0);
+    const activePkos = cashflowData.transactions.filter(
+      t => (t.cashDeskId === alienDeskUuid || t.cash_desk_id === alienDeskUuid) && t.type === 'INCOME' && t.status !== 'VOIDED'
+    );
+    const activeRkos = cashflowData.transactions.filter(
+      t => (t.cashDeskId === alienDeskUuid || t.cash_desk_id === alienDeskUuid) && t.type === 'EXPENSE' && t.status !== 'VOIDED'
+    );
 
-    expect(pkoSum).toBeGreaterThanOrEqual(399656.52);
-    expect(rkoSum).toBeGreaterThanOrEqual(266778.73);
+    const pkoSum = activePkos.reduce((s, t) => s + t.amount, 0);
+    const rkoSum = activeRkos.reduce((s, t) => s + t.amount, 0);
+    const netBalance = Number((pkoSum - rkoSum).toFixed(2));
+
+    expect(activePkos.length).toBe(58);
+    expect(Number(pkoSum.toFixed(2))).toBe(416778.72);
+    expect(activeRkos.length).toBe(57);
+    expect(Number(rkoSum.toFixed(2))).toBe(416778.73);
+    expect(netBalance).toBe(-0.01);
+  });
+
+  it('6b. Historical baseline investment PKO control (period up to 2026-06-30): 55 PKOs / 399,656.52 USD inflow', async () => {
+    const filters = { year: 'ALL', date_to: '2026-06-30' };
+    const cashflowData = await FinanceRepository.getCashflow(filters, adminAccess);
+    const investTxs = cashflowData.transactions.filter(t => t.cashDeskId === alienDeskUuid && t.type === 'INCOME' && t.status !== 'VOIDED');
+    
+    const historicalPkoSum = investTxs.reduce((s, t) => s + t.amount, 0);
+    expect(investTxs.length).toBe(55);
+    expect(Number(historicalPkoSum.toFixed(2))).toBe(399656.52);
   });
 
   it('7. Internal transfers do not artificially inflate consolidated external turnover', async () => {
@@ -151,19 +191,150 @@ describe('Cashflow Excel Export & Reconciliation Suite', () => {
   it('12. Two manually entered investment PKOs are included in export', async () => {
     const cashflowData = await FinanceRepository.getCashflow({ year: 'ALL' }, adminAccess);
     const investDeskTxs = cashflowData.transactions.filter(
-      t => t.cashDeskId === '6b5c2380-1ab6-4e39-877a-4f4519a5ab65' && t.type === 'INCOME' && t.status !== 'VOIDED'
+      t => t.cashDeskId === alienDeskUuid && t.type === 'INCOME' && t.status !== 'VOIDED'
     );
 
-    // Verify presence of two manual 150,000 USD PKOs
     const manual150kPkos = investDeskTxs.filter(t => t.amount === 150000);
     expect(manual150kPkos.length).toBe(2);
+    expect(investDeskTxs.length).toBe(58);
+  });
 
-    // Verify baseline or full PKO count (at least 55 PKOs)
-    expect(investDeskTxs.length).toBeGreaterThanOrEqual(55);
+  it('13. Excel Parity Test: exact sorted ID match between Excel workbook sheets and FinanceRepository.getCashflow()', async () => {
+    const filters = { year: 2026 };
+    const buffer = await CashflowExcelService.generateExcelBuffer(filters, adminAccess, { name: 'Admin', role: 'ADMIN' });
 
-    // Verify total inflow (at least 399,656.52 USD)
-    const totalPkoSum = investDeskTxs.reduce((sum, t) => sum + t.amount, 0);
-    expect(totalPkoSum).toBeGreaterThanOrEqual(399656.52);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer);
+
+    const sheetPko = workbook.getWorksheet('Приходы ПКО');
+    const excelPkoIds = [];
+    sheetPko.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const val = row.getCell(18).value;
+      if (typeof val === 'number') {
+        excelPkoIds.push(val);
+      } else if (typeof val === 'string' && /^\d+$/.test(val.trim())) {
+        excelPkoIds.push(Number(val.trim()));
+      }
+    });
+
+    const sheetRko = workbook.getWorksheet('Расходы РКО');
+    const excelRkoIds = [];
+    sheetRko.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const val = row.getCell(18).value;
+      if (typeof val === 'number') {
+        excelRkoIds.push(val);
+      } else if (typeof val === 'string' && /^\d+$/.test(val.trim())) {
+        excelRkoIds.push(Number(val.trim()));
+      }
+    });
+
+    const cashflowData = await FinanceRepository.getCashflow(filters, adminAccess);
+    const repoPkoIds = cashflowData.transactions
+      .filter(t => t.type === 'INCOME')
+      .map(t => Number(t.rawId || t.id));
+    const repoRkoIds = cashflowData.transactions
+      .filter(t => t.type === 'EXPENSE')
+      .map(t => Number(t.rawId || t.id));
+
+    expect(excelPkoIds.sort((a, b) => a - b)).toEqual(repoPkoIds.sort((a, b) => a - b));
+    expect(excelRkoIds.sort((a, b) => a - b)).toEqual(repoRkoIds.sort((a, b) => a - b));
+    expect(excelPkoIds.length).toBeGreaterThan(0);
+    expect(excelRkoIds.length).toBeGreaterThan(0);
+  });
+
+  describe('Express HTTP Route Access Control & Role Protection Suite', () => {
+    it('A. GET /api/finance/cashflow with alien cash_desk_id under SALES_MANAGER returns HTTP 403 and safe error message', async () => {
+      const res = await request(app)
+        .get(`/api/finance/cashflow?cash_desk_id=${alienDeskUuid}`)
+        .set('Authorization', `Bearer ${managerToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.message).toContain('Доступ к просмотру чужой кассы запрещен');
+      expect(res.body.data).toBeUndefined();
+    });
+
+    it('B. GET /api/finance/cashflow/export.xlsx with alien cash_desk_id under SALES_MANAGER returns HTTP 403 without XLSX output', async () => {
+      const res = await request(app)
+        .get(`/api/finance/cashflow/export.xlsx?cash_desk_id=${alienDeskUuid}`)
+        .set('Authorization', `Bearer ${managerToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.headers['content-type']).not.toContain('spreadsheet');
+      expect(res.headers['content-type']).toContain('application/json');
+      expect(res.body.message).toContain('Доступ к просмотру чужой кассы запрещен');
+    });
+
+    it('C. GET /api/finance/cashflow with own cash_desk_id under SALES_MANAGER returns HTTP 200 and own operations only', async () => {
+      const db = getDB();
+      const { data: desks } = await db.from('dictionaries').select('id, code').eq('type', 'CASH_DESK');
+      const dadoDesk = desks?.find(d => d.code === 'SALES_MANAGER_Dadojon');
+      const ownDeskId = dadoDesk ? dadoDesk.id : managerOwnDeskUuid;
+
+      const res = await request(app)
+        .get(`/api/finance/cashflow?cash_desk_id=${ownDeskId}`)
+        .set('Authorization', `Bearer ${managerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.transactions).toBeDefined();
+    });
+
+    it('D. GET /api/finance/cashflow without cash_desk_id under SALES_MANAGER returns HTTP 200 with only allowed operations', async () => {
+      const res = await request(app)
+        .get('/api/finance/cashflow')
+        .set('Authorization', `Bearer ${managerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.transactions).toBeDefined();
+
+      const hasAlienDesk = res.body.data.transactions.some(t => t.cashDeskId === alienDeskUuid || t.cash_desk_id === alienDeskUuid);
+      expect(hasAlienDesk).toBe(false);
+    });
+
+    it('E1. ADMIN can select and export any cash desk with HTTP 200', async () => {
+      const resGet = await request(app)
+        .get(`/api/finance/cashflow?cash_desk_id=${alienDeskUuid}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(resGet.status).toBe(200);
+      expect(resGet.body.success).toBe(true);
+
+      const resExport = await request(app)
+        .get(`/api/finance/cashflow/export.xlsx?cash_desk_id=${alienDeskUuid}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(resExport.status).toBe(200);
+      expect(resExport.headers['content-type']).toContain('spreadsheet');
+    }, 15000);
+
+    it('E2. DIRECTOR can select and export any cash desk with HTTP 200', async () => {
+      const resGet = await request(app)
+        .get(`/api/finance/cashflow?cash_desk_id=${alienDeskUuid}`)
+        .set('Authorization', `Bearer ${directorToken}`);
+      expect(resGet.status).toBe(200);
+      expect(resGet.body.success).toBe(true);
+
+      const resExport = await request(app)
+        .get(`/api/finance/cashflow/export.xlsx?cash_desk_id=${alienDeskUuid}`)
+        .set('Authorization', `Bearer ${directorToken}`);
+      expect(resExport.status).toBe(200);
+      expect(resExport.headers['content-type']).toContain('spreadsheet');
+    }, 15000);
+
+    it('E3. FINANCE_MANAGER can select and export any cash desk with HTTP 200', async () => {
+      const resGet = await request(app)
+        .get(`/api/finance/cashflow?cash_desk_id=${alienDeskUuid}`)
+        .set('Authorization', `Bearer ${financeToken}`);
+      expect(resGet.status).toBe(200);
+      expect(resGet.body.success).toBe(true);
+
+      const resExport = await request(app)
+        .get(`/api/finance/cashflow/export.xlsx?cash_desk_id=${alienDeskUuid}`)
+        .set('Authorization', `Bearer ${financeToken}`);
+      expect(resExport.status).toBe(200);
+      expect(resExport.headers['content-type']).toContain('spreadsheet');
+    }, 15000);
   });
 });
 

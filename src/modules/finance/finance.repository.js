@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { getDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
+import { AppError } from '../../shared/errors/errorHandler.js';
 
 // Проверка идемпотентности напрямую в БД без использования in-memory кэша (для многопроцессной архитектуры)
 async function checkIdempotentExpense(db, key) {
@@ -1733,10 +1734,24 @@ export class FinanceRepository {
     let activePayments = (paymentsData || []).filter(p => p.status !== 'VOIDED');
     let activeExpenses = (expensesData || []).filter(e => e.status !== 'VOIDED');
 
-    // Серверная изоляция для менеджера: видит ТОЛЬКО свою кассу
+    // Серверная изоляция и контроль прав доступа: проверяем запросы к кассам
     if (userAccess && !userAccess.isAdmin) {
-      activePayments = activePayments.filter(p => p.cash_desk_id === userAccess.cashDeskId);
-      activeExpenses = activeExpenses.filter(e => e.cash_desk_id === userAccess.cashDeskId);
+      const allowedDeskIds = (userAccess.viewableDeskIds && userAccess.viewableDeskIds.length > 0)
+        ? userAccess.viewableDeskIds
+        : (userAccess.cashDeskId ? [userAccess.cashDeskId] : []);
+
+      if (filters.cash_desk_id && filters.cash_desk_id !== 'ALL') {
+        if (!allowedDeskIds.includes(filters.cash_desk_id)) {
+          const err = new AppError('Доступ к просмотру чужой кассы запрещен', 403);
+          err.statusCode = 403;
+          throw err;
+        }
+        activePayments = activePayments.filter(p => p.cash_desk_id === filters.cash_desk_id);
+        activeExpenses = activeExpenses.filter(e => e.cash_desk_id === filters.cash_desk_id);
+      } else {
+        activePayments = activePayments.filter(p => allowedDeskIds.includes(p.cash_desk_id));
+        activeExpenses = activeExpenses.filter(e => allowedDeskIds.includes(e.cash_desk_id));
+      }
     }
 
 
