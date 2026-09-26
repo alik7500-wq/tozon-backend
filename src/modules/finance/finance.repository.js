@@ -568,7 +568,24 @@ export class FinanceRepository {
     }
     const fullComment = commentParts.join(' ').trim();
 
-    const { data: newPayment, error } = await db.from('payments').insert([{
+    // Calculate schedule updates first using FIFO allocation
+    let updatesToApply = [];
+    if (targetDealId) {
+      const { data: deal } = await db.from('deals').select('down_payment_minor').eq('id', targetDealId).single();
+      const { data: existingPmts } = await db.from('payments').select('id, amount_minor, payment_date, status').eq('deal_id', targetDealId).neq('status', 'VOIDED');
+      const { data: schedules } = await db.from('deal_payment_schedules').select('*').eq('deal_id', targetDealId).order('due_date');
+
+      const draftPayment = { id: -1, amount_minor: amountMinor, payment_date: paymentDate, status: 'POSTED' };
+      const fifoRes = allocatePaymentsFIFO(schedules || [], [...(existingPmts || []), draftPayment], deal?.down_payment_minor || 0, getDushanbeCurrentDateStr());
+      
+      updatesToApply = fifoRes.schedules.map(s => ({
+        id: s.id,
+        paid_amount_minor: s.paid_amount_minor,
+        status: s.computed_status
+      }));
+    }
+
+    const paymentPayload = {
       deal_id: dealId,
       schedule_id: scheduleId,
       amount_minor: amountMinor,
@@ -586,22 +603,18 @@ export class FinanceRepository {
       amount_tjs: amountTjs,
       created_by_user_id: parseOptionalBigInt(userId),
       created_at: now
-    }]).select().single();
+    };
 
-    if (error) throw error;
+    const { data: rpcRes, error: rpcErr } = await db.rpc('create_income_payment_atomic', {
+      p_payment: paymentPayload,
+      p_schedules: updatesToApply
+    });
 
-    // Recalculate deal schedules via FIFO allocation if deal is linked
-    if (targetDealId) {
-      try {
-        await recalculateDealSchedules(targetDealId);
-      } catch (schedErr) {
-        // Compensating ROLLBACK: delete created payment to maintain strict atomicity
-        await db.from('payments').delete().eq('id', newPayment.id);
-        throw new Error(`PKO_TRANSACTION_ABORTED: Payment creation rolled back due to schedule recalculation error: ${schedErr.message}`);
-      }
+    if (rpcErr) {
+      throw new Error(`PKO_TRANSACTION_FAILED: ${rpcErr.message}`);
     }
 
-    return newPayment;
+    return rpcRes.payment;
   }
 
   /**
@@ -668,35 +681,45 @@ export class FinanceRepository {
       }
     }
 
-    if (Object.keys(updatePayload).length === 0) {
-      return originalRecord;
-    }
+    const targetDealId = originalRecord?.deal_id || data.deal_id;
+    let updatesToApply = [];
 
-    const { data: updatedRows, error } = await db.from('payments').update(updatePayload).eq('id', id).select();
-    if (error) {
-      console.error('Error updating income in DB:', error);
-      throw error;
-    }
-
-    const updated = Array.isArray(updatedRows) ? updatedRows[0] : updatedRows;
-
-    // Recalculate deal schedules via FIFO allocation if deal is linked
-    const targetDealId = updated?.deal_id || originalRecord?.deal_id;
     if (targetDealId) {
-      try {
-        await recalculateDealSchedules(targetDealId);
-      } catch (schedErr) {
-        // Compensating ROLLBACK: restore original payment record state
-        if (originalRecord) {
-          await db.from('payments').update({
-            amount_minor: originalRecord.amount_minor,
-            status: originalRecord.status,
-            deal_id: originalRecord.deal_id
-          }).eq('id', id);
+      const { data: deal } = await db.from('deals').select('down_payment_minor').eq('id', targetDealId).single();
+      const { data: existingPmts } = await db.from('payments').select('id, amount_minor, payment_date, status').eq('deal_id', targetDealId).neq('status', 'VOIDED');
+      const { data: schedules } = await db.from('deal_payment_schedules').select('*').eq('deal_id', targetDealId).order('due_date');
+
+      // Map simulated update in existing payments list
+      const simulatedPmts = (existingPmts || []).map(p => {
+        if (p.id === id) {
+          return {
+            ...p,
+            amount_minor: updatePayload.amount_minor !== undefined ? updatePayload.amount_minor : p.amount_minor,
+            payment_date: updatePayload.payment_date !== undefined ? updatePayload.payment_date : p.payment_date
+          };
         }
-        throw new Error(`PKO_TRANSACTION_ABORTED: Payment update rolled back due to schedule recalculation error: ${schedErr.message}`);
-      }
+        return p;
+      });
+
+      const fifoRes = allocatePaymentsFIFO(schedules || [], simulatedPmts, deal?.down_payment_minor || 0, getDushanbeCurrentDateStr());
+      updatesToApply = fifoRes.schedules.map(s => ({
+        id: s.id,
+        paid_amount_minor: s.paid_amount_minor,
+        status: s.computed_status
+      }));
     }
+
+    const { data: rpcRes, error: rpcErr } = await db.rpc('update_income_payment_atomic', {
+      p_payment_id: id,
+      p_payment_update: updatePayload,
+      p_schedules: updatesToApply
+    });
+
+    if (rpcErr) {
+      throw new Error(`PKO_TRANSACTION_FAILED: ${rpcErr.message}`);
+    }
+
+    const updated = rpcRes.payment;
 
     // Sync paired conversion expense if this was a conversion
     if (originalRecord) {
@@ -829,19 +852,32 @@ export class FinanceRepository {
       return { success: true };
     }
 
-    const scheduleId = payment.schedule_id;
-    const { error } = await db.from('payments').delete().eq('id', id);
-    if (error) throw error;
+    const targetDealId = payment?.deal_id;
+    let updatesToApply = [];
 
-    // Recalculate deal schedules via FIFO allocation if deal is linked
-    if (payment && payment.deal_id) {
-      try {
-        await recalculateDealSchedules(payment.deal_id);
-      } catch (schedErr) {
-        // Compensating ROLLBACK: re-insert deleted payment record
-        await db.from('payments').insert([payment]);
-        throw new Error(`PKO_TRANSACTION_ABORTED: Payment deletion rolled back due to schedule recalculation error: ${schedErr.message}`);
-      }
+    if (targetDealId) {
+      const { data: deal } = await db.from('deals').select('down_payment_minor').eq('id', targetDealId).single();
+      const { data: existingPmts } = await db.from('payments').select('id, amount_minor, payment_date, status').eq('deal_id', targetDealId).neq('status', 'VOIDED');
+      const { data: schedules } = await db.from('deal_payment_schedules').select('*').eq('deal_id', targetDealId).order('due_date');
+
+      // Filter out deleted payment
+      const remainingPmts = (existingPmts || []).filter(p => p.id !== id);
+
+      const fifoRes = allocatePaymentsFIFO(schedules || [], remainingPmts, deal?.down_payment_minor || 0, getDushanbeCurrentDateStr());
+      updatesToApply = fifoRes.schedules.map(s => ({
+        id: s.id,
+        paid_amount_minor: s.paid_amount_minor,
+        status: s.computed_status
+      }));
+    }
+
+    const { data: rpcRes, error: rpcErr } = await db.rpc('delete_income_payment_atomic', {
+      p_payment_id: id,
+      p_schedules: updatesToApply
+    });
+
+    if (rpcErr) {
+      throw new Error(`PKO_TRANSACTION_FAILED: ${rpcErr.message}`);
     }
 
     // Delete paired conversion expense
