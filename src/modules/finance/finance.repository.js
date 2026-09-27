@@ -187,9 +187,24 @@ async function insertExpenseWithIdempotency(db, payload) {
 }
 
 export class FinanceRepository {
+  static calculateItemUsdAmount(item, fallbackRate = 9.27) {
+    if (!item || !item.amount) return 0;
+    const cur = (item.currency || 'USD').toUpperCase();
+    if (cur === 'USD') return Number(item.amount);
+    if (item.amountUsd && Number(item.amountUsd) > 0) {
+      return Number(item.amountUsd);
+    }
+    const rate = Number(item.exchangeRate) || Number(item.exchange_rate);
+    if (rate && rate > 0) {
+      return Number((item.amount / rate).toFixed(2));
+    }
+    return Number((item.amount / fallbackRate).toFixed(2));
+  }
+
   static async resolveCashDeskUuid(db, rawDesk) {
     return resolveCashDeskUuid(db, rawDesk);
   }
+
 
   /**
    * Определение динамического диапазона лет на основе данных в БД
@@ -398,8 +413,12 @@ export class FinanceRepository {
 
     // Resolve income category helper
     const resolveIncomeCategory = (item) => {
-      if (item.category) return item.category;
-      if (item.operationType === 'INVESTMENT' || (item.comment && item.comment.includes('Инвестиции партнёров'))) {
+      let rawCat = item.category;
+      if (rawCat === 'PARTNER_INVESTMENT' || rawCat === 'Инвестиции партнёров') {
+        return 'Инвестиции партнёров';
+      }
+      if (rawCat) return rawCat;
+      if (item.operationType === 'INVESTMENT' || (item.comment && (item.comment.includes('Инвестиции') || item.comment.includes('INVESTMENT')))) {
         return 'Инвестиции партнёров';
       }
       if (item.transferId || item.operationType === 'INTERNAL_CASH_TRANSFER' || (item.reference && item.reference.includes('КОНВ')) || (item.payerName && item.payerName.includes('Касса') && item.payerName.includes('Автоконвертация'))) {
@@ -436,7 +455,7 @@ export class FinanceRepository {
         }
         let amt = item.amount;
         if (!selectedCurrency) {
-          amt = item.currency === 'USD' ? item.amount : (item.amount / eskhataRate);
+          amt = this.calculateItemUsdAmount(item, eskhataRate);
         }
         monthlyIncome[d.getMonth()] += amt;
       }
@@ -452,12 +471,23 @@ export class FinanceRepository {
     const categoryTotals = {};
     const categoryCurrencies = {};
 
+    // Filter category base items considering search if present
     let categoryBaseItems = normalizedList;
     if (!isAllYears) {
       categoryBaseItems = categoryBaseItems.filter(item => {
         if (!item.date) return false;
         return new Date(item.date).getFullYear() === currentYear;
       });
+    }
+
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      categoryBaseItems = categoryBaseItems.filter(item =>
+        (item.clientName && item.clientName.toLowerCase().includes(q)) ||
+        (item.contract && item.contract.toLowerCase().includes(q)) ||
+        (item.reference && item.reference.toLowerCase().includes(q)) ||
+        (item.comment && item.comment.toLowerCase().includes(q))
+      );
     }
 
     categoryBaseItems.forEach(item => {
@@ -472,7 +502,7 @@ export class FinanceRepository {
       const cat = resolveIncomeCategory(item);
       let amountInChartCur = item.amount;
       if (!selectedCurrency) {
-        amountInChartCur = item.currency === 'USD' ? item.amount : (item.amount / eskhataRate);
+        amountInChartCur = this.calculateItemUsdAmount(item, eskhataRate);
       }
 
       categoryTotals[cat] = (categoryTotals[cat] || 0) + amountInChartCur;
