@@ -588,15 +588,16 @@ export class FinanceRepository {
       created_at: now
     };
 
-    const { data: rpcRes, error: rpcErr } = await db.rpc('create_income_payment_atomic', {
+    const rpcCallRes = await db.rpc('create_income_payment_atomic', {
       p_payment: paymentPayload
     });
+    const { data: rpcRes, error: rpcErr } = rpcCallRes || {};
 
     if (rpcErr) {
       throw new Error(`PKO_TRANSACTION_FAILED: ${rpcErr.message}`);
     }
 
-    return rpcRes.payment;
+    return rpcRes?.payment || rpcRes;
   }
 
   /**
@@ -663,16 +664,18 @@ export class FinanceRepository {
       }
     }
 
-    const { data: rpcRes, error: rpcErr } = await db.rpc('update_income_payment_atomic', {
+    const rpcCallRes = await db.rpc('update_income_payment_atomic', {
       p_payment_id: id,
       p_payment_update: updatePayload
     });
+
+    const { data: rpcRes, error: rpcErr } = rpcCallRes || {};
 
     if (rpcErr) {
       throw new Error(`PKO_TRANSACTION_FAILED: ${rpcErr.message}`);
     }
 
-    const updated = rpcRes.payment;
+    const updated = rpcRes?.payment || rpcRes;
 
     // Sync paired conversion expense if this was a conversion
     if (originalRecord) {
@@ -808,11 +811,12 @@ export class FinanceRepository {
     const targetDealId = payment?.deal_id;
     let updatesToApply = [];
 
-    const { data: rpcRes, error: rpcErr } = await db.rpc('void_income_payment_atomic', {
+    const rpcCallRes = await db.rpc('void_income_payment_atomic', {
       p_payment_id: id,
       p_user_id: parseOptionalBigInt(userId),
       p_void_reason: 'Annulled via CRM'
     });
+    const { data: rpcRes, error: rpcErr } = rpcCallRes || {};
 
     if (rpcErr) {
       throw new Error(`PKO_TRANSACTION_FAILED: ${rpcErr.message}`);

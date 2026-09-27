@@ -1,6 +1,7 @@
 import { getDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
+import { allocatePaymentsFIFO } from '../../utils/fifoPaymentAllocation.js';
 
 export class DealsRepository {
   static async findAll(filters = {}) {
@@ -179,24 +180,6 @@ export class DealsRepository {
     const today = getBusinessDate();
     const p = deal.units?.floors?.sections?.buildings?.projects || {};
 
-    // Process Schedules
-    const rawSchedules = deal.deal_payment_schedules || [];
-    rawSchedules.sort((a, b) => a.payment_number - b.payment_number);
-    
-    const schedules = rawSchedules.map((item) => {
-      const paid = item.paid_amount_minor || 0;
-      const planned = item.amount_minor || 0;
-      const remaining = Math.max(0, planned - paid);
-
-      let computedStatus = 'UPCOMING';
-      if (remaining === 0) computedStatus = 'PAID';
-      else if (paid > 0 && paid < planned) computedStatus = 'PARTIAL';
-      else if (item.due_date < today) computedStatus = 'OVERDUE';
-      else if (item.due_date === today) computedStatus = 'DUE';
-
-      return { ...item, status: computedStatus, remaining_amount_minor: remaining };
-    });
-
     // Process Payments
     const payments = deal.payments || [];
     payments.sort((a, b) => new Date(b.payment_date) - new Date(a.payment_date) || new Date(b.created_at) - new Date(a.created_at));
@@ -209,6 +192,11 @@ export class DealsRepository {
 
     const activePayments = payments.filter(pm => pm.status !== 'VOIDED');
     const paid_amount_minor = activePayments.reduce((sum, pm) => sum + (pm.amount_minor || 0), 0);
+
+    // Process Schedules using FIFO Waterfall Allocation
+    const rawSchedules = deal.deal_payment_schedules || [];
+    const fifoResult = allocatePaymentsFIFO(rawSchedules, activePayments, deal.down_payment_minor || 0, today);
+    const schedules = fifoResult.schedules;
     const remaining_debt_minor = Math.max(0, (deal.final_price_minor || 0) - paid_amount_minor);
     const paid_percent = deal.final_price_minor > 0 ? Number(((paid_amount_minor / deal.final_price_minor) * 100).toFixed(2)) : 0;
 
@@ -249,6 +237,7 @@ export class DealsRepository {
       manager_name: deal.users?.name,
       manager_email: deal.users?.email,
       schedules,
+      pko_allocations: fifoResult.pko_allocations || [],
       payments: formattedPayments,
       paid_amount_minor,
       total_paid_minor: paid_amount_minor,
