@@ -396,6 +396,25 @@ export class FinanceRepository {
       );
     }
 
+    // Resolve income category helper
+    const resolveIncomeCategory = (item) => {
+      if (item.category) return item.category;
+      if (item.operationType === 'INVESTMENT' || (item.comment && item.comment.includes('Инвестиции партнёров'))) {
+        return 'Инвестиции партнёров';
+      }
+      if (item.transferId || item.operationType === 'INTERNAL_CASH_TRANSFER' || (item.reference && item.reference.includes('КОНВ')) || (item.payerName && item.payerName.includes('Касса') && item.payerName.includes('Автоконвертация'))) {
+        return 'Внутренние перемещения между кассами';
+      }
+      if (item.dealId || (item.contract && item.contract !== 'Прямой приход')) {
+        return 'Оплата по договорам';
+      }
+      return 'Прочие приходы';
+    };
+
+    if (filters.category && filters.category !== 'ALL') {
+      filteredList = filteredList.filter(item => resolveIncomeCategory(item) === filters.category);
+    }
+
     // Monthly Chart Data
     const eskhataRate = 9.27;
     const chartCurrency = selectedCurrency || 'USD';
@@ -411,7 +430,7 @@ export class FinanceRepository {
         if (selectedCurrency && item.currency !== selectedCurrency) {
           return;
         }
-        const isInternalTransfer = (item.reference && item.reference.includes('КОНВ')) || (item.payerName && item.payerName.includes('Касса') && item.payerName.includes('Автоконвертация'));
+        const isInternalTransfer = item.transferId || item.operationType === 'INTERNAL_CASH_TRANSFER' || (item.reference && item.reference.includes('КОНВ')) || (item.payerName && item.payerName.includes('Касса') && item.payerName.includes('Автоконвертация'));
         if (!selectedCurrency && isInternalTransfer) {
           return;
         }
@@ -428,6 +447,46 @@ export class FinanceRepository {
       amount: Number(monthlyIncome[idx].toFixed(2)),
       currency: chartCurrency
     }));
+
+    // Categories Breakdown Chart for Income
+    const categoryTotals = {};
+    const categoryCurrencies = {};
+
+    let categoryBaseItems = normalizedList;
+    if (!isAllYears) {
+      categoryBaseItems = categoryBaseItems.filter(item => {
+        if (!item.date) return false;
+        return new Date(item.date).getFullYear() === currentYear;
+      });
+    }
+
+    categoryBaseItems.forEach(item => {
+      if (selectedCurrency && item.currency !== selectedCurrency) {
+        return;
+      }
+      const isInternalTransfer = item.transferId || item.operationType === 'INTERNAL_CASH_TRANSFER' || (item.reference && item.reference.includes('КОНВ')) || (item.payerName && item.payerName.includes('Касса') && item.payerName.includes('Автоконвертация'));
+      if (!selectedCurrency && isInternalTransfer) {
+        return;
+      }
+
+      const cat = resolveIncomeCategory(item);
+      let amountInChartCur = item.amount;
+      if (!selectedCurrency) {
+        amountInChartCur = item.currency === 'USD' ? item.amount : (item.amount / eskhataRate);
+      }
+
+      categoryTotals[cat] = (categoryTotals[cat] || 0) + amountInChartCur;
+      if (!categoryCurrencies[cat]) categoryCurrencies[cat] = {};
+      categoryCurrencies[cat][item.currency] = (categoryCurrencies[cat][item.currency] || 0) + item.amount;
+    });
+
+    const categoriesChart = Object.keys(categoryTotals)
+      .map(cat => ({
+        name: cat,
+        amount: Number(categoryTotals[cat].toFixed(2)),
+        breakdown: categoryCurrencies[cat]
+      }))
+      .sort((a, b) => b.amount - a.amount);
 
     // Сортировка парных операций вместе
     const incGroups = new Map();
@@ -461,7 +520,9 @@ export class FinanceRepository {
       availableCurrencies,
       availableYears,
       monthlyChart: chartData,
-      chartData
+      chartData,
+      categoriesChart,
+      chartCurrency
     };
   }
 
