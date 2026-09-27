@@ -37,7 +37,7 @@ async function runStrictReconciliationTests() {
   const rko2026USD = await FinanceRepository.getExpenses({ year: 2026, currency: 'USD', category: 'ALL', search: '' });
   assert.strictEqual(rko2026USD.list.length, 182, 'Active USD RKO documents count in 2026 must be 182');
   assert.strictEqual(rko2026USD.totals.USD, 246104.40, 'Total USD cash payout out of USD desk must be $246,104.40 USD');
-  assert.strictEqual(rko2026USD.operationalExpenses.USD, 228148.74, 'Operational USD expenses must be $228,148.74 USD');
+  assert.strictEqual(rko2026USD.operationalExpenses.USD, 228148.74, 'Operational USD expenses (Выплаты без конвертаций) must be $228,148.74 USD');
   assert.strictEqual(rko2026USD.conversionDifferenceUsd, 17955.66, 'Conversion difference (autoconversions) must be exactly $17,955.66 USD');
   assert.strictEqual(
     Number((rko2026USD.operationalExpenses.USD + rko2026USD.conversionDifferenceUsd).toFixed(2)),
@@ -70,27 +70,52 @@ async function runStrictReconciliationTests() {
   assert.strictEqual(rko383.amount - pko205.amount, 2, 'Difference between RKO #383 and PKO #205 must be exactly 2 TJS');
   console.log('  ✅ TEST 5 PASSED: Verified PKO #205 (51,380 TJS) vs RKO #383 (51,382 TJS) exact 2 TJS difference.');
 
-  // Test Case 6: Partner Investment Unified Category Assertion
-  console.log('[TEST 6] Unified Partner Investment Category...');
-  const partnerCat = pko2026USD.categoriesChart.find(c => c.name === 'Инвестиции партнёров');
-  assert.ok(partnerCat, 'Category "Инвестиции партнёров" must exist in chart');
-  assert.strictEqual(partnerCat.amount, 36237.92, 'Unified Partner Investment amount must equal $36,237.92 USD');
-  console.log('  ✅ TEST 6 PASSED: Category "Инвестиции партнёров" is unified and equals $36,237.92 USD.');
+  // Test Case 6: Category Filter Consistency in Chart and Journal
+  console.log('[TEST 6] Category Filter Consistency in Chart & Journal...');
+  const pkoCategoryFiltered = await FinanceRepository.getIncome({ year: 2026, currency: 'USD', category: 'Инвестиции партнёров' });
+  assert.strictEqual(pkoCategoryFiltered.categoriesChart.length, 1, 'Categories chart under specific category filter must contain exactly 1 entry');
+  assert.strictEqual(pkoCategoryFiltered.categoriesChart[0].name, 'Инвестиции партнёров', 'Chart category name must match filter');
+  const pkoFilteredSum = pkoCategoryFiltered.list.reduce((acc, p) => acc + p.amount, 0);
+  assert.strictEqual(pkoCategoryFiltered.categoriesChart[0].amount, Number(pkoFilteredSum.toFixed(2)), 'Chart amount must equal filtered list sum');
 
-  // Test Case 7: Search and Filter Consistency
-  console.log('[TEST 7] Search & Filter Consistency...');
+  const rkoCategoryFiltered = await FinanceRepository.getExpenses({ year: 2026, currency: 'TJS', category: 'Услуги подрядчиков и специалистов' });
+  assert.strictEqual(rkoCategoryFiltered.categoriesChart.length, 1, 'Categories chart under specific RKO category filter must contain exactly 1 entry');
+  assert.strictEqual(rkoCategoryFiltered.categoriesChart[0].name, 'Услуги подрядчиков и специалистов', 'Chart category name must match filter');
+  const rkoFilteredSum = rkoCategoryFiltered.list.reduce((acc, e) => acc + e.amount, 0);
+  assert.strictEqual(rkoCategoryFiltered.categoriesChart[0].amount, Number(rkoFilteredSum.toFixed(2)), 'Chart amount must equal filtered list sum');
+  console.log('  ✅ TEST 6 PASSED: Category filter applies consistently to both chart and journal list.');
+
+  // Test Case 7: Partner Investment Breakdown Separation
+  console.log('[TEST 7] Partner Investments vs Buyer Deal Payments...');
+  const pkoPartner = await FinanceRepository.getIncome({ year: 2026, currency: 'USD', category: 'Инвестиции партнёров' });
+  const pkoDeals = await FinanceRepository.getIncome({ year: 2026, currency: 'USD', category: 'Оплата по договорам' });
+  assert.strictEqual(pkoPartner.list.length, 23, 'Partner investment USD PKO docs count in 2026 must be 23');
+  assert.strictEqual(pkoPartner.categoriesChart[0].amount, 36237.92, 'Partner investment USD total must be $36,237.92 USD');
+  assert.strictEqual(pkoDeals.categoriesChart[0].amount, 229437.97, 'Buyer deals payment USD total must be $229,437.97 USD');
+  console.log('  ✅ TEST 7 PASSED: Partner investments ($36,237.92 across 23 docs) are strictly separated from buyer deal payments ($229,437.97).');
+
+  // Test Case 8: Search Filter Consistency
+  console.log('[TEST 8] Search Filter Consistency...');
   const searchRes = await FinanceRepository.getIncome({ year: 2026, currency: 'USD', search: 'Мубинчон' });
   const searchChartSum = searchRes.categoriesChart.reduce((acc, c) => acc + c.amount, 0);
   const searchListSum = searchRes.list.reduce((acc, p) => acc + p.amount, 0);
   assert.strictEqual(Number(searchChartSum.toFixed(2)), Number(searchListSum.toFixed(2)), 'Diagram sum must match list sum for search results');
-  console.log('  ✅ TEST 7 PASSED: Chart sum matches list sum perfectly under search filter.');
+  console.log('  ✅ TEST 8 PASSED: Chart sum matches list sum perfectly under search filter.');
 
-  // Test Case 8: Empty Selection Edge Case
-  console.log('[TEST 8] Empty Selection Edge Case...');
+  // Test Case 9: Fallback Rate 9.27 Audit Assertion
+  console.log('[TEST 9] Fallback Exchange Rate 9.27 Audit...');
+  const db = connectDB();
+  const { data: payments } = await db.from('payments').select('*').is('voided_at', null);
+  const fallbackPkoDocs = payments.filter(p => (p.currency || 'USD').toUpperCase() !== 'USD' && !p.exchange_rate && !p.amount_usd);
+  assert.strictEqual(fallbackPkoDocs.length, 29, 'Exact count of TJS PKO documents using fallback rate 9.27 must be 29');
+  console.log('  ✅ TEST 9 PASSED: Verified 29 TJS PKO autoconversion entries using fallback exchange rate 9.27.');
+
+  // Test Case 10: Empty Selection Edge Case
+  console.log('[TEST 10] Empty Selection Edge Case...');
   const emptyRes = await FinanceRepository.getIncome({ year: 2026, currency: 'USD', search: 'NON_EXISTENT_QUERY_XYZ_123' });
   assert.strictEqual(emptyRes.list.length, 0, 'List must be empty');
   assert.strictEqual(emptyRes.categoriesChart.length, 0, 'Categories chart must be empty');
-  console.log('  ✅ TEST 8 PASSED: Empty selection returns 0 items and empty chart.');
+  console.log('  ✅ TEST 10 PASSED: Empty selection returns 0 items and empty chart.');
 
   console.log('\n=====================================================');
   console.log('       ALL ASSERTION RECONCILIATION TESTS PASSED     ');

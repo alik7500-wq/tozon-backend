@@ -455,7 +455,11 @@ export class FinanceRepository {
       return 'Прочие приходы';
     };
 
-    // Category chart items derived from filteredList (matching year, cash desk, currency, search filter)
+    if (filters.category && filters.category !== 'ALL') {
+      filteredList = filteredList.filter(item => resolveIncomeCategory(item) === filters.category);
+    }
+
+    // Category chart items derived from filteredList (matching year, cash desk, currency, search, and category filter)
     const categoryBaseItems = filteredList;
     const categoryTotals = {};
     const categoryCurrencies = {};
@@ -479,10 +483,6 @@ export class FinanceRepository {
         breakdown: categoryCurrencies[cat]
       }))
       .sort((a, b) => b.amount - a.amount);
-
-    if (filters.category && filters.category !== 'ALL') {
-      filteredList = filteredList.filter(item => resolveIncomeCategory(item) === filters.category);
-    }
 
     // Monthly Chart Data
     const chartCurrency = selectedCurrency || 'USD';
@@ -1061,6 +1061,10 @@ export class FinanceRepository {
       );
     }
 
+    if (filters.category && filters.category !== 'ALL') {
+      filteredList = filteredList.filter(item => matchesCategory(item.category, filters.category));
+    }
+
     // Categories Breakdown Chart (derived directly from filteredList excluding internal conversions)
     const chartCurrency = selectedCurrency || 'USD';
     const categoryTotals = {};
@@ -1091,10 +1095,6 @@ export class FinanceRepository {
       amount: Number(categoryTotals[cat].toFixed(2)),
       breakdown: categoryCurrencies[cat]
     })).sort((a, b) => b.amount - a.amount);
-
-    if (filters.category && filters.category !== 'ALL') {
-      filteredList = filteredList.filter(item => matchesCategory(item.category, filters.category));
-    }
 
     // Сортировка парных операций (КОНВ и РКО) строго вместе
     const convExpIdMap = new Map();
