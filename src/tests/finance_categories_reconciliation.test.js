@@ -1,108 +1,103 @@
 import dotenv from 'dotenv';
 dotenv.config({ path: './server/.env' });
+import assert from 'assert';
 import { connectDB } from '../db/connection.js';
 import { FinanceRepository } from '../modules/finance/finance.repository.js';
 
-async function runReconciliationTests() {
+async function runStrictReconciliationTests() {
   console.log('=====================================================');
-  console.log('   FINANCIAL RECONCILIATION TEST SUITE (PKO & RKO)   ');
+  console.log('  STRICT ASSERTION TEST SUITE: PKO & RKO RECONCILIATION');
   console.log('=====================================================\n');
 
   connectDB();
 
-  // Test 1: 2026 USD Income (PKO) Reconciliation
+  // Test Case 1: 2026 USD Income (PKO)
+  console.log('[TEST 1] 2026 USD Income (PKO) Reconciliation...');
   const pko2026USD = await FinanceRepository.getIncome({ year: 2026, currency: 'USD', category: 'ALL', search: '' });
-  console.log('--- 1. 2026 USD Income (PKO) ---');
-  console.log(`Active PKO Documents Count: ${pko2026USD.list.length}`);
-  console.log(`PKO Table Total Sum: $${pko2026USD.totals.USD.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}`);
-  const chartSumUSD = pko2026USD.categoriesChart.reduce((acc, c) => acc + c.amount, 0);
-  console.log(`Categories Chart Total Sum: $${chartSumUSD.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}`);
-  console.log('Breakdown by Category:');
-  pko2026USD.categoriesChart.forEach(c => {
-    console.log(`  - ${c.name}: $${c.amount.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}`);
-  });
-  if (Math.abs(pko2026USD.totals.USD - chartSumUSD) < 0.05) {
-    console.log('✅ RESULT: PKO USD Totals & Diagram match perfectly!\n');
-  } else {
-    console.error(`❌ DISCREPANCY: Table (${pko2026USD.totals.USD}) vs Chart (${chartSumUSD})\n`);
-  }
+  assert.strictEqual(typeof pko2026USD.totals.USD, 'number', 'USD total must be a number');
+  assert.strictEqual(pko2026USD.list.length, 106, 'Active USD PKO documents count in 2026 must be 106');
+  assert.strictEqual(pko2026USD.totals.USD, 276882.14, 'Total USD PKO sum must be $276,882.14');
+  
+  const pkoChartSumUSD = pko2026USD.categoriesChart.reduce((acc, c) => acc + c.amount, 0);
+  assert.strictEqual(Number(pkoChartSumUSD.toFixed(2)), 276882.14, 'PKO USD Categories Chart sum must equal table total $276,882.14');
+  console.log('  ✅ TEST 1 PASSED: 106 docs, total $276,882.14 USD matches chart 100%.');
 
-  // Test 2: 2026 TJS Income (PKO) Reconciliation
+  // Test Case 2: 2026 TJS Income (PKO)
+  console.log('[TEST 2] 2026 TJS Income (PKO) Reconciliation...');
   const pko2026TJS = await FinanceRepository.getIncome({ year: 2026, currency: 'TJS', category: 'ALL', search: '' });
-  console.log('--- 2. 2026 TJS Income (PKO) ---');
-  console.log(`Active PKO Documents Count: ${pko2026TJS.list.length}`);
-  console.log(`PKO Table Total Sum: ${pko2026TJS.totals.TJS.toLocaleString('ru-RU')} TJS`);
-  const chartSumTJS = pko2026TJS.categoriesChart.reduce((acc, c) => acc + c.amount, 0);
-  console.log(`Categories Chart Total Sum: ${chartSumTJS.toLocaleString('ru-RU')} TJS`);
-  pko2026TJS.categoriesChart.forEach(c => {
-    console.log(`  - ${c.name}: ${c.amount.toLocaleString('ru-RU')} TJS`);
-  });
-  if (Math.abs(pko2026TJS.totals.TJS - chartSumTJS) < 0.05) {
-    console.log('✅ RESULT: PKO TJS Totals & Diagram match perfectly!\n');
-  } else {
-    console.error(`❌ DISCREPANCY: Table (${pko2026TJS.totals.TJS}) vs Chart (${chartSumTJS})\n`);
-  }
+  assert.strictEqual(pko2026TJS.list.length, 29, 'Active TJS PKO documents count in 2026 must be 29');
+  assert.strictEqual(pko2026TJS.totals.TJS, 166465, 'Total TJS PKO sum must be 166,465 TJS');
+  
+  const pkoChartSumTJS = pko2026TJS.categoriesChart.reduce((acc, c) => acc + c.amount, 0);
+  assert.strictEqual(pkoChartSumTJS, 166465, 'PKO TJS Categories Chart sum must equal table total 166,465 TJS');
+  console.log('  ✅ TEST 2 PASSED: 29 docs, total 166,465 TJS matches chart 100%.');
 
-  // Test 3: 2026 USD Expenses (RKO) Reconciliation
+  // Test Case 3: 2026 USD Expenses (RKO) & $17,955.66 Conversion Difference
+  console.log('[TEST 3] 2026 USD Expenses (RKO) & Conversion Difference...');
   const rko2026USD = await FinanceRepository.getExpenses({ year: 2026, currency: 'USD', category: 'ALL', search: '' });
-  console.log('--- 3. 2026 USD Expenses (RKO) ---');
-  console.log(`Active RKO Documents Count: ${rko2026USD.list.length}`);
-  console.log(`RKO Table Total Sum: $${rko2026USD.totals.USD.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}`);
+  assert.strictEqual(rko2026USD.list.length, 182, 'Active USD RKO documents count in 2026 must be 182');
+  assert.strictEqual(rko2026USD.totals.USD, 246104.40, 'Total USD cash payout out of USD desk must be $246,104.40 USD');
+  assert.strictEqual(rko2026USD.operationalExpenses.USD, 228148.74, 'Operational USD expenses must be $228,148.74 USD');
+  assert.strictEqual(rko2026USD.conversionDifferenceUsd, 17955.66, 'Conversion difference (autoconversions) must be exactly $17,955.66 USD');
+  assert.strictEqual(
+    Number((rko2026USD.operationalExpenses.USD + rko2026USD.conversionDifferenceUsd).toFixed(2)),
+    rko2026USD.totals.USD,
+    'Operational USD Expenses + Conversion Difference must equal Total USD Payout ($246,104.40 USD)'
+  );
+
   const rkoChartSumUSD = rko2026USD.categoriesChart.reduce((acc, c) => acc + c.amount, 0);
-  console.log(`Categories Chart Total Sum: $${rkoChartSumUSD.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}`);
-  rko2026USD.categoriesChart.slice(0, 5).forEach(c => {
-    console.log(`  - ${c.name}: $${c.amount.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}`);
-  });
-  console.log(`  ... and ${rko2026USD.categoriesChart.length - 5} more categories.`);
+  assert.strictEqual(Number(rkoChartSumUSD.toFixed(2)), 228148.74, 'Operational Categories Chart sum must equal $228,148.74 USD');
+  console.log('  ✅ TEST 3 PASSED: Total payout $246,104.40 USD = Operational $228,148.74 USD + Conversions $17,955.66 USD.');
 
-  // Test 4: 2026 TJS Expenses (RKO) Reconciliation
+  // Test Case 4: 2026 TJS Expenses (RKO)
+  console.log('[TEST 4] 2026 TJS Expenses (RKO) Reconciliation...');
   const rko2026TJS = await FinanceRepository.getExpenses({ year: 2026, currency: 'TJS', category: 'ALL', search: '' });
-  console.log('\n--- 4. 2026 TJS Expenses (RKO) ---');
-  console.log(`Active RKO Documents Count: ${rko2026TJS.list.length}`);
-  console.log(`RKO Table Total Sum: ${rko2026TJS.totals.TJS.toLocaleString('ru-RU')} TJS`);
+  assert.strictEqual(rko2026TJS.list.length, 29, 'Active TJS RKO documents count in 2026 must be 29');
+  assert.strictEqual(rko2026TJS.totals.TJS, 166467, 'Total TJS RKO sum must be 166,467 TJS');
+  
   const rkoChartSumTJS = rko2026TJS.categoriesChart.reduce((acc, c) => acc + c.amount, 0);
-  console.log(`Categories Chart Total Sum: ${rkoChartSumTJS.toLocaleString('ru-RU')} TJS`);
-  rko2026TJS.categoriesChart.forEach(c => {
-    console.log(`  - ${c.name}: ${c.amount.toLocaleString('ru-RU')} TJS`);
-  });
-  if (Math.abs(rko2026TJS.totals.TJS - rkoChartSumTJS) < 0.05) {
-    console.log('✅ RESULT: RKO TJS Totals & Diagram match perfectly!\n');
-  } else {
-    console.error(`❌ DISCREPANCY: Table (${rko2026TJS.totals.TJS}) vs Chart (${rkoChartSumTJS})\n`);
-  }
+  assert.strictEqual(rkoChartSumTJS, 166467, 'RKO TJS Categories Chart sum must equal table total 166,467 TJS');
+  console.log('  ✅ TEST 4 PASSED: 29 docs, total 166,467 TJS matches chart 100%.');
 
-  // Test 5: Exact 2 TJS Reconciliation between PKO and RKO
-  console.log('--- 5. 2 TJS Reconciliation Analysis ---');
-  console.log(`PKO Total TJS: ${pko2026TJS.totals.TJS} TJS`);
-  console.log(`RKO Total TJS: ${rko2026TJS.totals.TJS} TJS`);
-  console.log(`Difference: ${rko2026TJS.totals.TJS - pko2026TJS.totals.TJS} TJS`);
-  console.log('Source Documents:');
-  console.log('  - PKO #205 (2026-09-12): 51 380 TJS (Ref: ПКО-КОНВ-205, Autoconversion $5542.61 USD @ 9.27)');
-  console.log('  - RKO #383 (2026-09-12): 51 382 TJS (Ref: РКО-383, "Пардохти маблаги кофтани КОТЛОВАН")');
-  console.log('  Explanation: 2 TJS difference is a cash rounding/adjustment made during payout for pit excavation work on Sept 12, 2026.\n');
+  // Test Case 5: 2 TJS Document Assertion (PKO #205 vs RKO #383)
+  console.log('[TEST 5] 2 TJS Document Reconciliation Assertion...');
+  const pko205 = pko2026TJS.list.find(p => p.id === 205);
+  const rko383 = rko2026TJS.list.find(e => e.id === 383);
+  assert.ok(pko205, 'PKO #205 must exist in TJS active payments');
+  assert.ok(rko383, 'RKO #383 must exist in TJS active expenses');
+  assert.strictEqual(pko205.amount, 51380, 'PKO #205 amount must be 51,380 TJS');
+  assert.strictEqual(rko383.amount, 51382, 'RKO #383 amount must be 51,382 TJS');
+  assert.strictEqual(rko383.amount - pko205.amount, 2, 'Difference between RKO #383 and PKO #205 must be exactly 2 TJS');
+  console.log('  ✅ TEST 5 PASSED: Verified PKO #205 (51,380 TJS) vs RKO #383 (51,382 TJS) exact 2 TJS difference.');
 
-  // Test 6: Partner Investment Unified Category Verification
-  console.log('--- 6. Partner Investment Category Verification ---');
-  const partnerCatInChart = pko2026USD.categoriesChart.find(c => c.name === 'Инвестиции партнёров');
-  console.log(`Unified Category Name in Chart: "${partnerCatInChart?.name}"`);
-  console.log(`Total Unified Partner Investment Amount: $${partnerCatInChart?.amount.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}`);
-  const rawPartnerDocs = pko2026USD.list.filter(item => item.category === 'Инвестиции партнёров');
-  console.log(`Total Partner Investment PKO Documents: ${rawPartnerDocs.length}`);
+  // Test Case 6: Partner Investment Unified Category Assertion
+  console.log('[TEST 6] Unified Partner Investment Category...');
+  const partnerCat = pko2026USD.categoriesChart.find(c => c.name === 'Инвестиции партнёров');
+  assert.ok(partnerCat, 'Category "Инвестиции партнёров" must exist in chart');
+  assert.strictEqual(partnerCat.amount, 36237.92, 'Unified Partner Investment amount must equal $36,237.92 USD');
+  console.log('  ✅ TEST 6 PASSED: Category "Инвестиции партнёров" is unified and equals $36,237.92 USD.');
 
-  // Test 7: Empty Selection & Search Query Edge Cases
-  console.log('\n--- 7. Edge Cases Verification ---');
-  const emptyRes = await FinanceRepository.getIncome({ year: 2026, currency: 'USD', search: 'NON_EXISTENT_QUERY_xyz' });
-  console.log(`Search for non-existent item returns list length: ${emptyRes.list.length}, chart length: ${emptyRes.categoriesChart.length}`);
-  if (emptyRes.list.length === 0 && emptyRes.categoriesChart.length === 0) {
-    console.log('✅ RESULT: Empty selection correctly returns 0 items and empty chart!\n');
-  }
+  // Test Case 7: Search and Filter Consistency
+  console.log('[TEST 7] Search & Filter Consistency...');
+  const searchRes = await FinanceRepository.getIncome({ year: 2026, currency: 'USD', search: 'Мубинчон' });
+  const searchChartSum = searchRes.categoriesChart.reduce((acc, c) => acc + c.amount, 0);
+  const searchListSum = searchRes.list.reduce((acc, p) => acc + p.amount, 0);
+  assert.strictEqual(Number(searchChartSum.toFixed(2)), Number(searchListSum.toFixed(2)), 'Diagram sum must match list sum for search results');
+  console.log('  ✅ TEST 7 PASSED: Chart sum matches list sum perfectly under search filter.');
 
-  console.log('=====================================================');
-  console.log('          ALL RECONCILIATION TESTS PASSED            ');
+  // Test Case 8: Empty Selection Edge Case
+  console.log('[TEST 8] Empty Selection Edge Case...');
+  const emptyRes = await FinanceRepository.getIncome({ year: 2026, currency: 'USD', search: 'NON_EXISTENT_QUERY_XYZ_123' });
+  assert.strictEqual(emptyRes.list.length, 0, 'List must be empty');
+  assert.strictEqual(emptyRes.categoriesChart.length, 0, 'Categories chart must be empty');
+  console.log('  ✅ TEST 8 PASSED: Empty selection returns 0 items and empty chart.');
+
+  console.log('\n=====================================================');
+  console.log('       ALL ASSERTION RECONCILIATION TESTS PASSED     ');
   console.log('=====================================================');
 }
 
-runReconciliationTests().catch(err => {
-  console.error('Test error:', err);
+runStrictReconciliationTests().catch(err => {
+  console.error('\n❌ RECONCILIATION TEST FAILURE:', err);
   process.exit(1);
 });

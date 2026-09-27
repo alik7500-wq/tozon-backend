@@ -302,7 +302,7 @@ export class FinanceRepository {
 
     // Normalize and extract currency for each payment
     let normalizedList = allPayments
-      .filter(p => filters.include_voided ? true : p.status !== 'VOIDED')
+      .filter(p => filters.include_voided ? true : (p.status !== 'VOIDED' && p.status !== 'CANCELLED' && p.status !== 'REVERSED' && !p.voided_at))
       .map(p => {
         const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
         const amount = (p.amount_minor || 0) / 100;
@@ -378,16 +378,41 @@ export class FinanceRepository {
     if (!availableCurrencies.includes('USD')) availableCurrencies.push('USD');
     if (!availableCurrencies.includes('TJS')) availableCurrencies.push('TJS');
 
-    // Totals by currency
+    // Totals by currency, net company income, and total USD equivalent
     const isAllYears = filters.year === 'ALL';
+    const eskhataRate = 9.27;
     const totalsByCurrency = {};
-    availableCurrencies.forEach(c => { totalsByCurrency[c] = 0; });
+    const netCompanyIncome = {};
+    availableCurrencies.forEach(c => { 
+      totalsByCurrency[c] = 0; 
+      netCompanyIncome[c] = 0;
+    });
+
+    let totalUsdEquivalent = 0;
+
     normalizedList.forEach(item => {
       const pYear = item.date ? new Date(item.date).getFullYear() : null;
       if (isAllYears || pYear === currentYear) {
         totalsByCurrency[item.currency] = (totalsByCurrency[item.currency] || 0) + item.amount;
+        totalUsdEquivalent += this.calculateItemUsdAmount(item, eskhataRate);
+
+        const isInternalTransfer = item.transferId || 
+          item.operationType === 'INTERNAL_CASH_TRANSFER' || 
+          item.operationType === 'CONVERSION' || 
+          (item.reference && item.reference.includes('КОНВ')) || 
+          (item.payerName && item.payerName.includes('Касса') && item.payerName.includes('Автоконвертация'));
+        
+        if (!isInternalTransfer) {
+          netCompanyIncome[item.currency] = (netCompanyIncome[item.currency] || 0) + item.amount;
+        }
       }
     });
+
+    Object.keys(totalsByCurrency).forEach(c => {
+      totalsByCurrency[c] = Number((totalsByCurrency[c] || 0).toFixed(2));
+      netCompanyIncome[c] = Number((netCompanyIncome[c] || 0).toFixed(2));
+    });
+    totalUsdEquivalent = Number(totalUsdEquivalent.toFixed(2));
 
     // Filtered list for display
     let filteredList = normalizedList;
@@ -430,12 +455,36 @@ export class FinanceRepository {
       return 'Прочие приходы';
     };
 
+    // Category chart items derived from filteredList (matching year, cash desk, currency, search filter)
+    const categoryBaseItems = filteredList;
+    const categoryTotals = {};
+    const categoryCurrencies = {};
+
+    categoryBaseItems.forEach(item => {
+      const cat = resolveIncomeCategory(item);
+      let amountInChartCur = item.amount;
+      if (!selectedCurrency) {
+        amountInChartCur = this.calculateItemUsdAmount(item, eskhataRate);
+      }
+
+      categoryTotals[cat] = (categoryTotals[cat] || 0) + amountInChartCur;
+      if (!categoryCurrencies[cat]) categoryCurrencies[cat] = {};
+      categoryCurrencies[cat][item.currency] = (categoryCurrencies[cat][item.currency] || 0) + item.amount;
+    });
+
+    const categoriesChart = Object.keys(categoryTotals)
+      .map(cat => ({
+        name: cat,
+        amount: Number(categoryTotals[cat].toFixed(2)),
+        breakdown: categoryCurrencies[cat]
+      }))
+      .sort((a, b) => b.amount - a.amount);
+
     if (filters.category && filters.category !== 'ALL') {
       filteredList = filteredList.filter(item => resolveIncomeCategory(item) === filters.category);
     }
 
     // Monthly Chart Data
-    const eskhataRate = 9.27;
     const chartCurrency = selectedCurrency || 'USD';
     const monthNames = [
       'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -467,57 +516,6 @@ export class FinanceRepository {
       currency: chartCurrency
     }));
 
-    // Categories Breakdown Chart for Income
-    const categoryTotals = {};
-    const categoryCurrencies = {};
-
-    // Filter category base items considering search if present
-    let categoryBaseItems = normalizedList;
-    if (!isAllYears) {
-      categoryBaseItems = categoryBaseItems.filter(item => {
-        if (!item.date) return false;
-        return new Date(item.date).getFullYear() === currentYear;
-      });
-    }
-
-    if (filters.search) {
-      const q = filters.search.toLowerCase();
-      categoryBaseItems = categoryBaseItems.filter(item =>
-        (item.clientName && item.clientName.toLowerCase().includes(q)) ||
-        (item.contract && item.contract.toLowerCase().includes(q)) ||
-        (item.reference && item.reference.toLowerCase().includes(q)) ||
-        (item.comment && item.comment.toLowerCase().includes(q))
-      );
-    }
-
-    categoryBaseItems.forEach(item => {
-      if (selectedCurrency && item.currency !== selectedCurrency) {
-        return;
-      }
-      const isInternalTransfer = item.transferId || item.operationType === 'INTERNAL_CASH_TRANSFER' || (item.reference && item.reference.includes('КОНВ')) || (item.payerName && item.payerName.includes('Касса') && item.payerName.includes('Автоконвертация'));
-      if (!selectedCurrency && isInternalTransfer) {
-        return;
-      }
-
-      const cat = resolveIncomeCategory(item);
-      let amountInChartCur = item.amount;
-      if (!selectedCurrency) {
-        amountInChartCur = this.calculateItemUsdAmount(item, eskhataRate);
-      }
-
-      categoryTotals[cat] = (categoryTotals[cat] || 0) + amountInChartCur;
-      if (!categoryCurrencies[cat]) categoryCurrencies[cat] = {};
-      categoryCurrencies[cat][item.currency] = (categoryCurrencies[cat][item.currency] || 0) + item.amount;
-    });
-
-    const categoriesChart = Object.keys(categoryTotals)
-      .map(cat => ({
-        name: cat,
-        amount: Number(categoryTotals[cat].toFixed(2)),
-        breakdown: categoryCurrencies[cat]
-      }))
-      .sort((a, b) => b.amount - a.amount);
-
     // Сортировка парных операций вместе
     const incGroups = new Map();
     filteredList.forEach(p => {
@@ -547,6 +545,8 @@ export class FinanceRepository {
       list: filteredList,
       totals: totalsByCurrency,
       totalsByCurrency,
+      netCompanyIncome,
+      totalUsdEquivalent,
       availableCurrencies,
       availableYears,
       monthlyChart: chartData,
@@ -957,7 +957,7 @@ export class FinanceRepository {
     const allExpenses = expensesData || [];
     
     let normalizedList = allExpenses
-      .filter(e => filters.include_voided ? true : e.status !== 'VOIDED')
+      .filter(e => filters.include_voided ? true : (e.status !== 'VOIDED' && e.status !== 'CANCELLED' && e.status !== 'REVERSED' && !e.voided_at))
       .map(e => {
         const cur = (e.currency || 'USD').toUpperCase();
         const amount = (e.amount_minor || 0) / 100;
@@ -1007,27 +1007,37 @@ export class FinanceRepository {
     const isAllYears = filters.year === 'ALL';
     const eskhataRate = 9.27;
 
-    // Исключаем технические ордера автоконвертации (КОНВ-*) из операционных расходов
-    const operationalItems = normalizedList.filter(item => {
+    // Totals by currency, operational expenses, USD equivalent, and conversion difference
+    const totalsByCurrency = { USD: 0, TJS: 0, RUB: 0 };
+    const operationalExpenses = { USD: 0, TJS: 0, RUB: 0 };
+    let totalUsdEquivalent = 0;
+    let conversionDifferenceUsd = 0;
+
+    normalizedList.forEach(item => {
       const eYear = item.date ? new Date(item.date).getFullYear() : null;
-      if (!isAllYears && eYear !== currentYear) return false;
-      
+      if (!isAllYears && eYear !== currentYear) return;
+
+      totalsByCurrency[item.currency] = (totalsByCurrency[item.currency] || 0) + item.amount;
+      totalUsdEquivalent += this.calculateItemUsdAmount(item, eskhataRate);
+
       const isInternalTransfer = item.category === 'Конвертация валюты' || 
+        item.operationType === 'CONVERSION' || 
         (item.recipient && item.recipient.includes('Касса') && item.recipient.includes('Автоконвертация')) ||
         (item.reference && item.reference.startsWith('КОНВ-'));
-      return !isInternalTransfer;
-    });
 
-    // Totals by currency с единым расчетом USD-эквивалента
-    const totalsByCurrency = { USD: 0, TJS: 0, RUB: 0 };
-    operationalItems.forEach(item => {
-      totalsByCurrency.USD = Number((totalsByCurrency.USD + this.calculateItemUsdAmount(item, eskhataRate)).toFixed(2));
-      if (item.currency === 'TJS') {
-        totalsByCurrency.TJS = Number((totalsByCurrency.TJS + item.amount).toFixed(2));
-      } else if (item.currency === 'RUB') {
-        totalsByCurrency.RUB = Number(((totalsByCurrency.RUB || 0) + item.amount).toFixed(2));
+      if (isInternalTransfer) {
+        conversionDifferenceUsd += this.calculateItemUsdAmount(item, eskhataRate);
+      } else {
+        operationalExpenses[item.currency] = (operationalExpenses[item.currency] || 0) + item.amount;
       }
     });
+
+    Object.keys(totalsByCurrency).forEach(c => {
+      totalsByCurrency[c] = Number((totalsByCurrency[c] || 0).toFixed(2));
+      operationalExpenses[c] = Number((operationalExpenses[c] || 0).toFixed(2));
+    });
+    totalUsdEquivalent = Number(totalUsdEquivalent.toFixed(2));
+    conversionDifferenceUsd = Number(conversionDifferenceUsd.toFixed(2));
 
     // Filtered list
     let filteredList = normalizedList;
@@ -1041,9 +1051,6 @@ export class FinanceRepository {
     if (selectedCurrency) {
       filteredList = filteredList.filter(item => item.currency === selectedCurrency);
     }
-    if (filters.category && filters.category !== 'ALL') {
-      filteredList = filteredList.filter(item => matchesCategory(item.category, filters.category));
-    }
     if (filters.search) {
       const q = filters.search.toLowerCase();
       filteredList = filteredList.filter(item => 
@@ -1054,16 +1061,20 @@ export class FinanceRepository {
       );
     }
 
-    // Categories Breakdown Chart
+    // Categories Breakdown Chart (derived directly from filteredList excluding internal conversions)
     const chartCurrency = selectedCurrency || 'USD';
     const categoryTotals = {};
     const categoryCurrencies = {};
 
-    operationalItems.forEach(item => {
-      if (selectedCurrency && item.currency !== selectedCurrency) {
-        return;
-      }
+    const categoryBaseItems = filteredList.filter(item => {
+      const isInternalTransfer = item.category === 'Конвертация валюты' || 
+        item.operationType === 'CONVERSION' || 
+        (item.recipient && item.recipient.includes('Касса') && item.recipient.includes('Автоконвертация')) ||
+        (item.reference && item.reference.startsWith('КОНВ-'));
+      return !isInternalTransfer;
+    });
 
+    categoryBaseItems.forEach(item => {
       const cat = item.category || 'Прочее';
       let amountInChartCur = item.amount;
       if (!selectedCurrency) {
@@ -1079,7 +1090,11 @@ export class FinanceRepository {
       name: cat,
       amount: Number(categoryTotals[cat].toFixed(2)),
       breakdown: categoryCurrencies[cat]
-    }));
+    })).sort((a, b) => b.amount - a.amount);
+
+    if (filters.category && filters.category !== 'ALL') {
+      filteredList = filteredList.filter(item => matchesCategory(item.category, filters.category));
+    }
 
     // Сортировка парных операций (КОНВ и РКО) строго вместе
     const convExpIdMap = new Map();
@@ -1131,6 +1146,9 @@ export class FinanceRepository {
       list: filteredList,
       totals: totalsByCurrency,
       totalsByCurrency,
+      operationalExpenses,
+      totalUsdEquivalent,
+      conversionDifferenceUsd,
       availableCurrencies,
       availableYears,
       categoriesChart,
