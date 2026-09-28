@@ -1,5 +1,6 @@
 import { getDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
+import { matchSearchQuery } from '../../utils/searchUtils.js';
 
 export class LeadsRepository {
   static async findAll(filters = {}) {
@@ -17,12 +18,11 @@ export class LeadsRepository {
 
     let leads = data || [];
     if (filters.search) {
-      const s = filters.search.toLowerCase();
       leads = leads.filter(l => 
-        (l.full_name && l.full_name.toLowerCase().includes(s)) ||
-        (l.phone && l.phone.toLowerCase().includes(s)) ||
-        (l.passport_number && l.passport_number.toLowerCase().includes(s)) ||
-        (l.inn && l.inn.toLowerCase().includes(s))
+        matchSearchQuery(l, ['full_name', 'phone', 'passport_series', 'passport_number', 'inn', 'registration_address'], filters.search, {
+          phoneFields: ['phone'],
+          innFields: ['inn']
+        })
       );
     }
 

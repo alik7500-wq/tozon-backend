@@ -2,6 +2,7 @@ import { getDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
 import { allocatePaymentsFIFO } from '../../utils/fifoPaymentAllocation.js';
+import { matchSearchQuery } from '../../utils/searchUtils.js';
 
 export class DealsRepository {
   static async findAll(filters = {}) {
@@ -37,14 +38,24 @@ export class DealsRepository {
     }
 
     if (filters.search) {
-      const s = filters.search.toLowerCase();
-      deals = deals.filter(d => 
-        (d.contract_number && d.contract_number.toLowerCase().includes(s)) ||
-        (d.leads?.full_name && d.leads.full_name.toLowerCase().includes(s)) ||
-        (d.leads?.phone && d.leads.phone.toLowerCase().includes(s)) ||
-        (d.units?.unit_number && String(d.units.unit_number).toLowerCase().includes(s)) ||
-        (d.units?.floors?.sections?.buildings?.projects?.name && d.units.floors.sections.buildings.projects.name.toLowerCase().includes(s))
-      );
+      deals = deals.filter(d => {
+        const itemToMatch = {
+          contract_number: d.contract_number,
+          full_name: d.leads?.full_name,
+          phone: d.leads?.phone,
+          passport_series: d.leads?.passport_series,
+          passport_number: d.leads?.passport_number,
+          inn: d.leads?.inn,
+          unit_number: d.units?.unit_number,
+          project_name: d.units?.floors?.sections?.buildings?.projects?.name
+        };
+        return matchSearchQuery(itemToMatch, ['contract_number', 'full_name', 'phone', 'inn', 'project_name'], filters.search, {
+          phoneFields: ['phone'],
+          contractFields: ['contract_number'],
+          unitFields: ['unit_number'],
+          innFields: ['inn']
+        });
+      });
     }
 
     const today = getBusinessDate();

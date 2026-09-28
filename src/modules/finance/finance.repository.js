@@ -3,6 +3,7 @@ import { getDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { recalculateDealSchedules } from '../../utils/recalculateDealSchedules.js';
+import { matchSearchQuery } from '../../utils/searchUtils.js';
 
 // Проверка идемпотентности напрямую в БД без использования in-memory кэша (для многопроцессной архитектуры)
 async function checkIdempotentExpense(db, key) {
@@ -427,12 +428,17 @@ export class FinanceRepository {
       filteredList = filteredList.filter(item => item.currency === selectedCurrency);
     }
     if (filters.search) {
-      const q = filters.search.toLowerCase();
       filteredList = filteredList.filter(item => 
-        (item.clientName && item.clientName.toLowerCase().includes(q)) ||
-        (item.contract && item.contract.toLowerCase().includes(q)) ||
-        (item.reference && item.reference.toLowerCase().includes(q)) ||
-        (item.comment && item.comment.toLowerCase().includes(q))
+        matchSearchQuery(
+          item,
+          ['clientName', 'contract', 'reference', 'comment', 'clientPhone', 'clientInn', 'payerName'],
+          filters.search,
+          {
+            phoneFields: ['clientPhone'],
+            contractFields: ['contract'],
+            innFields: ['clientInn']
+          }
+        )
       );
     }
 
@@ -2697,12 +2703,20 @@ export class FinanceRepository {
       deals = deals.filter(d => String(d.leads?.id) === String(selectedLeadId));
     }
     if (filters.search) {
-      const q = filters.search.toLowerCase();
-      deals = deals.filter(d =>
-        (d.contract_number && d.contract_number.toLowerCase().includes(q)) ||
-        (d.leads?.full_name && d.leads?.full_name.toLowerCase().includes(q)) ||
-        (d.units?.floors?.sections?.buildings?.projects?.name && d.units?.floors?.sections?.buildings?.projects?.name.toLowerCase().includes(q))
-      );
+      deals = deals.filter(d => {
+        const itemToMatch = {
+          contract_number: d.contract_number,
+          full_name: d.leads?.full_name,
+          phone: d.leads?.phone,
+          unit_number: d.units?.unit_number,
+          project_name: d.units?.floors?.sections?.buildings?.projects?.name
+        };
+        return matchSearchQuery(itemToMatch, ['contract_number', 'full_name', 'phone', 'project_name'], filters.search, {
+          phoneFields: ['phone'],
+          contractFields: ['contract_number'],
+          unitFields: ['unit_number']
+        });
+      });
     }
 
     const monthNames = [

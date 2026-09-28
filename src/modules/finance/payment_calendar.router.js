@@ -2,6 +2,7 @@ import express from 'express';
 import { getDB } from '../../db/connection.js';
 import { protect } from '../../middleware/auth.middleware.js';
 import { allocatePaymentsFIFO, getDushanbeCurrentDateStr } from '../../utils/fifoPaymentAllocation.js';
+import { matchSearchQuery } from '../../utils/searchUtils.js';
 
 const router = express.Router();
 router.use(protect);
@@ -171,12 +172,18 @@ router.get('/calendar', async (req, res, next) => {
       });
     }
 
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    if (search && String(search).trim()) {
       filteredItems = filteredItems.filter(i => 
-        (i.contract_number && i.contract_number.toLowerCase().includes(q)) ||
-        (i.lead_name && i.lead_name.toLowerCase().includes(q)) ||
-        (i.project_name && i.project_name.toLowerCase().includes(q))
+        matchSearchQuery(
+          i,
+          ['lead_name', 'lead_phone', 'project_name'],
+          search,
+          {
+            phoneFields: ['lead_phone'],
+            contractFields: ['contract_number'],
+            unitFields: ['unit_number']
+          }
+        )
       );
     }
 
