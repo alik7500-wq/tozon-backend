@@ -6,11 +6,13 @@
 
 export const normalizeSearchText = (value) => {
   if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.map(v => normalizeSearchText(v)).join(' ');
   return String(value).trim().toLocaleLowerCase();
 };
 
 export const extractDigits = (value) => {
   if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.map(v => extractDigits(v)).join(' ');
   return String(value).replace(/\D/g, '');
 };
 
