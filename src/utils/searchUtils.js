@@ -26,12 +26,14 @@ export const matchPhone = (phoneValue, queryInput) => {
   const queryDigits = extractDigits(queryInput);
   if (!phoneDigits || !queryDigits) return false;
 
-  if (phoneDigits.includes(queryDigits) || queryDigits.includes(phoneDigits)) return true;
+  if (phoneDigits.includes(queryDigits)) return true;
 
   const cleanPhone = phoneDigits.startsWith('992') ? phoneDigits.slice(3) : phoneDigits;
   const cleanQuery = queryDigits.startsWith('992') ? queryDigits.slice(3) : queryDigits;
 
-  return cleanQuery.length > 0 && (cleanPhone.includes(cleanQuery) || cleanQuery.includes(cleanPhone));
+  if (!cleanPhone || !cleanQuery) return false;
+
+  return cleanPhone.includes(cleanQuery);
 };
 
 /**
@@ -53,9 +55,10 @@ export const matchSearchQuery = (item, fields = [], searchQuery = '', options = 
     }
   }
 
-  // 2. Phone fields matching (normalized digits)
+  // 2. Phone fields matching (normalized digits for phone-like queries)
+  const isPhoneQuery = /^[\d\s+\-()]+$/.test(q);
   const phoneFields = options.phoneFields || ['phone', 'lead_phone', 'clientPhone', 'recipient'];
-  if (qDigits.length >= 3) {
+  if (isPhoneQuery && qDigits.length >= 3) {
     for (const pField of phoneFields) {
       const pVal = item[pField];
       if (pVal && matchPhone(pVal, qDigits)) return true;
