@@ -371,15 +371,240 @@ export class DealsRepository {
     const db = getDB();
     const now = new Date().toISOString();
 
-    const { data: deal } = await db.from('deals').select('*').eq('id', id).single();
+    const { data: deal } = await db.from('deals').select('*, payments(*)').eq('id', id).single();
     if (!deal) throw new AppError('Сделка не найдена', 404);
-    if (deal.status === 'CANCELLED') throw new AppError('Сделка уже отменена', 400);
-    if (deal.status === 'SIGNED' && userRole !== 'ADMIN' && !reason) {
-      throw new AppError('Для отмены подписанного договора укажите причину', 400);
+    if (deal.status === 'CANCELLED') throw new AppError('Сделка уже отменена / расторгнута', 400);
+
+    const activePayments = (deal.payments || []).filter(p => p.status !== 'VOIDED');
+    const paidTotalMinor = activePayments.reduce((sum, p) => sum + (p.amount_minor || 0), 0);
+
+    if (deal.status === 'SIGNED' || paidTotalMinor > 0) {
+      throw new AppError(
+        'По данной сделке имеется подписанный договор или проведенные платежи. Простая отмена запрещена. Используйте процедуру расторжения сделки (/api/deals/:id/terminate)',
+        400,
+        'TERMINATION_FLOW_REQUIRED'
+      );
     }
 
-    await db.from('deals').update({ status: 'CANCELLED', cancelled_at: now, cancellation_reason: reason || 'Отменено пользователем', updated_at: now }).eq('id', id);
+    if (userRole !== 'ADMIN' && userRole !== 'MANAGER' && userRole !== 'SALES_MANAGER') {
+      throw new AppError('У вас нет прав на отмену бронирования', 403);
+    }
+
+    await db.from('deals').update({ status: 'CANCELLED', cancelled_at: now, cancellation_reason: reason || 'Отмена брони пользователем', updated_at: now }).eq('id', id);
     await db.from('units').update({ status: 'AVAILABLE', updated_at: now }).eq('id', deal.unit_id);
+
+    return this.getDealById(id);
+  }
+
+  static async terminateDeal(id, data, userId, userRole) {
+    if (userRole !== 'ADMIN') {
+      throw new AppError('Операция расторжения сделки доступна только администраторам', 403);
+    }
+
+    const db = getDB();
+    const now = new Date().toISOString();
+
+    // Stable deterministic idempotency key tied to deal ID
+    const idempotencyKey = data.idempotency_key ? String(data.idempotency_key).trim() : `TERMINATE_DEAL_${id}`;
+
+    // 1. Try PostgreSQL Atomic RPC Function if available
+    try {
+      const { data: rpcResult, error: rpcErr } = await db.rpc('terminate_deal_atomic', {
+        p_deal_id: Number(id),
+        p_user_id: Number(userId),
+        p_reason: data.reason ? String(data.reason).trim() : null,
+        p_comment: data.comment ? String(data.comment).trim() : null,
+        p_refund_amount_minor: Number(data.refund_amount_minor || 0),
+        p_retention_reason: data.retention_reason ? String(data.retention_reason).trim() : null,
+        p_cash_desk_id: data.cash_desk_id || null,
+        p_idempotency_key: idempotencyKey,
+        p_effective_date: data.effective_date || now.split('T')[0]
+      });
+
+      if (!rpcErr && rpcResult) {
+        return this.getDealById(id);
+      }
+      if (rpcErr && rpcErr.message && !rpcErr.message.includes('does not exist') && !rpcErr.message.includes('function')) {
+        throw new AppError(rpcErr.message, 400);
+      }
+    } catch (err) {
+      if (err instanceof AppError) throw err;
+    }
+
+    // 2. JS-level Fallback Execution (Pre-migration execution)
+    const { data: deal, error: dealErr } = await db.from('deals')
+      .select('*, leads(*), units(*), payments(*), deal_payment_schedules(*)')
+      .eq('id', id)
+      .single();
+
+    if (dealErr || !deal) throw new AppError('Сделка не найдена', 404);
+
+    if (deal.status === 'CANCELLED') {
+      throw new AppError('Сделка уже расторгнута / отменена', 400);
+    }
+
+    const activePayments = (deal.payments || []).filter(p => p.status !== 'VOIDED');
+    const paidTotalMinor = activePayments.reduce((sum, p) => sum + (p.amount_minor || 0), 0);
+
+    const reason = data.reason ? String(data.reason).trim() : null;
+    if (!reason) {
+      throw new AppError('Причина расторжения договора обязательна', 400);
+    }
+
+    const refundAmountMinor = parseInt(data.refund_amount_minor || 0, 10);
+    if (isNaN(refundAmountMinor) || refundAmountMinor < 0) {
+      throw new AppError('Сумма возврата не может быть отрицательной', 400);
+    }
+
+    if (paidTotalMinor === 0) {
+      if (refundAmountMinor > 0) {
+        throw new AppError('По данной сделке нет фактических платежей. Сумма возврата должна быть равна 0', 400);
+      }
+    } else {
+      if (refundAmountMinor > paidTotalMinor) {
+        throw new AppError(
+          `Сумма возврата (${(refundAmountMinor / 100).toFixed(2)}) не может превышать фактически полученную сумму (${(paidTotalMinor / 100).toFixed(2)})`,
+          400
+        );
+      }
+    }
+
+    const retainedAmountMinor = paidTotalMinor - refundAmountMinor;
+    const retentionReason = data.retention_reason ? String(data.retention_reason).trim() : null;
+    if (retainedAmountMinor > 0 && !retentionReason) {
+      throw new AppError('При наличии удержанной суммы необходимо указать основание удержания', 400);
+    }
+
+    const cashDeskId = data.cash_desk_id || null;
+    if (refundAmountMinor > 0 && !cashDeskId) {
+      throw new AppError('Касса списания обязательна при возврате денежных средств', 400);
+    }
+
+    let refundExpenseId = null;
+    if (refundAmountMinor > 0) {
+      // Check existing expense by deterministic idempotency key
+      const { data: existingExp } = await db.from('expenses')
+        .select('id')
+        .eq('idempotency_key', idempotencyKey)
+        .maybeSingle();
+
+      if (existingExp) {
+        refundExpenseId = existingExp.id;
+      } else {
+        const contractNum = deal.contract_number ? `№${deal.contract_number}` : `№${deal.id}`;
+        const expensePayload = {
+          category: 'Возврат средств (расторжение договора)',
+          amount_minor: refundAmountMinor,
+          currency: deal.currency || 'USD',
+          expense_date: data.effective_date || now.split('T')[0],
+          recipient: deal.leads?.full_name || 'Клиент',
+          description: `Возврат денежных средств при расторжении договора ${contractNum}. ${data.comment || ''}`.trim(),
+          reference: `РКО-ВОЗВРАТ-${deal.contract_number || deal.id}`,
+          cash_desk_id: cashDeskId,
+          idempotency_key: idempotencyKey,
+          created_by_user_id: userId,
+          created_at: now
+        };
+
+        try {
+          expensePayload.deal_id = id;
+        } catch (e) {}
+
+        const { data: insertedExp, error: expErr } = await db.from('expenses')
+          .insert([expensePayload])
+          .select()
+          .single();
+
+        if (expErr) throw new AppError(`Ошибка создания возвратного РКО: ${expErr.message}`, 500);
+        refundExpenseId = insertedExp.id;
+      }
+    }
+
+    const dealUpdatePayload = {
+      status: 'CANCELLED',
+      cancelled_at: now,
+      cancellation_reason: reason,
+      updated_at: now
+    };
+
+    try {
+      dealUpdatePayload.paid_at_termination_minor = paidTotalMinor;
+      dealUpdatePayload.refund_amount_minor = refundAmountMinor;
+      dealUpdatePayload.retained_amount_minor = retainedAmountMinor;
+      dealUpdatePayload.refund_expense_id = refundExpenseId;
+      dealUpdatePayload.terminated_by_user_id = userId;
+    } catch (e) {}
+
+    const { error: updateErr } = await db.from('deals')
+      .update(dealUpdatePayload)
+      .eq('id', id);
+
+    if (updateErr) {
+      await db.from('deals').update({
+        status: 'CANCELLED',
+        cancelled_at: now,
+        cancellation_reason: reason,
+        updated_at: now
+      }).eq('id', id);
+    }
+
+    await db.from('units').update({
+      status: 'AVAILABLE',
+      updated_at: now
+    }).eq('id', deal.unit_id);
+
+    // Process deal_payment_schedules:
+    // Preserves original amount_minor (planned) and paid_amount_minor (fact) for PARTIAL items,
+    // transitions uncollected obligations to CANCELLED status.
+    const schedules = deal.deal_payment_schedules || [];
+    for (const sched of schedules) {
+      if (sched.status === 'PAID') {
+        continue;
+      } else {
+        try {
+          await db.from('deal_payment_schedules')
+            .update({
+              status: 'CANCELLED',
+              updated_at: now
+            })
+            .eq('id', sched.id);
+        } catch (err) {
+          // Fallback if CANCELLED status not yet in check constraint
+          await db.from('deal_payment_schedules')
+            .update({
+              status: sched.paid_amount_minor > 0 ? 'PAID' : 'UPCOMING',
+              updated_at: now
+            })
+            .eq('id', sched.id);
+        }
+      }
+    }
+
+    try {
+      await db.from('deal_audit_logs').insert([{
+        deal_id: id,
+        user_id: userId,
+        action: 'TERMINATE_DEAL',
+        changes_json: {
+          contract_number: deal.contract_number,
+          unit_id: deal.unit_id,
+          lead_id: deal.lead_id,
+          contract_total: deal.final_price_minor,
+          paid_total: paidTotalMinor,
+          refund_amount: refundAmountMinor,
+          retained_amount: retainedAmountMinor,
+          refund_expense_id: refundExpenseId,
+          cash_desk_id: cashDeskId,
+          reason,
+          retention_reason: retentionReason,
+          comment: data.comment || null,
+          idempotency_key: idempotencyKey
+        },
+        created_at: now
+      }]);
+    } catch (auditErr) {
+      console.warn('Failed to insert audit log for termination:', auditErr);
+    }
 
     return this.getDealById(id);
   }

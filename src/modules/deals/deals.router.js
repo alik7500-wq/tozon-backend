@@ -103,11 +103,21 @@ router.post('/:id/sign', async (req, res, next) => {
   }
 });
 
-router.post('/:id/cancel', async (req, res, next) => {
+router.post('/:id/cancel', restrictTo('ADMIN', 'MANAGER'), async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
     const { reason } = req.body;
     const deal = await DealsRepository.cancelDeal(cleanId, reason, req.user.id, req.user.role);
+    res.status(200).json({ status: 'success', data: { deal } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/:id/terminate', restrictTo('ADMIN'), resolveCashDeskAccess, async (req, res, next) => {
+  try {
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const deal = await DealsRepository.terminateDeal(cleanId, req.body, req.user.id, req.user.role);
     res.status(200).json({ status: 'success', data: { deal } });
   } catch (error) {
     next(error);

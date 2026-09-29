@@ -2739,15 +2739,17 @@ export class FinanceRepository {
     const rows = deals.map(d => {
       const proj = d.units?.floors?.sections?.buildings?.projects;
       const currency = d.currency || proj?.currency || 'USD';
-      const contractAmount = (d.final_price_minor || 0) / 100;
+      const isCancelled = d.status === 'CANCELLED';
       
       const schedules = d.deal_payment_schedules || [];
-      const payments = d.payments || [];
+      const payments = (d.payments || []).filter(p => p.status !== 'VOIDED');
 
       const paymentsTotal = payments.reduce((sum, p) => sum + ((p.amount_minor || 0) / 100), 0);
       const schedulesPaidTotal = schedules.reduce((sum, s) => sum + ((s.paid_amount_minor || 0) / 100), 0);
       const downPayment = (d.down_payment_minor || 0) / 100;
       const totalPaid = Math.max(paymentsTotal, schedulesPaidTotal, downPayment);
+      
+      const contractAmount = isCancelled ? totalPaid : ((d.final_price_minor || 0) / 100);
       const remainingDebt = Math.max(0, contractAmount - totalPaid);
 
       grandTotalContract += contractAmount;
@@ -2756,17 +2758,19 @@ export class FinanceRepository {
 
       const monthlyValues = Array(12).fill(0).map(() => ({ planned: 0, actual: 0 }));
 
-      // Plan from schedules
-      schedules.forEach(s => {
-        if (s.due_date) {
-          const sDate = new Date(s.due_date);
-          if (sDate.getFullYear() === currentYear) {
-            const m = sDate.getMonth();
-            const planAmt = (s.amount_minor || 0) / 100;
-            monthlyValues[m].planned += planAmt;
+      // Plan from schedules (exclude CANCELLED deals and CANCELLED schedule items)
+      if (!isCancelled) {
+        schedules.forEach(s => {
+          if (s.due_date && s.status !== 'CANCELLED') {
+            const sDate = new Date(s.due_date);
+            if (sDate.getFullYear() === currentYear) {
+              const m = sDate.getMonth();
+              const planAmt = (s.amount_minor || 0) / 100;
+              monthlyValues[m].planned += planAmt;
+            }
           }
-        }
-      });
+        });
+      }
 
       // Fact from payments
       payments.forEach(p => {
