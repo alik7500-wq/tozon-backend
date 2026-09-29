@@ -183,13 +183,16 @@ export const getEskhataRate = async (req, res) => {
     res.json({
       success: true,
       data: {
+        available: false,
         bank: 'Банк Эсхата',
         currency: 'USD',
         baseCurrency: 'TJS',
-        buyRate: 9.18,
-        sellRate: 9.27,
-        source: 'Банк Эсхата (Продажа USD)',
-        updatedAt: new Date().toISOString()
+        buyRate: null,
+        sellRate: null,
+        updatedAt: null,
+        source: 'UNAVAILABLE',
+        isStale: true,
+        error: 'Не удалось получить актуальный курс Эсхата'
       }
     });
   }
