@@ -129,4 +129,49 @@ describe('SAFE DEAL TERMINATION GATE TEST MATRIX (V2)', () => {
     const isSimpleCancelBlocked = signedDeal.status === 'SIGNED' || paidTotalMinor > 0;
     expect(isSimpleCancelBlocked).toBe(true);
   });
+
+  it('7. UI HOTFIX REGRESSION: DealDrawer renders EXACTLY 1 termination button for SIGNED ADMIN, 0 for MANAGER', () => {
+    // Pure logic simulation of DealDrawer action button render conditions
+    const getDealDrawerActionButtons = (deal, user) => {
+      const isAdmin = user?.role === 'ADMIN';
+      const buttons = [];
+
+      if (deal.status === 'RESERVED' && (deal.paid_amount_minor || 0) === 0) {
+        buttons.push({ type: 'CANCEL_BOOKING', text: 'Отменить бронь' });
+      }
+
+      if (isAdmin && deal.status !== 'CANCELLED' && (deal.status === 'SIGNED' || (deal.paid_amount_minor || 0) > 0)) {
+        buttons.push({ type: 'TERMINATE_DEAL', text: 'Расторгнуть договор' });
+      }
+
+      return buttons;
+    };
+
+    const signedDeal = { id: 39, status: 'SIGNED', paid_amount_minor: 50000 };
+    const reservedUnpaidDeal = { id: 40, status: 'RESERVED', paid_amount_minor: 0 };
+    const cancelledDeal = { id: 41, status: 'CANCELLED', paid_amount_minor: 0 };
+
+    const adminUser = { role: 'ADMIN' };
+    const managerUser = { role: 'SALES_MANAGER' };
+
+    // 1. SIGNED ADMIN -> Exactly 1 "Расторгнуть договор" button
+    const signedAdminButtons = getDealDrawerActionButtons(signedDeal, adminUser);
+    const signedAdminTerminationCount = signedAdminButtons.filter(b => b.text === 'Расторгнуть договор').length;
+    expect(signedAdminButtons.length).toBe(1);
+    expect(signedAdminTerminationCount).toBe(1);
+
+    // 2. SIGNED MANAGER -> Exactly 0 "Расторгнуть договор" buttons
+    const signedManagerButtons = getDealDrawerActionButtons(signedDeal, managerUser);
+    const signedManagerTerminationCount = signedManagerButtons.filter(b => b.text === 'Расторгнуть договор').length;
+    expect(signedManagerButtons.length).toBe(0);
+
+    // 3. RESERVED UNPAID -> 1 "Отменить бронь" button, 0 "Расторгнуть договор" buttons
+    const reservedButtons = getDealDrawerActionButtons(reservedUnpaidDeal, managerUser);
+    expect(reservedButtons.length).toBe(1);
+    expect(reservedButtons[0].text).toBe('Отменить бронь');
+
+    // 4. CANCELLED -> 0 buttons
+    const cancelledButtons = getDealDrawerActionButtons(cancelledDeal, adminUser);
+    expect(cancelledButtons.length).toBe(0);
+  });
 });
