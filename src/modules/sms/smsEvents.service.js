@@ -196,6 +196,10 @@ export class SmsEventsService {
       throw new AppError(`Событие с статусом [${checkEvent.status}] не может быть повторно отправлено`, 400, 'EVENT_NOT_CONFIRMABLE');
     }
 
+    if (checkEvent.status === 'PROCESSING') {
+      await SmsEventsRepository.revertToAwaitingConfirmation(id);
+    }
+
     // 1. Atomic claim: transition AWAITING_CONFIRMATION -> PROCESSING
     const claimedEvent = await SmsEventsRepository.atomicStartProcessing(id);
     if (!claimedEvent) {
@@ -235,7 +239,7 @@ export class SmsEventsService {
       const isConfirmEnabled = process.env.SMS_OUTBOX_CONFIRM_ENABLED === 'true';
 
       if (!isTestEnv && !isConfirmEnabled) {
-        await SmsEventsRepository.cancelEvent({ id: claimedEvent.id, userId, reason: 'SMS_OUTBOX_CONFIRM_ENABLED_FALSE' });
+        await SmsEventsRepository.revertToAwaitingConfirmation(claimedEvent.id);
         throw new AppError('Отправка SMS из Outbox заблокирована настройкой SMS_OUTBOX_CONFIRM_ENABLED', 400, 'OUTBOX_SEND_NOT_ENABLED');
       }
 

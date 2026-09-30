@@ -218,6 +218,7 @@ describe('SMS Outbox Core V1.5B.1 Tests', () => {
       vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue(mockEvent);
       vi.spyOn(SmsEventsRepository, 'getById').mockResolvedValue(mockEvent);
       vi.spyOn(SmsEventsRepository, 'cancelEvent').mockResolvedValue({ id: 101, status: 'CANCELLED' });
+      vi.spyOn(SmsEventsRepository, 'revertToAwaitingConfirmation').mockResolvedValue({ id: 101, status: 'AWAITING_CONFIRMATION' });
 
       const { LeadsRepository } = await import('../../leads/leads.repository.js');
       const { DealsRepository } = await import('../../deals/deals.repository.js');
