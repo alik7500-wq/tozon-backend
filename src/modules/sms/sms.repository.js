@@ -88,7 +88,7 @@ export class SmsRepository {
   }
 
   /**
-   * Get all messages linked to an event_id.
+   * Get all messages linked to an event_id (with context fallback for legacy historical rows).
    */
   static async getMessagesByEventId(eventId) {
     const cleanId = parseOptionalBigInt(eventId);
@@ -100,8 +100,21 @@ export class SmsRepository {
       .eq('event_id', cleanId)
       .order('id', { ascending: true });
 
-    if (error) return [];
-    return data || [];
+    if (!error && data && data.length > 0) {
+      return data;
+    }
+
+    // Context fallback for legacy historical rows created before event_id back-population
+    const { data: ev } = await db.from('sms_events').select('*').eq('id', cleanId).maybeSingle();
+    if (!ev) return [];
+
+    let fallbackQuery = db.from('sms_messages').select('*').order('id', { ascending: true });
+    if (ev.client_id) fallbackQuery = fallbackQuery.eq('client_id', ev.client_id);
+    if (ev.deal_id) fallbackQuery = fallbackQuery.eq('deal_id', ev.deal_id);
+    if (ev.created_at) fallbackQuery = fallbackQuery.gte('created_at', ev.created_at);
+
+    const { data: fallbackMsgs } = await fallbackQuery;
+    return fallbackMsgs || [];
   }
 
   /**
