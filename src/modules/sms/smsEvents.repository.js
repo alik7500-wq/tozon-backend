@@ -221,6 +221,30 @@ export class SmsEventsRepository {
   }
 
   /**
+   * List pending AUTO events awaiting confirmation for automated dispatch.
+   */
+  static async listPendingAutoEvents({ limit = 5 } = {}) {
+    const db = getServiceDB();
+    const cleanLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 5));
+
+    const { data, error } = await db
+      .from('sms_events')
+      .select('*')
+      .eq('event_type', 'PAYMENT_REMINDER')
+      .eq('mode', 'AUTO')
+      .eq('status', 'AWAITING_CONFIRMATION')
+      .order('id', { ascending: true })
+      .limit(cleanLimit);
+
+    if (error) {
+      console.error('DB error listing pending AUTO events:', error.message);
+      return [];
+    }
+
+    return await this.enrichEventsWithContractNumbers(data || []);
+  }
+
+  /**
    * Atomic transition from AWAITING_CONFIRMATION to PROCESSING.
    * Returns updated event if successful, or null if event was not in AWAITING_CONFIRMATION status.
    */

@@ -16,6 +16,12 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
       isDryRun: false
     });
 
+    let autoStats = { executed: false, reason: 'AUTO_ENABLED_FALSE', sent: 0, failed: 0, deliveryUnknown: 0, claimed: 0 };
+    if (process.env.SMS_PAYMENT_REMINDER_AUTO_ENABLED === 'true') {
+      const { defaultSmsAutoDispatcher } = await import('./smsAutoDispatcher.js');
+      autoStats = await defaultSmsAutoDispatcher.dispatchPendingAutoReminders();
+    }
+
     const durationMs = Date.now() - startTime;
     console.log('[SMS_SCHEDULER] Execution completed', {
       businessDate: stats.businessDate,
@@ -24,6 +30,8 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
       created: stats.created,
       already_exists: stats.already_exists,
       cancelled_stale: stats.cancelled_stale,
+      auto_executed: autoStats.executed,
+      auto_sent: autoStats.sent || 0,
       errors: stats.errors,
       duration_ms: durationMs
     });
@@ -43,7 +51,8 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
         skipped_invalid_phone: stats.skipped_invalid_phone,
         skipped_ineligible_deal: stats.skipped_ineligible_deal,
         errors: stats.errors,
-        candidatesCount: (stats.candidates || []).length
+        candidatesCount: (stats.candidates || []).length,
+        autoDispatcher: autoStats
       }
     });
   } catch (err) {

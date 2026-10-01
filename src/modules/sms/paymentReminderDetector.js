@@ -181,10 +181,13 @@ export class PaymentReminderDetector {
       }
 
       try {
+        const isAutoEnabled = process.env.SMS_PAYMENT_REMINDER_AUTO_ENABLED === 'true';
+        const targetMode = isAutoEnabled ? 'AUTO' : 'CONFIRM';
+
         const result = await SmsEventsRepository.createEvent({
           event_type: 'PAYMENT_REMINDER',
           idempotency_key: expectedIdempotencyKey,
-          mode: 'CONFIRM',
+          mode: targetMode,
           status: 'AWAITING_CONFIRMATION',
           client_id: clientId,
           deal_id: dealId,
