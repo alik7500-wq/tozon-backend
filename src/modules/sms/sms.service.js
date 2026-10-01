@@ -9,6 +9,17 @@ import { parseOptionalBigInt } from '../../utils/idNormalizer.js';
 import { getBusinessDate, getBusinessDateTime } from '../../utils/businessTime.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
+function formatDateDDMMYYYY(dateStr) {
+  if (!dateStr || typeof dateStr !== 'string') return dateStr;
+  const trimmed = dateStr.trim().split('T')[0];
+  const match = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    const [, yyyy, mm, dd] = match;
+    return `${dd}.${mm}.${yyyy}`;
+  }
+  return dateStr;
+}
+
 export class SmsService {
   constructor(smsProvider = new PayomSmsProvider()) {
     this.provider = smsProvider;
@@ -472,7 +483,7 @@ export class SmsService {
       if (!meetingCtx || !meetingCtx.task) {
         throw new AppError(meetingCtx?.reason || 'Для клиента не найдена запланированная встреча', 400);
       }
-      resolvedText = resolvedText.replace(/\{\{\s*meeting_date\s*\}\}/g, meetingCtx.meetingDate);
+      resolvedText = resolvedText.replace(/\{\{\s*meeting_date\s*\}\}/g, formatDateDDMMYYYY(meetingCtx.meetingDate));
       resolvedText = resolvedText.replace(/\{\{\s*meeting_time\s*\}\}/g, meetingCtx.meetingTime);
     }
 
@@ -502,7 +513,7 @@ export class SmsService {
       resolvedText = resolvedText.replace(/\{\{\s*total_paid\s*\}\}/g, payCtx.totalPaidFormatted);
       resolvedText = resolvedText.replace(/\{\{\s*remaining_balance\s*\}\}/g, payCtx.remainingBalanceFormatted);
       resolvedText = resolvedText.replace(/\{\{\s*contract_currency\s*\}\}/g, payCtx.contractCurrency);
-      resolvedText = resolvedText.replace(/\{\{\s*payment_date\s*\}\}/g, payCtx.paymentDate);
+      resolvedText = resolvedText.replace(/\{\{\s*payment_date\s*\}\}/g, formatDateDDMMYYYY(payCtx.paymentDate));
     }
 
     // 5. Resolve Deal / Payment / Debtor Context
@@ -549,7 +560,7 @@ export class SmsService {
           throw new AppError('Нет предстоящего неоплаченного платежа', 400);
         }
         resolvedText = resolvedText.replace(/\{\{\s*payment_amount\s*\}\}/g, dealContext.nextSchedule.paymentAmountFormatted);
-        resolvedText = resolvedText.replace(/\{\{\s*payment_date\s*\}\}/g, dealContext.nextSchedule.due_date);
+        resolvedText = resolvedText.replace(/\{\{\s*payment_date\s*\}\}/g, formatDateDDMMYYYY(dealContext.nextSchedule.due_date));
       }
 
       if (code === 'DEBTOR_REMINDER' || resolvedText.includes('{{overdue_amount}}')) {
