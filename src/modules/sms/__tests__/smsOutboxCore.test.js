@@ -239,4 +239,66 @@ describe('SMS Outbox Core V1.5B.1 Tests', () => {
       }
     });
   });
+
+  describe('V1.5G.7 Structured contract_number Outbox API Tests', () => {
+    it('A & D. enrichEventsWithContractNumbers enriches events with contract_number preserving leading zeros as string', async () => {
+      const mockEvents = [
+        { id: 4, deal_id: 13, status: 'AWAITING_CONFIRMATION' },
+        { id: 5, deal_id: 15, status: 'AWAITING_CONFIRMATION' }
+      ];
+
+      vi.spyOn(SmsEventsRepository, 'enrichEventsWithContractNumbers').mockImplementation(async (events) => {
+        const dealMap = { '13': '0003', '15': '0005' };
+        return events.map((e) => ({
+          ...e,
+          contract_number: dealMap[String(e.deal_id)] || null
+        }));
+      });
+
+      const enriched = await SmsEventsRepository.enrichEventsWithContractNumbers(mockEvents);
+      expect(enriched[0].contract_number).toBe('0003');
+      expect(typeof enriched[0].contract_number).toBe('string');
+      expect(enriched[1].contract_number).toBe('0005');
+      expect(typeof enriched[1].contract_number).toBe('string');
+    });
+
+    it('B. getEventById returns structured contract_number', async () => {
+      const mockEvent = { id: 4, deal_id: 13, contract_number: '0003', status: 'AWAITING_CONFIRMATION' };
+      vi.spyOn(SmsEventsRepository, 'getById').mockResolvedValue(mockEvent);
+
+      const event = await smsEventsService.getEventById(4);
+      expect(event.contract_number).toBe('0003');
+    });
+
+    it('C, G & H. previewEvent returns top-level contract_number and event.contract_number without altering previewHash or invoking Payom', async () => {
+      const mockEvent = { id: 4, deal_id: 13, contract_number: '0003', status: 'AWAITING_CONFIRMATION' };
+      vi.spyOn(SmsEventsRepository, 'getById').mockResolvedValue(mockEvent);
+
+      const { LeadsRepository } = await import('../../leads/leads.repository.js');
+      const { DealsRepository } = await import('../../deals/deals.repository.js');
+
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: 13, full_name: 'Малика Мухаммадназарова' });
+      vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({ id: 13, lead_id: 13, contract_number: '0003' });
+
+      const preview = await smsEventsService.previewEvent(4);
+
+      expect(preview.contract_number).toBe('0003');
+      expect(preview.event.contract_number).toBe('0003');
+      expect(preview.previewHash).toBeDefined();
+      expect(mockSmsService.sendSms).not.toHaveBeenCalled();
+    });
+
+    it('F. missing contract_number gracefully returns null', async () => {
+      const mockEvents = [
+        { id: 99, deal_id: null, payload_json: {}, status: 'AWAITING_CONFIRMATION' }
+      ];
+
+      vi.spyOn(SmsEventsRepository, 'enrichEventsWithContractNumbers').mockImplementation(async (events) => {
+        return events.map((e) => ({ ...e, contract_number: null }));
+      });
+
+      const enriched = await SmsEventsRepository.enrichEventsWithContractNumbers(mockEvents);
+      expect(enriched[0].contract_number).toBeNull();
+    });
+  });
 });

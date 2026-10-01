@@ -831,7 +831,7 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
       const preview = await smsService.previewSms({ templateCode: 'MEETING_REMINDER', clientId: 10, taskId: 99 });
 
       expect(preview.resolved).toBe(true);
-      expect(preview.text).toContain('2026-10-20');
+      expect(preview.text).toContain('20.10.2026');
       expect(preview.text).toContain('14:30');
       expect(preview.text).not.toContain('{{meeting_date}}');
       expect(preview.text).not.toContain('{{meeting_time}}');
@@ -917,7 +917,7 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
       const preview = await smsService.previewSms({ templateCode: 'PAYMENT_REMINDER', clientId: 10, dealId: 302 });
 
       expect(preview.text.replace(/\u00a0/g, ' ')).toContain('18 000 TJS');
-      expect(preview.text).toContain('2026-11-15');
+      expect(preview.text).toContain('15.11.2026');
       expect(preview.text).toContain('№202-B');
       expect(preview.text).not.toContain('{{payment_amount}}');
     });

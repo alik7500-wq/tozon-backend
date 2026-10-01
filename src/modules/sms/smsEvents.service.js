@@ -151,6 +151,7 @@ export class SmsEventsService {
 
     return {
       event,
+      contract_number: event.contract_number || null,
       isApplicable: true,
       text: previewResult.text,
       characterCount: previewResult.characterCount,

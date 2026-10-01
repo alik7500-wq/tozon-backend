@@ -62,6 +62,72 @@ export class SmsEventsRepository {
   }
 
   /**
+   * Bulk enrich outbox event objects with structured contract_number from deals table.
+   * Single bulk query strategy for N events prevents N+1 query overhead.
+   */
+  static async enrichEventsWithContractNumbers(events) {
+    if (!Array.isArray(events) || events.length === 0) {
+      return events || [];
+    }
+
+    const dealIds = [
+      ...new Set(
+        events
+          .map((e) => parseOptionalBigInt(e.deal_id))
+          .filter((id) => id !== null && id !== undefined)
+      )
+    ];
+
+    const dealMap = new Map();
+
+    if (dealIds.length > 0) {
+      try {
+        const db = getServiceDB();
+        const { data: deals, error } = await db
+          .from('deals')
+          .select('id, contract_number')
+          .in('id', dealIds);
+
+        if (!error && Array.isArray(deals)) {
+          for (const d of deals) {
+            if (d && d.id !== undefined && d.id !== null && d.contract_number !== undefined && d.contract_number !== null) {
+              dealMap.set(String(d.id), String(d.contract_number).trim());
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error enriching outbox events with contract numbers:', err.message);
+      }
+    }
+
+    return events.map((event) => {
+      if (!event) return event;
+      const cleanDealId = parseOptionalBigInt(event.deal_id);
+      let contractNumber = cleanDealId && dealMap.has(String(cleanDealId))
+        ? dealMap.get(String(cleanDealId))
+        : null;
+
+      if (!contractNumber && event.payload_json?.contract_number) {
+        contractNumber = String(event.payload_json.contract_number).trim();
+      }
+
+      return {
+        ...event,
+        contract_number: contractNumber ? String(contractNumber).trim() : null
+      };
+    });
+  }
+
+  /**
+   * Single event enrichment helper.
+   */
+  static async enrichSingleEvent(event) {
+    if (!event) return event;
+    const [enriched] = await this.enrichEventsWithContractNumbers([event]);
+    return enriched;
+  }
+
+  /**
    * Get single SMS event by ID.
    */
   static async getById(id) {
@@ -76,7 +142,7 @@ export class SmsEventsRepository {
       .maybeSingle();
 
     if (error || !data) return null;
-    return data;
+    return await this.enrichSingleEvent(data);
   }
 
   /**
@@ -92,7 +158,7 @@ export class SmsEventsRepository {
       .maybeSingle();
 
     if (error || !data) return null;
-    return data;
+    return await this.enrichSingleEvent(data);
   }
 
   /**
@@ -143,9 +209,10 @@ export class SmsEventsRepository {
 
     const total = count || 0;
     const totalPages = Math.ceil(total / limit);
+    const enrichedEvents = await this.enrichEventsWithContractNumbers(data || []);
 
     return {
-      events: data || [],
+      events: enrichedEvents,
       total,
       page,
       limit,
