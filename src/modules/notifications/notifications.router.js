@@ -1,10 +1,55 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
+import { authenticate } from '../../middleware/auth.middleware.js';
+import { NotificationsService } from './notifications.service.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  res.json({ success: true, message: 'notifications router stub' });
+// Protect all notification endpoints with authentication middleware
+router.use(authenticate);
+
+// GET /api/notifications — List notifications for current user
+router.get('/', async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const notifications = await NotificationsService.getUserNotifications(userId, req.query);
+    res.json({ success: true, data: notifications });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/notifications/unread-count — Get unread notifications count for current user
+router.get('/unread-count', async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const count = await NotificationsService.getUnreadCount(userId);
+    res.json({ success: true, count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/notifications/:id/read — Mark single notification as read for current user
+router.patch('/:id/read', async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const notificationId = Number(req.params.id);
+    const updated = await NotificationsService.markAsRead(notificationId, userId);
+    res.json({ success: true, data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/notifications/read-all — Mark all unread notifications as read for current user
+router.post('/read-all', async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const updatedList = await NotificationsService.markAllAsRead(userId);
+    res.json({ success: true, count: updatedList.length });
+  } catch (err) {
+    next(err);
+  }
 });
 
 export default router;
-

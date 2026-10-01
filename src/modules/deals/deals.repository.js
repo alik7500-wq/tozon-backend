@@ -3,6 +3,7 @@ import { AppError } from '../../shared/errors/errorHandler.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
 import { allocatePaymentsFIFO } from '../../utils/fifoPaymentAllocation.js';
 import { matchSearchQuery } from '../../utils/searchUtils.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 export class DealsRepository {
   static async findAll(filters = {}) {
@@ -351,6 +352,17 @@ export class DealsRepository {
         created_by_user_id: responsibleUserId,
         created_at: now
       }]);
+    }
+
+    if (finalStatus === 'RESERVED') {
+      NotificationsService.notifyReservationCreated({
+        id: newDeal.id,
+        contract_number: contractNumber,
+        unit_number: unit.unit_number,
+        responsible_user_id: responsibleUserId
+      }).catch(err => {
+        console.warn('Failed to dispatch RESERVATION_CREATED notification:', err);
+      });
     }
 
     return this.getDealById(newDeal.id);

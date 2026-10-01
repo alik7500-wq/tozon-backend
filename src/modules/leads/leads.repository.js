@@ -1,6 +1,7 @@
 import { getDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 import { matchSearchQuery } from '../../utils/searchUtils.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 export class LeadsRepository {
   static async findAll(filters = {}) {
@@ -118,6 +119,12 @@ export class LeadsRepository {
 
     const { data: lead, error } = await db.from('leads').insert([prepared]).select().single();
     if (error) throw error;
+
+    // Trigger internal notification for new lead
+    NotificationsService.notifyLeadCreated(lead).catch(err => {
+      console.warn('Failed to dispatch LEAD_CREATED notification:', err);
+    });
+
     return this.findById(lead.id);
   }
 
