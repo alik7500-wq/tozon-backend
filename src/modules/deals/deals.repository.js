@@ -87,6 +87,9 @@ export class DealsRepository {
       const areaM2 = deal.units?.area_m2_x100 ? (deal.units.area_m2_x100 / 100) : 0;
       const computedDealPricePerM2 = deal.deal_price_per_m2_minor || (areaM2 > 0 ? Math.round(deal.final_price_minor / areaM2) : deal.units?.price_per_m2_minor);
 
+      const dpCoveredMinor = Math.min(paidAmountMinor, deal.down_payment_minor || 0);
+      const dpRemainingMinor = Math.max(0, (deal.down_payment_minor || 0) - dpCoveredMinor);
+
       return {
         ...deal,
         lead_name: deal.leads?.full_name,
@@ -110,6 +113,8 @@ export class DealsRepository {
         developer_name: p.developer_name,
         project_currency: p.currency,
         manager_name: deal.users?.name,
+        down_payment_covered_minor: dpCoveredMinor,
+        down_payment_remaining_minor: dpRemainingMinor,
         paid_amount_minor: paidAmountMinor,
         total_paid_minor: paidAmountMinor,
         remaining_debt_minor: remainingDebt,
@@ -245,8 +250,8 @@ export class DealsRepository {
       developer_name: p.developer_name,
       project_address: p.address,
       project_currency: p.currency,
-      manager_name: deal.users?.name,
-      manager_email: deal.users?.email,
+      down_payment_covered_minor: fifoResult.down_payment_covered_minor || 0,
+      down_payment_remaining_minor: Math.max(0, (deal.down_payment_minor || 0) - (fifoResult.down_payment_covered_minor || 0)),
       schedules,
       pko_allocations: fifoResult.pko_allocations || [],
       payments: formattedPayments,
