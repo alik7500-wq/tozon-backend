@@ -138,3 +138,20 @@ export async function runPaymentReminderDetector(req, res, next) {
     next(err);
   }
 }
+
+export async function reconcileEvent(req, res, next) {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.id;
+
+    const result = await defaultSmsEventsService.reconcileEventState(id, userId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Согласование статуса события SMS Outbox завершено',
+      data: result
+    });
+  } catch (err) {
+    next(err);
+  }
+}
