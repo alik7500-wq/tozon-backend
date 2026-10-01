@@ -622,7 +622,8 @@ export class SmsService {
     taskId = null,
     meetingId = null,
     userId = null,
-    senderName = 'TOZON-PLAZA'
+    senderName = 'TOZON-PLAZA',
+    existingMessageId = null
   }) {
     const normClientId = parseOptionalBigInt(clientId);
     const normDealId = parseOptionalBigInt(dealId);
@@ -706,26 +707,41 @@ export class SmsService {
       throw new AppError('Сообщение содержит незаполненные переменные шаблона', 400);
     }
 
-    // Create initial queued record in DB FIRST (Audit Trail)
-    const dbRecord = await SmsRepository.createMessage({
-      clientId: normClientId,
-      dealId: normDealId,
-      contractId,
-      paymentId: normPaymentId,
-      phone: normalizedPhone,
-      message: cleanedText,
-      provider: 'PAYOM',
-      senderName,
-      status: 'queued',
-      createdBy: userId
-    });
-
-    if (!dbRecord || !dbRecord.id) {
-      throw new AppError('Не удалось зарегистрировать сообщение в базе данных (Audit Trail error)', 500);
+    // Reuse pre-created outbox attempt record if existingMessageId provided
+    let dbRecord = null;
+    const cleanExistingId = parseOptionalBigInt(existingMessageId);
+    if (cleanExistingId) {
+      dbRecord = await SmsRepository.getById(cleanExistingId);
+      if (dbRecord) {
+        await SmsRepository.updateMessageStatus(dbRecord.id, {
+          phone: normalizedPhone,
+          message: cleanedText,
+          status: 'sending'
+        });
+      }
     }
 
-    // 5. Update status to 'sending'
-    await SmsRepository.updateMessageStatus(dbRecord.id, { status: 'sending' });
+    if (!dbRecord) {
+      // Create initial queued record in DB FIRST (Audit Trail for non-outbox / standalone sends)
+      dbRecord = await SmsRepository.createMessage({
+        clientId: normClientId,
+        dealId: normDealId,
+        contractId,
+        paymentId: normPaymentId,
+        phone: normalizedPhone,
+        message: cleanedText,
+        provider: 'PAYOM',
+        senderName,
+        status: 'queued',
+        createdBy: userId
+      });
+
+      if (!dbRecord || !dbRecord.id) {
+        throw new AppError('Не удалось зарегистрировать сообщение в базе данных (Audit Trail error)', 500);
+      }
+
+      await SmsRepository.updateMessageStatus(dbRecord.id, { status: 'sending' });
+    }
 
     // 6. Call SMS Provider (Only reached if DB persistence succeeded)
     const providerResult = await this.provider.sendSms({

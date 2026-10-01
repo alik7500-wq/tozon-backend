@@ -86,9 +86,9 @@ describe('SMS Outbox V1.5B.2 Confirm Queue & Safety Tests', () => {
 
   describe('PreviewHash Protection & Atomic Claim', () => {
     it('19 & 20. Matching previewHash confirms send; mismatched previewHash rejects send with PREVIEW_CHANGED and zero Payom calls', async () => {
-      const mockEvent = { id: 201, status: 'PROCESSING', client_id: 13, deal_id: 39, template_code: 'DEAL_INFO' };
+      const mockEvent = { id: 201, status: 'AWAITING_CONFIRMATION', client_id: 13, deal_id: 39, template_code: 'DEAL_INFO' };
       vi.spyOn(SmsEventsRepository, 'getById').mockResolvedValue(mockEvent);
-      vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue(mockEvent);
+      vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue({ ...mockEvent, status: 'PROCESSING' });
       vi.spyOn(SmsEventsRepository, 'cancelEvent').mockResolvedValue({ id: 201, status: 'CANCELLED' });
 
       const { LeadsRepository } = await import('../../leads/leads.repository.js');
@@ -119,7 +119,7 @@ describe('SMS Outbox V1.5B.2 Confirm Queue & Safety Tests', () => {
     });
 
     it('11 & 20. Double confirm claim ensures exactly one Payom call on concurrent requests', async () => {
-      vi.spyOn(SmsEventsRepository, 'getById').mockResolvedValue({ id: 201, status: 'PROCESSING' });
+      vi.spyOn(SmsEventsRepository, 'getById').mockResolvedValue({ id: 201, status: 'AWAITING_CONFIRMATION' });
       vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue(null); // Second claim rejected!
 
       await expect(smsEventsService.confirmEvent({ id: 201, userId: 1 })).rejects.toThrow('Событие не может быть подтверждено');
@@ -135,9 +135,9 @@ describe('SMS Outbox V1.5B.2 Confirm Queue & Safety Tests', () => {
     });
 
     it('14, 15 & 16. Timeout updates status to DELIVERY_UNKNOWN and rejects subsequent confirm attempts', async () => {
-      const mockEvent = { id: 201, status: 'PROCESSING', client_id: 13, deal_id: 39, template_code: 'DEAL_INFO' };
+      const mockEvent = { id: 201, status: 'AWAITING_CONFIRMATION', client_id: 13, deal_id: 39, template_code: 'DEAL_INFO' };
       vi.spyOn(SmsEventsRepository, 'getById').mockResolvedValue(mockEvent);
-      vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue(mockEvent);
+      vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue({ ...mockEvent, status: 'PROCESSING' });
       vi.spyOn(SmsEventsRepository, 'markDeliveryUnknown').mockResolvedValue({ id: 201, status: 'DELIVERY_UNKNOWN' });
 
       mockSmsService.sendSms.mockResolvedValueOnce({
@@ -180,9 +180,9 @@ describe('SMS Outbox V1.5B.2 Confirm Queue & Safety Tests', () => {
     });
 
     it('28 & 31. Context validation error after claim marks event FAILED without calling Payom', async () => {
-      const mockEvent = { id: 201, status: 'PROCESSING', client_id: 13, deal_id: 999, template_code: 'DEAL_INFO' };
+      const mockEvent = { id: 201, status: 'AWAITING_CONFIRMATION', client_id: 13, deal_id: 999, template_code: 'DEAL_INFO' };
       vi.spyOn(SmsEventsRepository, 'getById').mockResolvedValue(mockEvent);
-      vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue(mockEvent);
+      vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue({ ...mockEvent, status: 'PROCESSING' });
       vi.spyOn(SmsEventsRepository, 'markFailed').mockResolvedValue({ id: 201, status: 'FAILED' });
 
       const { LeadsRepository } = await import('../../leads/leads.repository.js');

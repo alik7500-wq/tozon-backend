@@ -11,6 +11,7 @@ export class SmsRepository {
     dealId = null,
     contractId = null,
     paymentId = null,
+    eventId = null,
     phone,
     message,
     provider = 'PAYOM',
@@ -26,6 +27,7 @@ export class SmsRepository {
       deal_id: parseOptionalBigInt(dealId),
       contract_id: parseOptionalBigInt(contractId),
       payment_id: parseOptionalBigInt(paymentId),
+      event_id: parseOptionalBigInt(eventId),
       phone,
       message,
       provider,
@@ -64,10 +66,51 @@ export class SmsRepository {
   }
 
   /**
-   * Update message delivery status, provider message ID, or error details.
+   * Get single message by ID.
+   */
+  static async getById(id) {
+    const cleanId = parseOptionalBigInt(id);
+    if (!cleanId) return null;
+    const db = getServiceDB();
+    const { data, error } = await db
+      .from('sms_messages')
+      .select('*')
+      .eq('id', cleanId)
+      .maybeSingle();
+
+    if (error) {
+      if (process.env.NODE_ENV === 'test' && process.env.ALLOW_SMS_REPOSITORY_MOCK_FALLBACK === 'true') {
+        return { id: cleanId, status: 'queued' };
+      }
+      return null;
+    }
+    return data;
+  }
+
+  /**
+   * Get all messages linked to an event_id.
+   */
+  static async getMessagesByEventId(eventId) {
+    const cleanId = parseOptionalBigInt(eventId);
+    if (!cleanId) return [];
+    const db = getServiceDB();
+    const { data, error } = await db
+      .from('sms_messages')
+      .select('*')
+      .eq('event_id', cleanId)
+      .order('id', { ascending: true });
+
+    if (error) return [];
+    return data || [];
+  }
+
+  /**
+   * Update message delivery status, phone, message, provider message ID, or error details.
    */
   static async updateMessageStatus(id, {
     status,
+    phone = null,
+    message = null,
     providerMessageId = null,
     errorCode = null,
     errorMessage = null,
@@ -84,6 +127,8 @@ export class SmsRepository {
       updated_at: now
     };
 
+    if (phone !== null) updates.phone = phone;
+    if (message !== null) updates.message = message;
     if (providerMessageId !== null) updates.provider_message_id = providerMessageId;
     if (errorCode !== null) updates.error_code = errorCode;
     if (errorMessage !== null) updates.error_message = errorMessage;

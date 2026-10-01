@@ -197,7 +197,7 @@ export class SmsEventsService {
     }
 
     if (checkEvent.status === 'PROCESSING') {
-      await SmsEventsRepository.revertToAwaitingConfirmation(id);
+      throw new AppError('Событие находится в процессе обработки', 409, 'EVENT_ALREADY_PROCESSING');
     }
 
     // 1. Atomic claim: transition AWAITING_CONFIRMATION -> PROCESSING
@@ -261,14 +261,15 @@ export class SmsEventsService {
         console.warn('Failed to pre-record sms_messages attempt:', e.message);
       }
 
-      // 6. Dispatch via SmsService (Exactly ONE Payom POST call)
+      // 6. Dispatch via SmsService reusing preAttemptId (Exactly ONE Payom POST call & ONE sms_message row)
       const sendResult = await this.smsService.sendSms({
         clientId: claimedEvent.client_id,
         text: previewResult.text,
         templateCode: claimedEvent.template_code,
         dealId: claimedEvent.deal_id,
         paymentId: claimedEvent.payment_id,
-        userId
+        userId,
+        existingMessageId: preAttemptId
       });
 
       if (!sendResult.success) {
@@ -307,6 +308,60 @@ export class SmsEventsService {
       }
       throw err;
     }
+  }
+
+  /**
+   * Safe server-side reconciliation logic based on linked sms_messages records.
+   * NEVER calls Payom provider.
+   */
+  async reconcileEventState(eventId, userId = null) {
+    const cleanEventId = parseOptionalBigInt(eventId);
+    if (!cleanEventId) throw new AppError('ID события не указан', 400);
+
+    const event = await SmsEventsRepository.getById(cleanEventId);
+    if (!event) throw new AppError(`Событие ${cleanEventId} не найдено`, 404);
+
+    if (['SENT', 'CANCELLED'].includes(event.status)) {
+      return { success: true, event, reconciled: false, reason: `Событие уже находится в конечном статусе [${event.status}]` };
+    }
+
+    const messages = await SmsRepository.getMessagesByEventId(cleanEventId);
+    if (!messages || messages.length === 0) {
+      return { success: false, event, reconciled: false, reason: 'Нет связанных попыток отправки в sms_messages' };
+    }
+
+    const hasSent = messages.some(m => m.status === 'sent' || m.status === 'delivered');
+    const hasDeliveryUnknown = messages.some(m => m.status === 'delivery_unknown');
+    const hasFailed = messages.some(m => m.status === 'failed');
+
+    let updatedEvent = null;
+    let targetStatus = null;
+
+    if (hasSent) {
+      targetStatus = 'SENT';
+      updatedEvent = await SmsEventsRepository.markSent({ id: cleanEventId, userId });
+    } else if (hasDeliveryUnknown) {
+      targetStatus = 'DELIVERY_UNKNOWN';
+      updatedEvent = await SmsEventsRepository.markDeliveryUnknown({
+        id: cleanEventId,
+        failureCode: 'DELIVERY_UNKNOWN',
+        failureMessage: 'Статус провайдера неопределён'
+      });
+    } else if (hasFailed) {
+      targetStatus = 'FAILED';
+      const lastFailed = messages.find(m => m.status === 'failed');
+      updatedEvent = await SmsEventsRepository.markFailed({
+        id: cleanEventId,
+        failureCode: lastFailed?.error_code || 'PROVIDER_FAILED',
+        failureMessage: lastFailed?.error_message || 'Отправка завершилась ошибкой'
+      });
+    }
+
+    if (updatedEvent) {
+      return { success: true, event: updatedEvent, reconciled: true, targetStatus };
+    }
+
+    return { success: false, event, reconciled: false, reason: 'Не удалось определить статус для согласования' };
   }
 }
 

@@ -214,8 +214,8 @@ describe('SMS Outbox Core V1.5B.1 Tests', () => {
 
   describe('Feature Flag & Safety Rules', () => {
     it('V1.5B.1 confirmEvent fails closed in production when SMS_OUTBOX_ALLOW_SEND is false', async () => {
-      const mockEvent = { id: 101, status: 'PROCESSING', client_id: 13, deal_id: 39, template_code: 'DEAL_INFO' };
-      vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue(mockEvent);
+      const mockEvent = { id: 101, status: 'AWAITING_CONFIRMATION', client_id: 13, deal_id: 39, template_code: 'DEAL_INFO' };
+      vi.spyOn(SmsEventsRepository, 'atomicStartProcessing').mockResolvedValue({ ...mockEvent, status: 'PROCESSING' });
       vi.spyOn(SmsEventsRepository, 'getById').mockResolvedValue(mockEvent);
       vi.spyOn(SmsEventsRepository, 'cancelEvent').mockResolvedValue({ id: 101, status: 'CANCELLED' });
       vi.spyOn(SmsEventsRepository, 'revertToAwaitingConfirmation').mockResolvedValue({ id: 101, status: 'AWAITING_CONFIRMATION' });

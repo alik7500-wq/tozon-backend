@@ -203,9 +203,9 @@ export class SmsEventsRepository {
   }
 
   /**
-   * Mark event as SENT and link confirmed_by, confirmed_at, and sms_message_id.
+   * Mark event as SENT and link confirmed_by and confirmed_at.
    */
-  static async markSent({ id, smsMessageId = null, userId = null }) {
+  static async markSent({ id, userId = null }) {
     const cleanId = parseOptionalBigInt(id);
     if (!cleanId) return null;
 
@@ -214,9 +214,6 @@ export class SmsEventsRepository {
       status: 'SENT',
       updated_at: new Date().toISOString()
     };
-
-    const cleanMsgId = parseOptionalBigInt(smsMessageId);
-    if (cleanMsgId) updateData.sms_message_id = cleanMsgId;
 
     const cleanUserId = parseOptionalBigInt(userId);
     if (cleanUserId) {
