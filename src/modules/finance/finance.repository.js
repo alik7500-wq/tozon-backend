@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { recalculateDealSchedules } from '../../utils/recalculateDealSchedules.js';
@@ -685,7 +685,8 @@ export class FinanceRepository {
       created_at: now
     };
 
-    const rpcCallRes = await db.rpc('create_income_payment_atomic', {
+    const serviceDb = getServiceDB();
+    const rpcCallRes = await serviceDb.rpc('create_income_payment_atomic', {
       p_payment: paymentPayload
     });
     const { data: rpcRes, error: rpcErr } = rpcCallRes || {};
@@ -761,7 +762,8 @@ export class FinanceRepository {
       }
     }
 
-    const rpcCallRes = await db.rpc('update_income_payment_atomic', {
+    const serviceDb = getServiceDB();
+    const rpcCallRes = await serviceDb.rpc('update_income_payment_atomic', {
       p_payment_id: id,
       p_payment_update: updatePayload
     });
