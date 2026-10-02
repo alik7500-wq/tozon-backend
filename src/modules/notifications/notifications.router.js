@@ -1,11 +1,11 @@
 import { Router } from 'express';
-import { authenticate } from '../../middleware/auth.middleware.js';
+import { protect } from '../../middleware/auth.middleware.js';
 import { NotificationsService } from './notifications.service.js';
 
 const router = Router();
 
 // Protect all notification endpoints with authentication middleware
-router.use(authenticate);
+router.use(protect);
 
 // GET /api/notifications — List notifications for current user
 router.get('/', async (req, res, next) => {
