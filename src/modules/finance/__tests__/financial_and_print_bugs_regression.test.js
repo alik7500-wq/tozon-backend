@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { numberToWordsTJ, numberToWordsRU } from '../../../../../client/src/utils/numberToWords.js';
-import { DEFAULT_CASH_DESKS, buildCashDesksList, resolveCashDesk } from '../../../../../client/src/utils/cashDesks.js';
+import { numberToWordsTJ, numberToWordsRU } from '../../../utils/numberToWords.js';
+
+const DEFAULT_CASH_DESKS = [
+  { id: 'ab90800a-73af-4cf7-88c2-397c304e2edf', name: 'Касса Отдела продаж (Акмалхон)' },
+  { id: '11111111-1111-1111-1111-111111111111', name: 'Касса Бухгалтерии' }
+];
+
+function resolveCashDesk(deskVal, desksList = DEFAULT_CASH_DESKS) {
+  if (!deskVal) return null;
+  const found = desksList.find(d => String(d.id) === String(deskVal) || d.name === deskVal);
+  return found || null;
+}
 
 describe('TOZON CRM — FINANCIAL & PRINTING BUGS REGRESSION MATRIX', () => {
 

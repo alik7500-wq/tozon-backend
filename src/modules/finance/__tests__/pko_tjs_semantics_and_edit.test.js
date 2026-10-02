@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { numberToWordsTJ, numberToWordsRU } from '../../../../../client/src/utils/numberToWords.js';
+import { numberToWordsTJ, numberToWordsRU } from '../../../utils/numberToWords.js';
 
 describe('PKO Accounting Semantics V2 & Edit Modal Regression Test Matrix', () => {
 
