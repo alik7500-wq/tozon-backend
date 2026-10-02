@@ -772,7 +772,7 @@ export class FinanceRepository {
       throw new Error(`PKO_TRANSACTION_FAILED: ${rpcErr.message}`);
     }
 
-    const updated = rpcRes?.payment || rpcRes;
+    const updated = rpcRes?.payment || (rpcRes && rpcRes.id ? rpcRes : { ...originalRecord, ...updatePayload });
 
     // Sync paired conversion expense if this was a conversion
     if (originalRecord) {
@@ -910,7 +910,7 @@ export class FinanceRepository {
 
     const rpcCallRes = await db.rpc('void_income_payment_atomic', {
       p_payment_id: id,
-      p_user_id: parseOptionalBigInt(userId),
+      p_user_id: parseOptionalBigInt(userAccess?.userId || null),
       p_void_reason: 'Annulled via CRM'
     });
     const { data: rpcRes, error: rpcErr } = rpcCallRes || {};

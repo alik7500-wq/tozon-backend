@@ -345,6 +345,8 @@ export class DealsRepository {
       await db.from('payments').insert([{
         deal_id: newDeal.id,
         amount_minor: data.down_payment_minor,
+        currency: pCur || 'USD',
+        cash_desk_id: data.cash_desk_id || data.initial_payment_cash_desk_id || null,
         payment_date: data.initial_payment_date || dealDate,
         method: data.initial_payment_method || 'CASH',
         reference: pkoRef,

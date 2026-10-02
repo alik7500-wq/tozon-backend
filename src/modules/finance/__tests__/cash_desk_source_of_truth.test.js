@@ -151,6 +151,14 @@ describe('CASH DESK SOURCE OF TRUTH HARDENING TEST SUITE', () => {
 
     let updatePayloadCaptured = null;
 
+    mockDb.rpc.mockImplementation((procName, params) => {
+      if (procName === 'update_income_payment_atomic') {
+        updatePayloadCaptured = params.p_payment_update;
+        return Promise.resolve({ data: { ...existingPko, ...params.p_payment_update }, error: null });
+      }
+      return Promise.resolve({ data: null, error: null });
+    });
+
     mockDb.from.mockImplementation((table) => {
       if (table === 'payments') {
         return {
