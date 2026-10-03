@@ -788,6 +788,85 @@ export class FinanceRepository {
   }
 
   /**
+   * Ручное восстановление исторической суммы ПКО в TJS (ADMIN ONLY)
+   */
+  static async reconcileIncomeTjs(id, data, userRole, userId) {
+    if (userRole !== 'ADMIN') {
+      const err = new Error('Только администратор имеет право восстанавливать историческую сумму ПКО');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    const numericId = Number(id);
+    if (!numericId || isNaN(numericId)) {
+      const err = new Error('Некорректный ID документа ПКО');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const amountTjs = Number(data.amount_tjs);
+    if (!amountTjs || isNaN(amountTjs) || amountTjs <= 0) {
+      const err = new Error('Фактическая сумма TJS должна быть больше 0');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    let exchangeRate = data.exchange_rate !== undefined && data.exchange_rate !== null && data.exchange_rate !== ''
+      ? Number(data.exchange_rate)
+      : null;
+
+    if (exchangeRate !== null && (isNaN(exchangeRate) || exchangeRate <= 0)) {
+      const err = new Error('Исторический курс должен быть больше 0');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const reason = String(data.reason || '').trim();
+    if (!reason) {
+      const err = new Error('Основание восстановления обязательно для заполнения');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const comment = String(data.comment || '').trim();
+    if (!comment) {
+      const err = new Error('Комментарий / источник данных обязателен для заполнения');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const amountUsd = data.amount_usd !== undefined && data.amount_usd !== null && data.amount_usd !== ''
+      ? Number(data.amount_usd)
+      : null;
+
+    const serviceDb = getServiceDB();
+    const rpcRes = await serviceDb.rpc('reconcile_pko_tjs_atomic', {
+      p_payment_id: numericId,
+      p_amount_tjs: amountTjs,
+      p_amount_usd: amountUsd,
+      p_exchange_rate: exchangeRate,
+      p_reason: reason,
+      p_comment: comment,
+      p_user_id: Number(userId)
+    });
+
+    const { data: resultData, error: rpcErr } = rpcRes || {};
+
+    if (rpcErr) {
+      if (rpcErr.message && rpcErr.message.includes('ALREADY_RECONCILED')) {
+        const err = new Error('Историческая сумма TJS уже восстановлена.');
+        err.statusCode = 409;
+        throw err;
+      }
+      const err = new Error(`PKO_RECONCILIATION_FAILED: ${rpcErr.message}`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return resultData || { success: true };
+  }
+
+  /**
    * Получить актуальный баланс конкретной кассы (в USD)
    */
   /**

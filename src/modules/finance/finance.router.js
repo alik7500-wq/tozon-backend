@@ -4,6 +4,7 @@ import {
   getIncomeById,
   addIncome, 
   updateIncome,
+  reconcileIncomeTjs,
   deleteIncome,
   getExpenses, 
   getExpenseById,
@@ -42,6 +43,7 @@ router.use(paymentCalendarRouter);
 router.get('/income', getIncome);
 router.get('/income/:id', getIncomeById);
 router.post('/income', requireCashDeskIncome, addIncome);
+router.post('/income/:id/reconcile-tjs', reconcileIncomeTjs);
 router.put('/income/:id', requireCashDeskMutation, updateIncome);
 router.patch('/income/:id', requireCashDeskMutation, updateIncome);
 router.delete('/income/:id', requireCashDeskMutation, deleteIncome);

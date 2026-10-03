@@ -46,6 +46,19 @@ export const updateIncome = async (req, res, next) => {
   }
 };
 
+export const reconcileIncomeTjs = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const userRole = req.user.role;
+    const userId = req.user.id;
+    const data = await FinanceRepository.reconcileIncomeTjs(id, req.body, userRole, userId);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error in reconcileIncomeTjs:', error);
+    next(error);
+  }
+};
+
 export const deleteIncome = async (req, res, next) => {
   try {
     const { id } = req.params;
