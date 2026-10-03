@@ -867,6 +867,72 @@ export class FinanceRepository {
   }
 
   /**
+   * Массовое восстановление исторической суммы ПКО в TJS (ADMIN ONLY, ATOMIC BATCH)
+   */
+  static async reconcileIncomeTjsBulk(items, userRole, userId) {
+    if (userRole !== 'ADMIN') {
+      const err = new Error('Только администратор имеет право выполнять массовое восстановление ПКО');
+      err.statusCode = 403;
+      throw err;
+    }
+
+    if (!Array.isArray(items) || items.length === 0) {
+      const err = new Error('Список ПКО для массовой сверки пуст');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const cleanItems = items.map(item => {
+      const payment_id = Number(item.payment_id);
+      const amount_tjs = Number(item.amount_tjs);
+      const exchange_rate = item.exchange_rate !== undefined && item.exchange_rate !== null && item.exchange_rate !== ''
+        ? Number(item.exchange_rate)
+        : null;
+
+      if (!payment_id || isNaN(payment_id)) {
+        throw new Error(`Некорректный ID ПКО: ${item.payment_id}`);
+      }
+
+      if (!amount_tjs || isNaN(amount_tjs) || amount_tjs <= 0) {
+        throw new Error(`Некорректная сумма TJS для ПКО #${payment_id}`);
+      }
+
+      if (exchange_rate !== null && (isNaN(exchange_rate) || exchange_rate <= 0)) {
+        throw new Error(`Некорректный исторический курс для ПКО #${payment_id}`);
+      }
+
+      return {
+        payment_id,
+        amount_tjs,
+        exchange_rate,
+        reason: String(item.reason || 'Бумажный ПКО').trim(),
+        comment: String(item.comment || 'Массовое восстановление TJS').trim()
+      };
+    });
+
+    const serviceDb = getServiceDB();
+    const rpcRes = await serviceDb.rpc('reconcile_pko_tjs_bulk_atomic', {
+      p_items: cleanItems,
+      p_user_id: Number(userId)
+    });
+
+    const { data: resultData, error: rpcErr } = rpcRes || {};
+
+    if (rpcErr) {
+      if (rpcErr.message && rpcErr.message.includes('ALREADY_RECONCILED')) {
+        const err = new Error(`BULK_RECONCILIATION_CONFLICT: ${rpcErr.message}`);
+        err.statusCode = 409;
+        throw err;
+      }
+      const err = new Error(`BULK_RECONCILIATION_FAILED: ${rpcErr.message}`);
+      err.statusCode = 400;
+      throw err;
+    }
+
+    return resultData || { success: true, reconciled_count: cleanItems.length };
+  }
+
+  /**
    * Получить актуальный баланс конкретной кассы (в USD)
    */
   /**
