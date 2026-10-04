@@ -142,7 +142,22 @@ router.post('/:id/extend-reservation', async (req, res, next) => {
 router.post('/:id/payments', resolveCashDeskAccess, async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
-    const { amount_minor, payment_date, method, settlement_method, schedule_id, reference, comment, cash_desk_id, idempotency_key } = req.body;
+    const { 
+      amount_minor, 
+      payment_date, 
+      method, 
+      settlement_method, 
+      schedule_id, 
+      reference, 
+      comment, 
+      cash_desk_id, 
+      idempotency_key,
+      amount_tjs,
+      amount_usd,
+      exchange_rate,
+      currency
+    } = req.body;
+
     if (!amount_minor || amount_minor <= 0) {
       return next(new AppError('Сумма платежа обязательна и должна быть больше нуля', 400));
     }
@@ -164,6 +179,19 @@ router.post('/:id/payments', resolveCashDeskAccess, async (req, res, next) => {
       }
     }
 
+    const parsedTjs = amount_tjs !== undefined && amount_tjs !== null ? Number(amount_tjs) : null;
+    const parsedRate = exchange_rate !== undefined && exchange_rate !== null ? Number(exchange_rate) : null;
+    const parsedUsd = amount_usd !== undefined && amount_usd !== null ? Number(amount_usd) : Number((amount_minor / 100).toFixed(2));
+
+    // FAIL CLOSED: CASH payment for USD deal requires amount_tjs and exchange_rate
+    if (sm === 'CASH' && (parsedTjs === null || parsedTjs <= 0 || parsedRate === null || parsedRate <= 0)) {
+      return next(new AppError(
+        'Для оформления кассового ПКО необходимо обязательно указывать фактически внесенную сумму в сомони (amount_tjs) и курс обмена (exchange_rate).',
+        400,
+        'TJS_CASH_SNAPSHOT_REQUIRED'
+      ));
+    }
+
     const result = await DealsRepository.recordPayment(
       cleanId,
       {
@@ -175,7 +203,11 @@ router.post('/:id/payments', resolveCashDeskAccess, async (req, res, next) => {
         reference,
         comment,
         cash_desk_id: finalCashDeskId,
-        idempotency_key: idempotency_key || null
+        idempotency_key: idempotency_key || null,
+        amount_tjs: parsedTjs,
+        amount_usd: parsedUsd,
+        exchange_rate: parsedRate,
+        currency: currency || 'USD'
       },
       req.user.id
     );
