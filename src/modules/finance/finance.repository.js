@@ -2752,19 +2752,48 @@ export class FinanceRepository {
     const parseNum = (val) => {
       if (val === undefined || val === null || val === '') return null;
       const parsed = Number(String(val).replace(',', '.').trim());
-      return isNaN(parsed) ? null : parsed;
+      return isNaN(parsed) || !isFinite(parsed) ? null : parsed;
     };
 
-    let finalAmountTjs = null;
-    let finalExchangeRate = null;
-    let finalAmountUsd = null;
+    let finalAmountTjs = parseNum(amount_tjs);
+    let finalExchangeRate = parseNum(exchange_rate);
+    let finalAmountUsd = parseNum(amount_usd);
 
     if (currency === 'TJS') {
-      finalAmountTjs = parseNum(amount_tjs || amount);
-      finalExchangeRate = parseNum(exchange_rate);
-      finalAmountUsd = parseNum(amount_usd) || (finalAmountTjs && finalExchangeRate ? Number((finalAmountTjs / finalExchangeRate).toFixed(2)) : null);
+      if (!finalAmountTjs) finalAmountTjs = parseNum(amount);
+      if (finalAmountTjs && finalExchangeRate && !finalAmountUsd) {
+        finalAmountUsd = Number((finalAmountTjs / finalExchangeRate).toFixed(2));
+      }
     } else {
-      finalAmountUsd = parseNum(amount_usd || amount);
+      if (!finalAmountUsd) finalAmountUsd = parseNum(amount);
+      if (finalAmountUsd && finalExchangeRate && !finalAmountTjs) {
+        finalAmountTjs = Number((finalAmountUsd * finalExchangeRate).toFixed(2));
+      }
+    }
+
+    // Fail-closed validation for snapshot integrity
+    if (currency === 'TJS') {
+      if (!finalAmountTjs || finalAmountTjs <= 0) {
+        const err = new Error('Для TJS перемещения необходима корректная сумма TJS (>0)');
+        err.statusCode = 400;
+        err.code = 'INVALID_TJS_AMOUNT';
+        throw err;
+      }
+    } else {
+      if (!finalAmountUsd || finalAmountUsd <= 0) {
+        const err = new Error('Для USD перемещения необходима корректная сумма USD (>0)');
+        err.statusCode = 400;
+        err.code = 'INVALID_USD_AMOUNT';
+        throw err;
+      }
+    }
+
+    // Fail-closed validation when snapshot components are partially supplied
+    if ((finalAmountTjs && !finalExchangeRate) || (!finalAmountTjs && finalExchangeRate)) {
+      const err = new Error('Неполный snapshot валюты: amount_tjs и exchange_rate должны передаваться совместно');
+      err.statusCode = 400;
+      err.code = 'INCOMPLETE_CURRENCY_SNAPSHOT';
+      throw err;
     }
 
     if (!source_cash_desk_id || !destination_cash_desk_id) {
