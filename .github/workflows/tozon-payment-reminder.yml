@@ -23,26 +23,31 @@ jobs:
         env:
           SMS_SCHEDULER_INTERNAL_TOKEN: ${{ secrets.SMS_SCHEDULER_INTERNAL_TOKEN }}
         run: |
-          if [ -z "$SMS_SCHEDULER_INTERNAL_TOKEN" ]; then
+          set -euo pipefail
+
+          if [ -z "${SMS_SCHEDULER_INTERNAL_TOKEN:-}" ]; then
             echo "::error::SMS_SCHEDULER_INTERNAL_TOKEN secret is not configured in GitHub repository secrets"
             exit 1
           fi
 
           echo "Triggering TOZON CRM internal SMS scheduler endpoint..."
 
-          HTTP_STATUS=$(curl -s -o response.json -w "%{http_code}" \
+          if HTTP_STATUS=$(curl -s -S -o /dev/null -w "%{http_code}" \
+            --connect-timeout 20 \
             --max-time 180 \
             -X POST "https://tozon-backend.onrender.com/api/internal/sms/payment-reminder/run" \
             -H "Content-Type: application/json" \
-            -H "Authorization: Bearer $SMS_SCHEDULER_INTERNAL_TOKEN")
+            -H "Authorization: Bearer $SMS_SCHEDULER_INTERNAL_TOKEN"); then
 
-          echo "HTTP Response Status Code: $HTTP_STATUS"
+            echo "HTTP Response Status Code: $HTTP_STATUS"
 
-          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-            echo "Scheduler triggered successfully."
-            sed -E 's/"phone":"[^"]*"/"phone":"[REDACTED]"/g' response.json || true
+            if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+              echo "Scheduler triggered successfully."
+            else
+              echo "::error::Scheduler endpoint request failed with HTTP status code: $HTTP_STATUS"
+              exit 1
+            fi
           else
-            echo "::error::Scheduler endpoint returned non-2xx status code: $HTTP_STATUS"
-            sed -E 's/"phone":"[^"]*"/"phone":"[REDACTED]"/g' response.json || true
+            echo "::error::Network request to scheduler endpoint failed (curl error)"
             exit 1
           fi
