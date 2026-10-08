@@ -1,3 +1,6 @@
+import { SmsRepository } from '../sms.repository.js';
+import { smsTemplateFixtures } from './smsTemplates.fixture.js';
+import { SmsSettingsRepository } from '../smsSettings.repository.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
@@ -10,6 +13,9 @@ describe('SMS API Routes (/api/sms)', () => {
   let managerToken;
 
   beforeEach(() => {
+    vi.spyOn(SmsRepository,'getTemplates').mockResolvedValue(smsTemplateFixtures);
+    vi.spyOn(SmsSettingsRepository,'getRule').mockResolvedValue({enabled:true,mode:'INHERIT',offset_days:3,template_code:'PAYMENT_REMINDER'});
+    vi.spyOn(SmsSettingsRepository,'daily').mockResolvedValue(0);
     vi.spyOn(UsersRepository, 'findById').mockImplementation(async (id) => {
       return {
         id: Number(id),

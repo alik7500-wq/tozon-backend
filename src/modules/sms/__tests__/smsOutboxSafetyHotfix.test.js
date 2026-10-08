@@ -1,3 +1,5 @@
+import { smsTemplateFixtures } from './smsTemplates.fixture.js';
+import { SmsSettingsRepository } from '../smsSettings.repository.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SmsEventsService } from '../smsEvents.service.js';
 import { SmsService } from '../sms.service.js';
@@ -17,6 +19,9 @@ describe('V1.5F.4 Outbox State Machine Safety Hotfix Tests', () => {
   let nextMessageId;
 
   beforeEach(() => {
+    vi.spyOn(SmsRepository,'getTemplates').mockResolvedValue(smsTemplateFixtures);
+    vi.spyOn(SmsSettingsRepository,'getRule').mockResolvedValue({enabled:true,mode:'INHERIT',offset_days:3,template_code:'PAYMENT_REMINDER'});
+    vi.spyOn(SmsSettingsRepository,'daily').mockResolvedValue(0);
     eventsDb = new Map();
     messagesDb = new Map();
     nextEventId = 100;

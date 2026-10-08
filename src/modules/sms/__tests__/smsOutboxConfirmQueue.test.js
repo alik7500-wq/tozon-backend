@@ -1,3 +1,4 @@
+import { SmsSettingsRepository } from '../smsSettings.repository.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SmsEventsRepository } from '../smsEvents.repository.js';
 import { SmsEventsService } from '../smsEvents.service.js';
@@ -7,6 +8,8 @@ describe('SMS Outbox V1.5B.2 Confirm Queue & Safety Tests', () => {
   let mockSmsService;
 
   beforeEach(() => {
+    vi.spyOn(SmsSettingsRepository,'getRule').mockResolvedValue({enabled:true,mode:'INHERIT',offset_days:3,template_code:'PAYMENT_REMINDER'});
+    vi.spyOn(SmsSettingsRepository,'daily').mockResolvedValue(0);
     vi.clearAllMocks();
     mockSmsService = {
       previewSms: vi.fn().mockResolvedValue({

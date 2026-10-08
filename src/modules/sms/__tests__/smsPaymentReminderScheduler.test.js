@@ -1,3 +1,4 @@
+import { SmsSettingsRepository } from '../smsSettings.repository.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import { app } from '../../../app.js';
@@ -7,6 +8,8 @@ describe('V1.5D PAYMENT_REMINDER Scheduler Tests', () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
+    vi.spyOn(SmsSettingsRepository,'getRule').mockResolvedValue({enabled:true,mode:'INHERIT',offset_days:3,template_code:'PAYMENT_REMINDER'});
+    vi.spyOn(SmsSettingsRepository,'daily').mockResolvedValue(0);
     vi.clearAllMocks();
     process.env.SMS_SCHEDULER_INTERNAL_TOKEN = 'test-secret-scheduler-token-12345';
     process.env.SMS_PAYMENT_REMINDER_DETECTOR_ENABLED = 'true';

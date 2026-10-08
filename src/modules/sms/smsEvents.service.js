@@ -1,4 +1,6 @@
+import { SmsSettingsRepository } from './smsSettings.repository.js';
 import crypto from 'crypto';
+import { getBusinessDate } from '../../utils/businessTime.js';
 import { SmsEventsRepository } from './smsEvents.repository.js';
 import { defaultSmsService } from './sms.service.js';
 import { LeadsRepository } from '../leads/leads.repository.js';
@@ -49,6 +51,10 @@ export class SmsEventsService {
    * Auto-cancels stale events if context is no longer applicable.
    */
   async validateEventContext(event) {
+    if(event.payload_json?.managed_rule || event.event_type === 'PAYMENT_REMINDER') {
+      const rule=await SmsSettingsRepository.getRule(event.event_type);
+      if(!rule.enabled) throw new AppError('Отправка этого вида сообщений отключена',400,'SMS_RULE_DISABLED');
+    }
     const clientId = parseOptionalBigInt(event.client_id);
     const dealId = parseOptionalBigInt(event.deal_id);
     const paymentId = parseOptionalBigInt(event.payment_id);
@@ -57,6 +63,7 @@ export class SmsEventsService {
 
     if (clientId) {
       const lead = await LeadsRepository.findById(clientId);
+      if(event.event_type==='BIRTHDAY' && (lead?.archived_at || lead?.birth_date?.slice(5,10)!==getBusinessDate().slice(5,10))) throw new AppError('День рождения уже прошёл или клиент архивирован',400,'SMS_EVENT_STALE');
       if (!lead) {
         throw new AppError(`Клиент с ID ${clientId} не найден`, 404);
       }
@@ -67,9 +74,14 @@ export class SmsEventsService {
       if (!deal) {
         throw new AppError(`Сделка с ID ${dealId} не найдена`, 404);
       }
-      if (deal.status === 'CANCELLED') {
+      if (deal.status === 'CANCELLED' && !['RESERVATION_CANCELLED','CONTRACT_TERMINATED','PAYMENT_CANCELLED'].includes(event.event_type)) {
         throw new AppError('Сделка отменена (EVENT_NO_LONGER_APPLICABLE)', 400, 'DEAL_CANCELLED');
       }
+      if(['RESERVATION_CANCELLED','CONTRACT_TERMINATED'].includes(event.event_type) && deal.status!=='CANCELLED') throw new AppError('Договор уже изменён',400,'DEAL_CANCELLED');
+      if(event.event_type==='RESERVATION_EXPIRING' && (deal.status!=='RESERVED' || deal.reservation_expires_at < getBusinessDate())) throw new AppError('Бронь больше не актуальна',400,'DEAL_CANCELLED');
+      if(event.event_type==='CONTRACT_PAID' && (deal.status!=='SIGNED' || deal.remaining_debt_minor>0 || deal.final_price_minor<=0)) throw new AppError('Договор не оплачен полностью',400,'SMS_EVENT_STALE');
+      if(event.event_type==='DEBTOR_REMINDER') { const ctx=await this.smsService.calculateDealContext(dealId,getBusinessDate()); if(!ctx || ctx.overdueMinor<=0) throw new AppError('Просроченная задолженность отсутствует',400,'DEBT_CLEARED'); }
+      if(event.event_type==='RESERVATION_EXPIRING' && !event.idempotency_key.endsWith(':'+deal.reservation_expires_at)) throw new AppError('Срок брони изменён',400,'SMS_EVENT_STALE');
       if (clientId && parseOptionalBigInt(deal.lead_id) !== clientId) {
         throw new AppError('Сделка не принадлежит указанному клиенту', 400);
       }
@@ -80,9 +92,10 @@ export class SmsEventsService {
       if (!payment) {
         throw new AppError(`Платёж с ID ${paymentId} не найден`, 404);
       }
-      if (payment.status === 'VOIDED') {
+      if (payment.status === 'VOIDED' && event.event_type !== 'PAYMENT_CANCELLED') {
         throw new AppError('Платёж был аннулирован (EVENT_NO_LONGER_APPLICABLE)', 400, 'PAYMENT_VOIDED');
       }
+      if(event.event_type==='PAYMENT_CANCELLED' && payment.status!=='VOIDED') throw new AppError('Платёж не отменён',400,'PAYMENT_VOIDED');
       if (dealId && parseOptionalBigInt(payment.deal_id) !== dealId) {
         throw new AppError('Платёж не относится к указанной сделке', 400);
       }
@@ -123,7 +136,7 @@ export class SmsEventsService {
     try {
       await this.validateEventContext(event);
     } catch (err) {
-      if (['SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(err.code)) {
+      if (['SMS_EVENT_STALE', 'SMS_RULE_DISABLED', 'SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(err.code)) {
         if (event.status === 'AWAITING_CONFIRMATION') {
           await SmsEventsRepository.cancelEvent({ id: event.id, reason: err.message });
         }
@@ -213,7 +226,7 @@ export class SmsEventsService {
       try {
         await this.validateEventContext(claimedEvent);
       } catch (staleErr) {
-        if (['SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(staleErr.code)) {
+        if (['SMS_EVENT_STALE', 'SMS_RULE_DISABLED', 'SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(staleErr.code)) {
           await SmsEventsRepository.cancelEvent({ id: claimedEvent.id, userId, reason: staleErr.message });
           throw new AppError(`Событие больше не актуально: ${staleErr.message}`, 400, 'EVENT_NO_LONGER_APPLICABLE');
         }
