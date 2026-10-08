@@ -3,10 +3,12 @@ import { protect, checkPermission, restrictTo } from '../../middleware/auth.midd
 import { sendSms, getHistory, getTemplates, previewSms, getTemplateAvailability } from './sms.controller.js';
 import { listEvents, getEventById, previewEvent, cancelEvent, confirmEvent, reconcileEvent, dryRunPaymentReminderDetector, runPaymentReminderDetector } from './smsEvents.controller.js';
 
+import smsSettingsRouter from './smsSettings.router.js';
 const router = Router();
 
 // Protect all SMS routes
 router.use(protect);
+router.use('/settings', smsSettingsRouter);
 
 // SMS Outbox Events Routes
 router.get('/events', checkPermission('sms.history'), listEvents);

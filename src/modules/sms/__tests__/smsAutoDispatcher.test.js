@@ -1,3 +1,4 @@
+import { SmsSettingsRepository } from '../smsSettings.repository.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SmsAutoDispatcher } from '../smsAutoDispatcher.js';
 import { SmsEventsRepository } from '../smsEvents.repository.js';
@@ -10,6 +11,8 @@ describe('V1.6A AUTO PAYMENT_REMINDER Implementation Tests', () => {
   let dispatcher;
 
   beforeEach(() => {
+    vi.spyOn(SmsSettingsRepository,'getRule').mockResolvedValue({enabled:true,mode:'INHERIT',offset_days:3,template_code:'PAYMENT_REMINDER'});
+    vi.spyOn(SmsSettingsRepository,'daily').mockResolvedValue(0);
     vi.clearAllMocks();
 
     mockSmsEventsService = {
@@ -47,6 +50,18 @@ describe('V1.6A AUTO PAYMENT_REMINDER Implementation Tests', () => {
     const resultFalse = await dispatcher.dispatchPendingAutoReminders();
     expect(resultFalse.executed).toBe(false);
     expect(resultFalse.reason).toBe('AUTO_ENABLED_FALSE');
+    expect(mockSmsService.provider.sendSms).not.toHaveBeenCalled();
+  });
+
+  it('configuration OFF or CONFIRM blocks the automatic dispatcher before claiming events', async () => {
+    process.env.SMS_PAYMENT_REMINDER_AUTO_ENABLED = 'true';
+    process.env.SMS_PAYMENT_REMINDER_DETECTOR_ENABLED = 'true';
+    const list = vi.spyOn(SmsEventsRepository, 'listPendingAutoEvents');
+    for (const rule of [{enabled:false,mode:'INHERIT'},{enabled:true,mode:'CONFIRM'}]) {
+      vi.spyOn(SmsSettingsRepository,'getRule').mockResolvedValue(rule);
+      expect((await dispatcher.dispatchPendingAutoReminders()).executed).toBe(false);
+    }
+    expect(list).not.toHaveBeenCalled();
     expect(mockSmsService.provider.sendSms).not.toHaveBeenCalled();
   });
 

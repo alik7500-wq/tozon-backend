@@ -1,3 +1,4 @@
+import { SmsSettingsRepository } from './smsSettings.repository.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { PaymentReminderDetector } from './paymentReminderDetector.js';
 
@@ -25,6 +26,9 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
     } catch (err) {
       console.warn('[SMS_SCHEDULER] detectOverduePayments execution warning:', err.message);
     }
+
+    // New daily notifications only enter CONFIRM queue; no provider calls here.
+    await SmsSettingsRepository.daily();
 
     let autoStats = { executed: false, reason: 'AUTO_ENABLED_FALSE', sent: 0, failed: 0, deliveryUnknown: 0, claimed: 0 };
     if (process.env.SMS_PAYMENT_REMINDER_AUTO_ENABLED === 'true') {

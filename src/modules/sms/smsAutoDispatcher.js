@@ -1,3 +1,4 @@
+import { SmsSettingsRepository } from './smsSettings.repository.js';
 import { SmsEventsRepository } from './smsEvents.repository.js';
 import { defaultSmsEventsService } from './smsEvents.service.js';
 import { defaultSmsService } from './sms.service.js';
@@ -35,6 +36,9 @@ export class SmsAutoDispatcher {
       };
     }
 
+    const rule = await SmsSettingsRepository.getRule('PAYMENT_REMINDER');
+    if (!rule.enabled || rule.mode !== 'INHERIT') return {executed:false,reason:'RULE_DISABLED_OR_CONFIRM',sent:0,claimed:0};
+
     const limit = Math.min(
       100,
       Math.max(1, parseInt(batchLimit || process.env.SMS_AUTO_DISPATCH_BATCH_LIMIT || 5, 10))
@@ -68,11 +72,16 @@ export class SmsAutoDispatcher {
       stats.claimed++;
 
       try {
+        const currentRule = await SmsSettingsRepository.getRule('PAYMENT_REMINDER');
+        if(!currentRule.enabled || currentRule.mode !== 'INHERIT') {
+          await SmsEventsRepository.revertToAwaitingConfirmation(claimedEvent.id);
+          stats.skipped++; continue;
+        }
         // 2. Validate Context Integrity
         try {
           await this.smsEventsService.validateEventContext(claimedEvent);
         } catch (err) {
-          if (['SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(err.code)) {
+          if (['SMS_RULE_DISABLED', 'SMS_EVENT_STALE', 'SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(err.code)) {
             await SmsEventsRepository.cancelEvent({ id: claimedEvent.id, reason: err.message });
             stats.skipped++;
             continue;

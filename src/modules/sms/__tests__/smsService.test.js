@@ -1,3 +1,4 @@
+import { smsTemplateFixtures } from './smsTemplates.fixture.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SmsService } from '../sms.service.js';
 import { SmsRepository } from '../sms.repository.js';
@@ -7,6 +8,7 @@ import * as dbConn from '../../../db/connection.js';
 describe('SmsService Audit Flow & Fail-Closed Rules', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(SmsRepository,'getTemplates').mockResolvedValue(smsTemplateFixtures);
   });
 
   it('should throw error when getServiceDB is called without SUPABASE_SERVICE_ROLE_KEY', () => {
@@ -630,6 +632,8 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
 
   describe('SMS V1.3 Template Source-of-Truth & Placeholder Contract Matrix', () => {
     it('1. DB CLIENT_WELCOME returns clean template row from repository', async () => {
+      SmsRepository.getTemplates.mockRestore();
+      vi.spyOn(dbConn,'getServiceDB').mockReturnValue({from:()=>({select:()=>({eq:()=>({order:async()=>({data:smsTemplateFixtures,error:null})})})})});
       const templates = await SmsRepository.getTemplates();
       const clientWelcome = templates.find((t) => t.code === 'CLIENT_WELCOME');
       expect(clientWelcome).toBeDefined();
@@ -637,6 +641,8 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
     });
 
     it('2. DB MEETING_REMINDER contains meeting_date and meeting_time placeholders', async () => {
+      SmsRepository.getTemplates.mockRestore();
+      vi.spyOn(dbConn,'getServiceDB').mockReturnValue({from:()=>({select:()=>({eq:()=>({order:async()=>({data:smsTemplateFixtures,error:null})})})})});
       const templates = await SmsRepository.getTemplates();
       const meetingTmpl = templates.find((t) => t.code === 'MEETING_REMINDER');
       expect(meetingTmpl).toBeDefined();
@@ -645,6 +651,8 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
     });
 
     it('3. CUSTOM_MESSAGE code is inactive / filtered out from getTemplates()', async () => {
+      SmsRepository.getTemplates.mockRestore();
+      vi.spyOn(dbConn,'getServiceDB').mockReturnValue({from:()=>({select:()=>({eq:()=>({order:async()=>({data:smsTemplateFixtures,error:null})})})})});
       const templates = await SmsRepository.getTemplates();
       const customMsg = templates.find((t) => t.code === 'CUSTOM_MESSAGE' || t.text === '{{text}}');
       expect(customMsg).toBeUndefined();

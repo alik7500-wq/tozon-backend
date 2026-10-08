@@ -1,3 +1,4 @@
+import { SmsSettingsRepository } from '../smsSettings.repository.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { PaymentReminderDetector, PAYMENT_REMINDER_OFFSET_DAYS } from '../paymentReminderDetector.js';
 import { SmsEventsRepository } from '../smsEvents.repository.js';
@@ -5,6 +6,8 @@ import * as dbConn from '../../../db/connection.js';
 
 describe('V1.5C PAYMENT_REMINDER Detector Tests', () => {
   beforeEach(() => {
+    vi.spyOn(SmsSettingsRepository,'getRule').mockResolvedValue({enabled:true,mode:'INHERIT',offset_days:3,template_code:'PAYMENT_REMINDER'});
+    vi.spyOn(SmsSettingsRepository,'daily').mockResolvedValue(0);
     vi.clearAllMocks();
   });
 

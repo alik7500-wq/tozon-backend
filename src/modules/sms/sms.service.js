@@ -331,7 +331,7 @@ export class SmsService {
       let available = true;
       let reason = null;
 
-      if (code === 'CLIENT_WELCOME') {
+      if (code === 'CLIENT_WELCOME' || code === 'BIRTHDAY') {
         if (!lead) {
           available = false;
           reason = 'Клиент не выбран или не найден';
@@ -347,7 +347,7 @@ export class SmsService {
           available = false;
           reason = meetingCtx?.reason || 'Нет предстоящей запланированной встречи';
         }
-      } else if (code === 'DEAL_INFO') {
+      } else if (code === 'DEAL_INFO' || ['RESERVATION_CREATED','RESERVATION_EXPIRING','RESERVATION_CANCELLED','CONTRACT_CREATED','CONTRACT_CHANGED','SCHEDULE_CHANGED','CONTRACT_TERMINATED','CONTRACT_PAID','PAYMENT_CANCELLED'].includes(code)) {
         if (!normDealId || !dealCtx || !dealCtx.deal) {
           available = false;
           reason = 'Сделка не выбрана или не найдена';
@@ -501,7 +501,7 @@ export class SmsService {
         throw new AppError(payCtx?.reason || 'Платёж не найден для формирования шаблона', 400);
       }
 
-      if (payCtx.isMultiCurrency && code === 'PAYMENT_RECEIVED' && (!text || text === tmplObj?.text)) {
+      if (payCtx.isMultiCurrency && code === 'PAYMENT_RECEIVED' && !tmplObj?.customized_at && (!text || text === tmplObj?.text)) {
         resolvedText = 'Уважаемый(ая) {{client_name}}! По договору №{{contract_number}} принята оплата {{payment_amount}} TJS по курсу {{exchange_rate}} (эквивалент {{payment_equivalent}} USD). Всего оплачено {{total_paid}} USD. Остаток: {{remaining_balance}} USD. Спасибо! TOZON-PLAZA.';
         resolvedText = resolvedText.replace(/\{\{\s*client_name\s*\}\}/g, clientName);
       }

@@ -1,3 +1,4 @@
+import { SmsSettingsRepository } from './smsSettings.repository.js';
 import { getServiceDB } from '../../db/connection.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
 import { normalizePhoneNumber } from '../../utils/phoneNormalizer.js';
@@ -21,9 +22,11 @@ export class PaymentReminderDetector {
    */
   static async detectPaymentReminders({ businessDate = null, isDryRun = false } = {}) {
     const effectiveBusinessDate = businessDate || getBusinessDate();
+    const rule = await SmsSettingsRepository.getRule('PAYMENT_REMINDER');
+    const offsetDays = rule.offset_days;
     const db = getServiceDB();
 
-    const maxDueDate = addDaysToDateStr(effectiveBusinessDate, PAYMENT_REMINDER_OFFSET_DAYS);
+    const maxDueDate = addDaysToDateStr(effectiveBusinessDate, offsetDays);
 
     // 1. Fetch total schedules count for operational metrics
     const { count: totalScanned, error: countErr } = await db
@@ -136,8 +139,9 @@ export class PaymentReminderDetector {
         continue;
       }
 
+      // Preserve the existing key when changing reminder lead time: one message per due date.
       const expectedIdempotencyKey = `PAYMENT_REMINDER:${scheduleId}:3:${dueDate}`;
-      const reminderMinDate = addDaysToDateStr(dueDate, -PAYMENT_REMINDER_OFFSET_DAYS);
+      const reminderMinDate = addDaysToDateStr(dueDate, -offsetDays);
 
       if (dueDate < effectiveBusinessDate) {
         stats.skipped_overdue++;
@@ -192,12 +196,12 @@ export class PaymentReminderDetector {
         }
       }
 
-      if (isDryRun) {
+      if (isDryRun || !rule.enabled) {
         continue;
       }
 
       try {
-        const isAutoEnabled = process.env.SMS_PAYMENT_REMINDER_AUTO_ENABLED === 'true';
+        const isAutoEnabled = process.env.SMS_PAYMENT_REMINDER_AUTO_ENABLED === 'true' && rule.mode === 'INHERIT';
         const targetMode = isAutoEnabled ? 'AUTO' : 'CONFIRM';
 
         const result = await SmsEventsRepository.createEvent({
@@ -208,12 +212,12 @@ export class PaymentReminderDetector {
           client_id: clientId,
           deal_id: dealId,
           schedule_id: scheduleId,
-          template_code: 'PAYMENT_REMINDER',
+          template_code: rule.template_code,
           payload_json: {
             detected_business_date: effectiveBusinessDate,
             detected_due_date: dueDate,
             detected_unpaid_minor: unpaidMinor,
-            offset_days: PAYMENT_REMINDER_OFFSET_DAYS,
+            offset_days: offsetDays,
             audit_note: 'PAYLOAD_IS_NOT_SOURCE_OF_TRUTH'
           },
           scheduled_at: new Date().toISOString(),
