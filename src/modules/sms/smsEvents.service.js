@@ -6,6 +6,7 @@ import { DealsRepository } from '../deals/deals.repository.js';
 import { TasksRepository } from '../tasks/tasks.repository.js';
 import { SmsRepository } from './sms.repository.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 function parseOptionalBigInt(val) {
   if (val === undefined || val === null || val === '') return null;
@@ -282,6 +283,13 @@ export class SmsEventsService {
           return { success: false, event: updated, error: sendResult.error };
         } else {
           const updated = await SmsEventsRepository.markFailed({ id: claimedEvent.id, failureCode, failureMessage });
+          const failedSmsId = sendResult.data?.id || preAttemptId || claimedEvent.id;
+          NotificationsService.notifySmsFailed({
+            id: failedSmsId,
+            recipient_phone: sendResult.data?.phone || claimedEvent.recipient_phone,
+            error_message: failureMessage,
+            created_at: new Date().toISOString()
+          }).catch(err => console.warn('Failed to dispatch SMS_FAILED notification:', err.message));
           return { success: false, event: updated, error: sendResult.error };
         }
       }
@@ -356,6 +364,11 @@ export class SmsEventsService {
         failureCode: lastFailed?.error_code || 'PROVIDER_FAILED',
         failureMessage: lastFailed?.error_message || 'Отправка завершилась ошибкой'
       });
+      if (lastFailed) {
+        NotificationsService.notifySmsFailed(lastFailed).catch(err => {
+          console.warn('Failed to dispatch SMS_FAILED notification on reconcile:', err.message);
+        });
+      }
     }
 
     if (updatedEvent) {

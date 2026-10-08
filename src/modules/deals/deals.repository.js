@@ -877,6 +877,7 @@ export class DealsRepository {
     }
 
     const updatesJson = {};
+    if (data.status !== undefined) updatesJson.status = data.status;
     if (data.deal_date !== undefined) updatesJson.deal_date = data.deal_date;
     if (data.contract_number !== undefined) updatesJson.contract_number = data.contract_number;
     if (data.responsible_user_id !== undefined) updatesJson.responsible_user_id = data.responsible_user_id ? parseInt(data.responsible_user_id, 10) : null;
@@ -1004,6 +1005,18 @@ export class DealsRepository {
       }]);
     } catch (auditErr) {
       console.warn('Failed to insert deal audit log:', auditErr);
+    }
+
+    // Dispatch RESERVATION_CREATED if status transitioned to RESERVED
+    if (updatesJson.status === 'RESERVED' && existingDeal.status !== 'RESERVED') {
+      NotificationsService.notifyReservationCreated({
+        id: id,
+        contract_number: updatesJson.contract_number || existingDeal.contract_number,
+        unit_number: existingDeal.units?.unit_number,
+        responsible_user_id: updatesJson.responsible_user_id || existingDeal.responsible_user_id
+      }).catch(err => {
+        console.warn('Failed to dispatch RESERVATION_CREATED notification on update:', err);
+      });
     }
 
     return this.getDealById(id);

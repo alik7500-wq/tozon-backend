@@ -2,6 +2,7 @@ import { getServiceDB } from '../../db/connection.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
 import { normalizePhoneNumber } from '../../utils/phoneNormalizer.js';
 import { SmsEventsRepository } from './smsEvents.repository.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { parseOptionalBigInt } from '../../utils/idNormalizer.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
@@ -16,8 +17,7 @@ function addDaysToDateStr(dateStr, days) {
 export class PaymentReminderDetector {
   /**
    * Scan payment schedules and detect upcoming installment payment reminders.
-   * Optimized Bulk-Fetch Implementation (< 2s execution).
-   * Payom calls = 0.
+   * Dispatches both SMS outbox events and internal in-app PAYMENT_DUE notifications.
    */
   static async detectPaymentReminders({ businessDate = null, isDryRun = false } = {}) {
     const effectiveBusinessDate = businessDate || getBusinessDate();
@@ -45,6 +45,7 @@ export class PaymentReminderDetector {
           contract_number,
           status,
           currency,
+          responsible_user_id,
           final_price_minor,
           lead_id,
           leads!inner (
@@ -165,6 +166,21 @@ export class PaymentReminderDetector {
 
       stats.candidates.push(candidateObj);
 
+      // Dispatch internal in-app PAYMENT_DUE notification safely
+      if (!isDryRun && scheduleId && dealId) {
+        NotificationsService.notifyPaymentDue(
+          { id: scheduleId, due_date: dueDate },
+          {
+            id: dealId,
+            contract_number: deal.contract_number,
+            lead_name: lead?.full_name || 'Клиент',
+            responsible_user_id: deal.responsible_user_id
+          }
+        ).catch(err => {
+          console.warn(`Failed to dispatch PAYMENT_DUE notification for schedule ${scheduleId}:`, err.message);
+        });
+      }
+
       // Stale event check for this eligible schedule
       if (!isDryRun && scheduleId && awaitingByScheduleId.has(scheduleId)) {
         const existingList = awaitingByScheduleId.get(scheduleId);
@@ -228,5 +244,93 @@ export class PaymentReminderDetector {
     }
 
     return stats;
+  }
+
+  /**
+   * Detect overdue payment schedules and dispatch internal PAYMENT_OVERDUE in-app notifications.
+   * Features Backlog Protection Gate: historical overdue records before backlogCutoffDate are skipped.
+   */
+  static async detectOverduePayments({ businessDate = null, isDryRun = false, backlogCutoffDate = null } = {}) {
+    const effectiveBusinessDate = businessDate || getBusinessDate();
+    const db = getServiceDB();
+
+    // BACKLOG PROTECTION GATE: Stable fixed release date (2026-10-08) excludes historical 74 overdues
+    // while ensuring any new overdues arising after activation are detected cleanly across 1, 3, 7 day runs.
+    const DEFAULT_STABLE_BACKLOG_CUTOFF = '2026-10-08';
+    const cutoffDate = backlogCutoffDate || process.env.NOTIFICATIONS_OVERDUE_BACKLOG_CUTOFF || DEFAULT_STABLE_BACKLOG_CUTOFF;
+
+    const { data: overdueSchedules, error } = await db
+      .from('deal_payment_schedules')
+      .select(`
+        *,
+        deals!inner (
+          id,
+          contract_number,
+          status,
+          currency,
+          responsible_user_id,
+          lead_id,
+          leads!inner (
+            id,
+            full_name,
+            phone
+          )
+        )
+      `)
+      .lt('due_date', effectiveBusinessDate)
+      .gte('due_date', cutoffDate) // Backlog protection filter
+      .order('due_date', { ascending: true });
+
+    if (error) {
+      console.error('DB error fetching overdue schedules:', error.message);
+      return { overdueScanned: 0, overdueNotified: 0, skippedBacklog: 0 };
+    }
+
+    const eligibleDeals = ['SIGNED'];
+    let notifiedCount = 0;
+    let skippedPaidCount = 0;
+
+    for (const sched of (overdueSchedules || [])) {
+      const deal = sched.deals;
+      const lead = deal?.leads;
+      const scheduleId = parseOptionalBigInt(sched.id);
+      const dealId = parseOptionalBigInt(sched.deal_id);
+
+      const amountMinor = Number(sched.amount_minor) || 0;
+      const paidMinor = Number(sched.paid_amount_minor) || 0;
+      const unpaidMinor = Math.max(0, amountMinor - paidMinor);
+
+      if (unpaidMinor <= 0 || sched.status === 'PAID') {
+        skippedPaidCount++;
+        continue;
+      }
+
+      if (!deal || !eligibleDeals.includes(deal.status)) {
+        continue;
+      }
+
+      if (!isDryRun && scheduleId && dealId) {
+        await NotificationsService.notifyPaymentOverdue(
+          { id: scheduleId, due_date: sched.due_date },
+          {
+            id: dealId,
+            contract_number: deal.contract_number,
+            lead_name: lead?.full_name || 'Клиент',
+            responsible_user_id: deal.responsible_user_id
+          }
+        ).catch(err => {
+          console.warn(`Failed to dispatch PAYMENT_OVERDUE notification for schedule ${scheduleId}:`, err.message);
+        });
+        notifiedCount++;
+      }
+    }
+
+    return {
+      effectiveBusinessDate,
+      cutoffDate,
+      overdueScanned: (overdueSchedules || []).length,
+      overdueNotified: notifiedCount,
+      skippedPaid: skippedPaidCount
+    };
   }
 }

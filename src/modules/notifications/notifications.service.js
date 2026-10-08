@@ -121,17 +121,19 @@ export class NotificationsService {
     const adminIds = await NotificationsRepository.getAdminUserIds();
 
     const recipientPhone = smsMessage.recipient_phone || smsMessage.phone || 'клиенту';
+    const failureReason = smsMessage.error_message || smsMessage.errorMessage || smsMessage.failure_message || smsMessage.failure_code || 'Сбой доставки';
+    const createdDate = smsMessage.created_at || smsMessage.sent_at || new Date().toISOString();
 
     for (const userId of adminIds) {
       await NotificationsRepository.createNotification({
         user_id: userId,
         type: 'SMS_FAILED',
         title: 'Ошибка автоматической отправки SMS',
-        message: `Сбой отправки SMS на номер ${recipientPhone}.`,
+        message: `Сбой отправки SMS (ID #${smsMessage.id}) на номер ${recipientPhone}: ${failureReason}.`,
         entity_type: 'SMS',
         entity_id: smsMessage.id,
         dedupe_key: `SMS_FAILED:${smsMessage.id}:${userId}`,
-        metadata: { sms_id: smsMessage.id, phone: recipientPhone }
+        metadata: { sms_id: smsMessage.id, phone: recipientPhone, failure_reason: failureReason, created_at: createdDate }
       });
     }
   }

@@ -8,6 +8,7 @@ import { normalizePhoneNumber } from '../../utils/phoneNormalizer.js';
 import { parseOptionalBigInt } from '../../utils/idNormalizer.js';
 import { getBusinessDate, getBusinessDateTime } from '../../utils/businessTime.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 
 function formatDateDDMMYYYY(dateStr) {
   if (!dateStr || typeof dateStr !== 'string') return dateStr;
@@ -794,6 +795,15 @@ export class SmsService {
         status: 'failed',
         errorCode: providerResult.errorCode,
         errorMessage: providerResult.errorMessage
+      });
+
+      NotificationsService.notifySmsFailed({
+        id: dbRecord.id,
+        recipient_phone: normalizedPhone,
+        error_message: providerResult.errorMessage || providerResult.errorCode || 'Сбой доставки',
+        created_at: now
+      }).catch(err => {
+        console.warn('Failed to dispatch SMS_FAILED notification:', err.message);
       });
 
       return {

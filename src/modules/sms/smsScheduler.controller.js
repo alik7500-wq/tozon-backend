@@ -16,6 +16,16 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
       isDryRun: false
     });
 
+    let overdueStats = { overdueScanned: 0, overdueNotified: 0, skippedPaid: 0 };
+    try {
+      overdueStats = await PaymentReminderDetector.detectOverduePayments({
+        businessDate: null,
+        isDryRun: false
+      }) || overdueStats;
+    } catch (err) {
+      console.warn('[SMS_SCHEDULER] detectOverduePayments execution warning:', err.message);
+    }
+
     let autoStats = { executed: false, reason: 'AUTO_ENABLED_FALSE', sent: 0, failed: 0, deliveryUnknown: 0, claimed: 0 };
     if (process.env.SMS_PAYMENT_REMINDER_AUTO_ENABLED === 'true') {
       const { defaultSmsAutoDispatcher } = await import('./smsAutoDispatcher.js');
@@ -30,6 +40,8 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
       created: stats.created,
       already_exists: stats.already_exists,
       cancelled_stale: stats.cancelled_stale,
+      overdue_scanned: overdueStats.overdueScanned,
+      overdue_notified: overdueStats.overdueNotified,
       auto_executed: autoStats.executed,
       auto_sent: autoStats.sent || 0,
       errors: stats.errors,
@@ -38,7 +50,7 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      message: 'Внутренний запуск планировщика PAYMENT_REMINDER успешно выполнен',
+      message: 'Внутренний запуск планировщика PAYMENT_REMINDER и PAYMENT_OVERDUE успешно выполнен',
       data: {
         businessDate: stats.businessDate,
         scanned: stats.scanned,
@@ -52,6 +64,7 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
         skipped_ineligible_deal: stats.skipped_ineligible_deal,
         errors: stats.errors,
         candidatesCount: (stats.candidates || []).length,
+        overdueStats: overdueStats,
         autoDispatcher: autoStats
       }
     });

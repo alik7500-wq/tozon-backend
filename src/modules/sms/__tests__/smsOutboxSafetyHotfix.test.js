@@ -51,7 +51,7 @@ describe('V1.5F.4 Outbox State Machine Safety Hotfix Tests', () => {
       final_price_minor: 100000,
       currency: 'USD',
       schedules: [
-        { id: 248, payment_number: 1, due_date: '2026-10-03', amount_minor: 85300, paid_amount_minor: 0, paymentAmountFormatted: '853' }
+        { id: 248, payment_number: 1, due_date: '2028-10-03', amount_minor: 85300, paid_amount_minor: 0, paymentAmountFormatted: '853' }
       ]
     }));
 

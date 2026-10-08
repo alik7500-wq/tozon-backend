@@ -11,6 +11,7 @@ describe('V1.5D PAYMENT_REMINDER Scheduler Tests', () => {
     process.env.SMS_SCHEDULER_INTERNAL_TOKEN = 'test-secret-scheduler-token-12345';
     process.env.SMS_PAYMENT_REMINDER_DETECTOR_ENABLED = 'true';
     process.env.SMS_OUTBOX_CONFIRM_ENABLED = 'false';
+    vi.spyOn(PaymentReminderDetector, 'detectOverduePayments').mockResolvedValue({ overdueScanned: 0, overdueNotified: 0, skippedPaid: 0 });
   });
 
   afterEach(() => {
