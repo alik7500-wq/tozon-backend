@@ -32,6 +32,7 @@ import projectMediaRouter from './modules/projectMedia/projectMedia.router.js';
 import searchRouter from './modules/search/search.router.js';
 import layoutPresentationRouter from './modules/inventory/layout_presentation.router.js';
 import documentsRouter from './modules/documents/documents.router.js';
+import documentSettingsRouter from './modules/document-settings/document-settings.router.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -96,6 +97,7 @@ app.use('/api', tour360Router);
 app.use('/api', projectMediaRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/documents', documentsRouter);
+app.use('/api/document-settings', documentSettingsRouter);
 
 // Global Error Handler
 app.use(errorHandler);
