@@ -5,6 +5,7 @@ import { getBusinessDate } from '../../utils/businessTime.js';
 import { allocatePaymentsFIFO } from '../../utils/fifoPaymentAllocation.js';
 import { matchSearchQuery } from '../../utils/searchUtils.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { getDealRules } from '../document-settings/configuration.js';
 
 export class DealsRepository {
   static async findAll(filters = {}) {
@@ -269,6 +270,10 @@ export class DealsRepository {
     const db = getDB();
     const now = new Date().toISOString();
     const dealDate = data.deal_date || now.split('T')[0];
+    const rules = await getDealRules();
+    const basePrice = Number(data.base_price_minor || data.final_price_minor);
+    const discountPercent = basePrice > 0 ? Math.max(0, (basePrice - Number(data.final_price_minor)) / basePrice * 100) : 0;
+    if (discountPercent > rules.max_discount_percent + 0.000001) throw new AppError(`Скидка превышает лимит ${rules.max_discount_percent}% в настройках компании`, 400);
 
     // 1. Verify Unit
     const { data: unit, error: unitErr } = await db.from('units').select('*, floors(sections(buildings(projects(code, currency))))').eq('id', data.unit_id).single();
@@ -279,13 +284,13 @@ export class DealsRepository {
     const { count, error: countErr } = await db.from('deals').select('*', { count: 'exact', head: true });
     if (countErr) throw countErr;
     const pCur = unit.floors?.sections?.buildings?.projects?.currency || 'TJS';
-    const contractNumber = String((count || 0) + 1).padStart(4, '0');
+    let contractNumber = String((count || 0) + 1).padStart(4, '0');
 
     const finalStatus = data.status || 'SIGNED';
     let reservationExpiresAt = data.reservation_expires_at || null;
     if (finalStatus === 'RESERVED' && !reservationExpiresAt) {
       const d = new Date();
-      d.setDate(d.getDate() + 3);
+      d.setDate(d.getDate() + rules.reservation_days);
       reservationExpiresAt = d.toISOString().split('T')[0];
     }
 
@@ -317,6 +322,7 @@ export class DealsRepository {
       updated_at: now,
     }]).select().single();
     if (dealErr) throw dealErr;
+    contractNumber = newDeal.contract_number;
 
     // 4 & 5. Update Unit and Lead
     await db.from('units').update({ status: finalStatus === 'SIGNED' ? 'SOLD' : 'RESERVED', updated_at: now }).eq('id', data.unit_id);
