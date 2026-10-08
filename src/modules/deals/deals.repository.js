@@ -1,4 +1,5 @@
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
+import { validateAmendment } from './amendment.validation.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
 import { allocatePaymentsFIFO } from '../../utils/fifoPaymentAllocation.js';
@@ -856,6 +857,32 @@ export class DealsRepository {
         layout_image_path: u.layout_types?.image_path
       };
     });
+  }
+
+  static async getAmendmentHistory(id) {
+    const { data, error } = await getServiceDB().from('deal_audit_logs')
+      .select('id, user_id, changes_json, created_at').eq('deal_id', id)
+      .eq('action', 'AMEND_CONTRACT').order('created_at', { ascending: false }).limit(50);
+    if (error) throw error;
+    return data || [];
+  }
+
+  static async amendDeal(id, data, userId) {
+    const amendment = validateAmendment(data);
+    const { error } = await getServiceDB().rpc('amend_deal_atomic', {
+      p_deal_id: Number(id), p_user_id: Number(userId), p_amendment: amendment
+    });
+    if (error) {
+      const message = error.message || 'Не удалось изменить договор';
+      if (message.includes('DEAL_NOT_FOUND')) throw new AppError('Сделка не найдена', 404);
+      if (/STALE_DEAL|UNIT_UNAVAILABLE/.test(message) || error.code === '23505') {
+        throw new AppError('Договор или квартира изменились. Обновите карточку и повторите выбор.', 409);
+      }
+      if (message.includes('AMENDMENT_INVALID')) throw new AppError(message.split('AMENDMENT_INVALID:')[1]?.trim() || message, 400);
+      // No non-atomic fallback: a missing migration or database failure must not write anything.
+      throw new AppError('Изменение договора недоступно. Проверьте миграцию amend_deal_atomic и настройки сервера.', 503);
+    }
+    return this.getDealById(id);
   }
 
   static async updateDeal(id, data, userId) {
