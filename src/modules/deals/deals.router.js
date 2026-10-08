@@ -58,6 +58,25 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // PATCH /api/deals/:id - Update deal details (ADMIN ONLY for corrections)
+router.get('/:id/amendments', restrictTo('ADMIN'), async (req, res, next) => {
+  try {
+    const amendments = await DealsRepository.getAmendmentHistory(parseRequiredBigInt(req.params.id, 'id'));
+    res.status(200).json({ status: 'success', data: { amendments } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/:id/amend', restrictTo('ADMIN'), async (req, res, next) => {
+  try {
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const deal = await DealsRepository.amendDeal(cleanId, req.body, req.user.id);
+    res.status(200).json({ status: 'success', data: { deal } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.patch('/:id', restrictTo('ADMIN'), async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
