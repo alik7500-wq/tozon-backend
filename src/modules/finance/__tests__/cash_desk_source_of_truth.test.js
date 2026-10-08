@@ -8,7 +8,8 @@ vi.mock('../../../db/connection.js', () => {
     rpc: vi.fn()
   };
   return {
-    getDB: () => mockDb
+    getDB: () => mockDb,
+    getServiceDB: () => mockDb
   };
 });
 

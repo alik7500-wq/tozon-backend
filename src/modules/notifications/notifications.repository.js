@@ -1,8 +1,8 @@
-import { getDB } from '../../db/connection.js';
+import { getServiceDB } from '../../db/connection.js';
 
 export class NotificationsRepository {
   static async getAdminUserIds() {
-    const db = getDB();
+    const db = getServiceDB();
     const { data, error } = await db
       .from('users')
       .select('id')
@@ -14,7 +14,7 @@ export class NotificationsRepository {
   }
 
   static async createNotification(data) {
-    const db = getDB();
+    const db = getServiceDB();
     const payload = {
       user_id: data.user_id,
       event_type: data.event_type || data.type,
@@ -59,7 +59,7 @@ export class NotificationsRepository {
   }
 
   static async getUserNotifications(userId, filters = {}) {
-    const db = getDB();
+    const db = getServiceDB();
     let query = db
       .from('user_notifications')
       .select('*')
@@ -87,7 +87,7 @@ export class NotificationsRepository {
   }
 
   static async getUnreadCount(userId) {
-    const db = getDB();
+    const db = getServiceDB();
     const { count, error } = await db
       .from('user_notifications')
       .select('*', { count: 'exact', head: true })
@@ -104,7 +104,7 @@ export class NotificationsRepository {
   }
 
   static async markAsRead(notificationId, userId) {
-    const db = getDB();
+    const db = getServiceDB();
     const now = new Date().toISOString();
 
     const { data, error } = await db
@@ -120,7 +120,7 @@ export class NotificationsRepository {
   }
 
   static async markAllAsRead(userId) {
-    const db = getDB();
+    const db = getServiceDB();
     const now = new Date().toISOString();
 
     const { data, error } = await db
