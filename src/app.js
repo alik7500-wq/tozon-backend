@@ -66,6 +66,7 @@ app.get('/', (req, res) => {
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
+    commit_sha: process.env.RENDER_GIT_COMMIT || null,
     timestamp: new Date().toISOString()
   });
 });
