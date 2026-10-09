@@ -172,17 +172,19 @@ export class PaymentReminderDetector {
 
       // Dispatch internal in-app PAYMENT_DUE notification safely
       if (!isDryRun && scheduleId && dealId) {
-        NotificationsService.notifyPaymentDue(
-          { id: scheduleId, due_date: dueDate },
-          {
-            id: dealId,
-            contract_number: deal.contract_number,
-            lead_name: lead?.full_name || 'Клиент',
-            responsible_user_id: deal.responsible_user_id
-          }
-        ).catch(err => {
+        try {
+          await NotificationsService.notifyPaymentDue(
+            { id: scheduleId, due_date: dueDate },
+            {
+              id: dealId,
+              contract_number: deal.contract_number,
+              lead_name: lead?.full_name || 'Клиент',
+              responsible_user_id: deal.responsible_user_id
+            }
+          );
+        } catch (err) {
           console.warn(`Failed to dispatch PAYMENT_DUE notification for schedule ${scheduleId}:`, err.message);
-        });
+        }
       }
 
       // Stale event check for this eligible schedule
@@ -314,18 +316,20 @@ export class PaymentReminderDetector {
       }
 
       if (!isDryRun && scheduleId && dealId) {
-        await NotificationsService.notifyPaymentOverdue(
-          { id: scheduleId, due_date: sched.due_date },
-          {
-            id: dealId,
-            contract_number: deal.contract_number,
-            lead_name: lead?.full_name || 'Клиент',
-            responsible_user_id: deal.responsible_user_id
-          }
-        ).catch(err => {
+        try {
+          await NotificationsService.notifyPaymentOverdue(
+            { id: scheduleId, due_date: sched.due_date },
+            {
+              id: dealId,
+              contract_number: deal.contract_number,
+              lead_name: lead?.full_name || 'Клиент',
+              responsible_user_id: deal.responsible_user_id
+            }
+          );
+          notifiedCount++;
+        } catch (err) {
           console.warn(`Failed to dispatch PAYMENT_OVERDUE notification for schedule ${scheduleId}:`, err.message);
-        });
-        notifiedCount++;
+        }
       }
     }
 

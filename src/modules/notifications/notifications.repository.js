@@ -7,9 +7,14 @@ export class NotificationsRepository {
       .from('users')
       .select('id')
       .eq('role', 'ADMIN')
-      .eq('is_active', true);
+      .eq('is_active', 1);
 
-    if (error || !data) return [1]; // fallback to admin user ID 1
+    if (error) {
+      console.error('Failed to fetch ADMIN user IDs:', error.message);
+      throw error;
+    }
+
+    if (!data || data.length === 0) return [];
     return data.map(u => u.id);
   }
 
