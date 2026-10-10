@@ -29,6 +29,17 @@ router.get('/unread-count', async (req, res, next) => {
   }
 });
 
+// GET /api/notifications/stats — Get aggregated notification counts across categories for current user
+router.get('/stats', async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const stats = await NotificationsService.getNotificationStats(userId);
+    res.json({ success: true, data: stats });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // PATCH /api/notifications/:id/read — Mark single notification as read for current user
 router.patch('/:id/read', async (req, res, next) => {
   try {

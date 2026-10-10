@@ -9,6 +9,10 @@ export class NotificationsService {
     return NotificationsRepository.getUnreadCount(userId);
   }
 
+  static async getNotificationStats(userId) {
+    return NotificationsRepository.getNotificationStats(userId);
+  }
+
   static async markAsRead(notificationId, userId) {
     return NotificationsRepository.markAsRead(notificationId, userId);
   }

@@ -63,6 +63,36 @@ export class NotificationsRepository {
     return inserted;
   }
 
+  static async getNotificationStats(userId) {
+    const db = getServiceDB();
+    const { data, error } = await db
+      .from('user_notifications')
+      .select('event_type, type, is_read')
+      .eq('user_id', userId);
+
+    if (error) {
+      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        return { total: 0, unread: 0, payments: 0, leads_and_reservations: 0, sms_failed: 0 };
+      }
+      throw error;
+    }
+
+    const list = data || [];
+    return {
+      total: list.length,
+      unread: list.filter(n => !n.is_read).length,
+      payments: list.filter(n => {
+        const type = n.event_type || n.type;
+        return type === 'PAYMENT_DUE' || type === 'PAYMENT_OVERDUE';
+      }).length,
+      leads_and_reservations: list.filter(n => {
+        const type = n.event_type || n.type;
+        return type === 'LEAD_CREATED' || type === 'RESERVATION_CREATED';
+      }).length,
+      sms_failed: list.filter(n => (n.event_type || n.type) === 'SMS_FAILED').length
+    };
+  }
+
   static async getUserNotifications(userId, filters = {}) {
     const db = getServiceDB();
     let query = db
@@ -71,12 +101,25 @@ export class NotificationsRepository {
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    if (filters.is_read !== undefined && filters.is_read !== null) {
-      query = query.eq('is_read', Boolean(filters.is_read));
+    if (filters.is_read !== undefined && filters.is_read !== null && filters.is_read !== '') {
+      query = query.eq('is_read', String(filters.is_read) === 'true');
     }
 
-    const limit = filters.limit ? Number(filters.limit) : 50;
-    const offset = filters.offset ? Number(filters.offset) : 0;
+    if (filters.category) {
+      if (filters.category === 'unread') {
+        query = query.eq('is_read', false);
+      } else if (filters.category === 'payments') {
+        query = query.in('event_type', ['PAYMENT_DUE', 'PAYMENT_OVERDUE']);
+      } else if (filters.category === 'leads') {
+        query = query.in('event_type', ['LEAD_CREATED', 'RESERVATION_CREATED']);
+      } else if (filters.category === 'sms') {
+        query = query.eq('event_type', 'SMS_FAILED');
+      }
+    }
+
+    const page = filters.page ? Math.max(1, Number(filters.page)) : null;
+    const limit = filters.limit ? Math.min(1000, Number(filters.limit)) : 200;
+    const offset = page ? (page - 1) * limit : (filters.offset ? Number(filters.offset) : 0);
 
     query = query.range(offset, offset + limit - 1);
 
