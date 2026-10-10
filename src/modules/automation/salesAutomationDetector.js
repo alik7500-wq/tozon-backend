@@ -84,7 +84,6 @@ export class SalesAutomationDetector {
           client_name,
           phone,
           due_date,
-          time,
           status,
           created_at,
           leads ( id, full_name, phone )
