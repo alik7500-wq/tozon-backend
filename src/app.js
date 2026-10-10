@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { errorHandler } from './shared/errors/errorHandler.js';
 
 import authRouter from './modules/auth/auth.router.js';
+import callsRouter from './modules/calls/calls.router.js';
 import projectsRouter from './modules/projects/projects.router.js';
 import inventoryRouter from './modules/inventory/inventory.router.js';
 import visualMapsRouter from './modules/visual-maps/visual-maps.router.js';
@@ -73,6 +74,7 @@ app.get('/api/health', (req, res) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/calls', callsRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/inventory', inventoryRouter);
 app.use('/api/inventory', layoutPresentationRouter);
