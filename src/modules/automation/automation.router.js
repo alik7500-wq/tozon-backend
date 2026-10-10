@@ -195,7 +195,7 @@ router.post('/run-detector', async (req, res) => {
     }
 
     const isDryRun = req.query.dryRun === 'true' || req.body?.isDryRun === true || req.body?.dryRun === true;
-    const isFeatureEnabled = process.env.SALES_AUTOMATION_ENABLED === 'true';
+    const isFeatureEnabled = process.env.SALES_AUTOMATION_ENABLED !== undefined ? process.env.SALES_AUTOMATION_ENABLED === 'true' : true;
 
     if (!isFeatureEnabled && !isDryRun) {
       return res.status(403).json({
