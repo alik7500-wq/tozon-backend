@@ -141,4 +141,96 @@ export class NotificationsService {
       });
     }
   }
+
+  // 6. LEAD_UNASSIGNED Event Notification
+  static async notifyLeadUnassigned(lead) {
+    if (!lead || !lead.id) return;
+    const adminIds = await NotificationsRepository.getAdminUserIds();
+    if (!adminIds || adminIds.length === 0) return;
+
+    const leadName = lead.full_name || lead.name || 'Клиент';
+
+    for (const userId of adminIds) {
+      await NotificationsRepository.createNotification({
+        user_id: userId,
+        type: 'LEAD_UNASSIGNED',
+        title: 'Новый неназначенный лид',
+        message: `Новый лид ${leadName} поступил в систему и ожидает назначения ответственного менеджера.`,
+        entity_type: 'LEAD',
+        entity_id: lead.id,
+        action_url: `/clients?clientId=${lead.id}`,
+        dedupe_key: `LEAD_UNASSIGNED:${lead.id}:${userId}`,
+        metadata: { lead_id: lead.id, phone: lead.phone }
+      });
+    }
+  }
+
+  // 7. MANAGER_TASK_OVERDUE Event Notification
+  static async notifyManagerTaskOverdue(task) {
+    if (!task || !task.id) return;
+    const recipientIds = await this.resolveRecipients(task.assigned_user_id);
+
+    const clientName = task.client_name || task.leads?.full_name || 'Клиент';
+    const taskTitle = task.title || 'Задача';
+
+    const entityType = task.lead_id ? 'LEAD' : (task.deal_id ? 'DEAL' : 'TASK');
+    const entityId = task.lead_id || task.deal_id || task.id;
+    const actionUrl = task.lead_id ? `/clients?clientId=${task.lead_id}` : (task.deal_id ? `/deals?dealId=${task.deal_id}` : '/tasks');
+
+    for (const userId of recipientIds) {
+      await NotificationsRepository.createNotification({
+        user_id: userId,
+        type: 'MANAGER_TASK_OVERDUE',
+        title: 'Просрочена задача сотрудника',
+        message: `Просрочена задача "${taskTitle}" (Клиент: ${clientName}) со сроком ${task.due_date}.`,
+        entity_type: entityType,
+        entity_id: entityId,
+        action_url: actionUrl,
+        dedupe_key: `MANAGER_TASK_OVERDUE:${task.id}:${userId}:${task.due_date}`,
+        metadata: { task_id: task.id, due_date: task.due_date, assigned_user_id: task.assigned_user_id }
+      });
+    }
+  }
+
+  // 8. CALL_REMINDER Event Notification
+  static async notifyCallReminder(task) {
+    if (!task || !task.id || !task.assigned_user_id) return;
+    const userId = Number(task.assigned_user_id);
+
+    const clientName = task.client_name || task.leads?.full_name || 'Клиент';
+    const timeStr = task.time ? ` Время: ${task.time}.` : '';
+
+    await NotificationsRepository.createNotification({
+      user_id: userId,
+      type: 'CALL_REMINDER',
+      title: 'Напоминание о звонке',
+      message: `На сегодня запланирован звонок клиенту ${clientName}: "${task.title}".${timeStr}`,
+      entity_type: task.lead_id ? 'LEAD' : 'TASK',
+      entity_id: task.lead_id || task.id,
+      action_url: task.lead_id ? `/clients?clientId=${task.lead_id}` : '/tasks',
+      dedupe_key: `CALL_REMINDER:${task.id}:${userId}:${task.due_date}`,
+      metadata: { task_id: task.id, due_date: task.due_date, time: task.time || null }
+    });
+  }
+
+  // 9. MEETING_REMINDER Event Notification
+  static async notifyMeetingReminder(task) {
+    if (!task || !task.id || !task.assigned_user_id) return;
+    const userId = Number(task.assigned_user_id);
+
+    const clientName = task.client_name || task.leads?.full_name || 'Клиент';
+    const timeStr = task.time ? ` Время: ${task.time}.` : '';
+
+    await NotificationsRepository.createNotification({
+      user_id: userId,
+      type: 'MEETING_REMINDER',
+      title: 'Напоминание о встрече',
+      message: `На сегодня запланирована встреча с клиентом ${clientName}: "${task.title}".${timeStr}`,
+      entity_type: task.lead_id ? 'LEAD' : 'TASK',
+      entity_id: task.lead_id || task.id,
+      action_url: task.lead_id ? `/clients?clientId=${task.lead_id}` : '/tasks',
+      dedupe_key: `MEETING_REMINDER:${task.id}:${userId}:${task.due_date}`,
+      metadata: { task_id: task.id, due_date: task.due_date, time: task.time || null }
+    });
+  }
 }

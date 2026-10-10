@@ -1,5 +1,6 @@
 import express from 'express';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
+import { SalesAutomationDetector } from './salesAutomationDetector.js';
 
 const router = express.Router();
 
@@ -175,6 +176,63 @@ router.patch('/rules/:id/toggle', protect, (req, res) => {
     return res.json({ status: 'success', data: { rule } });
   }
   res.status(404).json({ status: 'error', message: 'Правило не найдено' });
+});
+
+// POST /api/automation/run-detector
+router.post('/run-detector', async (req, res) => {
+  try {
+    const cronSecret = process.env.SALES_AUTOMATION_CRON_SECRET || 'TOZON_SALES_AUTOMATION_SECRET_2026';
+    const providedSecret = req.headers['x-cron-secret'] || (req.headers.authorization ? req.headers.authorization.replace('Bearer ', '').trim() : null);
+
+    if (!providedSecret || providedSecret !== cronSecret) {
+      return res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED_CRON_SECRET',
+          message: 'Доступ запрещен: требуется действительный секрет авторизации служб Cron.'
+        }
+      });
+    }
+
+    const isDryRun = req.query.dryRun === 'true' || req.body?.isDryRun === true || req.body?.dryRun === true;
+    const isFeatureEnabled = process.env.SALES_AUTOMATION_ENABLED === 'true';
+
+    if (!isFeatureEnabled && !isDryRun) {
+      return res.status(403).json({
+        success: false,
+        error: {
+          code: 'SALES_AUTOMATION_DISABLED',
+          message: 'Модуль Sales Automation отключен флагом SALES_AUTOMATION_ENABLED=false. Живое создание уведомлений заблокировано.'
+        }
+      });
+    }
+
+    const businessDate = req.query.businessDate || req.body?.businessDate || null;
+    const effectiveDryRun = isDryRun || !isFeatureEnabled;
+
+    const stats = await SalesAutomationDetector.runDetectionCycle({
+      businessDate,
+      isDryRun: effectiveDryRun
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        featureEnabled: isFeatureEnabled,
+        effectiveDryRun,
+        stats
+      }
+    });
+  } catch (err) {
+    console.error('[AutomationRouter] Error running sales automation detector:', err);
+    return res.status(500).json({
+      success: false,
+      error: {
+        code: 'DETECTOR_EXECUTION_ERROR',
+        message: err.message || 'Ошибка выполнения детектора Sales Automation'
+      }
+    });
+  }
 });
 
 export { router as automationRouter };
