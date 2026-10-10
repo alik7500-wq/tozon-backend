@@ -241,9 +241,11 @@ export class SmsService {
     const remainingBalanceMinor = Math.max(0, finalPriceMinor - totalPaidMinor);
 
     const contractCurrency = (deal.currency || deal.project_currency || 'USD').toUpperCase();
-    const paymentCurrency = (paymentRecord.currency || contractCurrency).toUpperCase();
+    const ledgerCurrency = (paymentRecord.currency || contractCurrency).toUpperCase();
 
-    const isMultiCurrency = Boolean(paymentRecord.amount_tjs && paymentRecord.amount_usd && paymentRecord.exchange_rate);
+    const isMultiCurrency = Number(paymentRecord.amount_tjs) > 0 && Number(paymentRecord.amount_usd) > 0 && Number(paymentRecord.exchange_rate) > 0;
+    // The snapshot amount shown below is TJS; currency on the record is the contract ledger currency.
+    const paymentCurrency = isMultiCurrency ? 'TJS' : ledgerCurrency;
 
     let paymentAmountFormatted = '';
     let paymentEquivalentFormatted = '';
