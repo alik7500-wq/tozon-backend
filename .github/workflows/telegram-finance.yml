@@ -1,0 +1,27 @@
+name: TOZON Telegram Finance Daily Report
+on:
+  schedule:
+    # 17:00 UTC = 22:00 Asia/Dushanbe. Backup trigger if the web service slept.
+    - cron: '0 17 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: telegram-finance-daily
+  cancel-in-progress: false
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Run the daily finance scheduler
+        env:
+          SMS_SCHEDULER_INTERNAL_TOKEN: ${{ secrets.SMS_SCHEDULER_INTERNAL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${SMS_SCHEDULER_INTERNAL_TOKEN:-}"
+          curl --fail --silent --show-error --retry 2 --retry-delay 10 \
+            --connect-timeout 20 --max-time 180 \
+            -X POST 'https://tozon-backend.onrender.com/api/telegram-finance/run' \
+            -H "Authorization: Bearer $SMS_SCHEDULER_INTERNAL_TOKEN" \
+            -H 'Content-Type: application/json' -d '{}'
