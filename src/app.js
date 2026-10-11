@@ -33,6 +33,7 @@ import searchRouter from './modules/search/search.router.js';
 import layoutPresentationRouter from './modules/inventory/layout_presentation.router.js';
 import documentsRouter from './modules/documents/documents.router.js';
 import documentSettingsRouter from './modules/document-settings/document-settings.router.js';
+import telegramFinanceRouter from './modules/telegram-finance/router.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,6 +52,7 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 app.use(pino({
+  redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-telegram-bot-api-secret-token"]'],
   autoLogging: {
     ignore: (req) => req.url === '/api/health',
   }
@@ -98,6 +100,7 @@ app.use('/api', projectMediaRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/documents', documentsRouter);
 app.use('/api/document-settings', documentSettingsRouter);
+app.use('/api/telegram-finance', telegramFinanceRouter);
 
 // Global Error Handler
 app.use(errorHandler);
