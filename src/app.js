@@ -34,6 +34,7 @@ import layoutPresentationRouter from './modules/inventory/layout_presentation.ro
 import documentsRouter from './modules/documents/documents.router.js';
 import documentSettingsRouter from './modules/document-settings/document-settings.router.js';
 import telegramFinanceRouter from './modules/telegram-finance/router.js';
+import { financeBotHealth } from './modules/telegram-finance/start.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -70,6 +71,7 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
     commit_sha: process.env.RENDER_GIT_COMMIT || null,
+    finance_bot: financeBotHealth(),
     timestamp: new Date().toISOString()
   });
 });

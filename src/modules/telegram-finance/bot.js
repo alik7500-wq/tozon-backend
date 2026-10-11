@@ -123,6 +123,14 @@ export class FinanceBot {
     this.busy = true;
     try {
       if (!await this.repo.claimLease(this.worker)) return;
+      if (!this.diagnosticsAt || this.clock().getTime() - this.diagnosticsAt > 30000) {
+        try {
+          const info = await this.api.call('getWebhookInfo');
+          const message = info.last_error_message || '';
+          this.diagnostics = { pending_updates: info.pending_update_count || 0, webhook_registered: Boolean(info.url), last_error_at: info.last_error_date || null, delivery_error: message ? (/\b[45]\d\d\b/.exec(message)?.[0] || (/timed out/i.test(message) ? 'TIMEOUT' : /SSL|TLS|certificate/i.test(message) ? 'TLS' : 'DELIVERY_ERROR')) : null };
+          this.diagnosticsAt = this.clock().getTime();
+        } catch { /* Do not block report processing on diagnostics. */ }
+      }
       try { await this.daily(); } catch { this.logger.warn('Telegram finance daily report unavailable'); }
       const updates = await this.repo.pending();
       for (const item of updates) {
