@@ -1,6 +1,7 @@
 import { it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { readFileSync } from 'node:fs';
 const state = vi.hoisted(() => ({ enqueue: vi.fn(), tick: vi.fn(), setAccess: vi.fn(), find: vi.fn(), subscribers: vi.fn(), deliveries: vi.fn(), state: vi.fn() }));
 vi.mock('./repository.js', () => ({ TelegramFinanceRepository: class { constructor() { Object.assign(this, state); } } }));
 vi.mock('./start.js', () => ({ getFinanceBot: () => ({ tick: state.tick }) }));
@@ -25,4 +26,12 @@ it('authenticates the webhook and excludes old financial message text from its q
 it('protects the external daily scheduler', async () => {
   expect((await request(app).post('/bot/run')).status).toBe(401);
   expect((await request(app).post('/bot/run').set('Authorization', 'Bearer FAKE_CRON_TOKEN')).status).toBe(200);
+});
+it('registers the bot router before broad authenticated API routers', () => {
+  const source = readFileSync(new URL('../../app.js', import.meta.url), 'utf8');
+  const bot = source.indexOf("app.use('/api/telegram-finance', telegramFinanceRouter)");
+  expect(bot).toBeGreaterThan(0);
+  for (const router of ['visual3dRouter', 'tour360Router', 'projectMediaRouter']) {
+    expect(bot).toBeLessThan(source.indexOf(`app.use('/api', ${router})`));
+  }
 });

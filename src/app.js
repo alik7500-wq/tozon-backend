@@ -76,6 +76,9 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Handle authenticated Telegram callbacks before the broad /api media routers.
+// The bot router has its own secret verification and CRM administrator checks.
+app.use('/api/telegram-finance', telegramFinanceRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/inventory', inventoryRouter);
@@ -102,7 +105,6 @@ app.use('/api', projectMediaRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/documents', documentsRouter);
 app.use('/api/document-settings', documentSettingsRouter);
-app.use('/api/telegram-finance', telegramFinanceRouter);
 
 // Global Error Handler
 app.use(errorHandler);
