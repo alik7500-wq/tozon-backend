@@ -20,7 +20,11 @@ export function usdDebitMinor(minor,rate) {
   return Number((BigInt(minor)*1000000n+divisor/2n)/divisor);
 }
 const choices = entries => ({inline_keyboard:entries.map(([text,callback_data])=>[{text,callback_data}])});
-const categories=['Строительные материалы','Зарплата сотрудникам / строителям','Услуги подрядчиков и специалистов','Маркетинг и реклама','Хозяйственные расходы','Прочие расходы'];
+export function dateChoices(today) {
+  const rows=[];
+  for(let i=0;i<4;i++) {const d=new Date(today+'T12:00:00Z');d.setUTCDate(d.getUTCDate()-i);const day=d.toISOString().slice(0,10);rows.push(['📅 '+day.split('-').reverse().join('.')+(i===0?' (сегодня)':''),'rdate:'+day]);}
+  rows.push(['✏️ Ввести дату вручную','rdate:manual']);return choices(rows);
+}
 const errorText = e => {
   const m=e.message||'';
   if(m.includes('INSUFFICIENT_FUNDS'))return 'Недостаточно средств в выбранной валюте кассы. РКО не создан. Пополните кассу или создайте новый РКО с явным списанием USD по курсу.';
@@ -83,16 +87,28 @@ export async function cashCommand(bot,user,command,isCallback) {
     if(!d||d.code==='BANK_ACCOUNT'||/бартер/i.test(d.name)||(!owner(user)&&desk!==user.cash_desk_id)){await send('Касса недоступна.');return true;}
     s.desk=desk;await next('currency','Выберите валюту фактического расхода:',choices([['Сомони (TJS)','rval:TJS'],['Доллары (USD)','rval:USD']]));return true;
   }
-  if(s.phase==='currency'&&/^rval:(USD|TJS)$/.test(command)){p.currency=command.slice(5);await next('amount',`Введите сумму в ${p.currency}, например 1500,50.`);return true;}
+  if(s.phase==='currency'&&/^rval:(USD|TJS)$/.test(command)){p.currency=command.slice(5);await next('date','📅 Выберите дату расхода:',dateChoices(localDay(bot.clock())));return true;}
   if(s.phase==='amount'&&!isCallback) {
     const n=amountMinor(command);if(n===null){await send('Введите положительную сумму, максимум два знака после запятой.');return true;}p.amount_minor=n;
     if(p.currency==='TJS')await next('source','Из какой валюты кассы списать?',choices([['Списать сомони','rsrc:TJS'],['Списать USD по курсу','rsrc:USD']]));
-    else {p.source_currency='USD';await next('date','Дата расхода: нажмите «Сегодня» или введите ГГГГ-ММ-ДД.',choices([['Сегодня','rdate:today']]));}return true;
+    else {p.source_currency='USD';await next('recipient','Кому оплачено? Введите получателя.');}return true;
   }
-  if(s.phase==='source'&&/^rsrc:(TJS|USD)$/.test(command)){p.source_currency=command.slice(5);if(p.source_currency==='USD')await next('rate','Введите фактический курс: сколько сомони за 1 USD, например 9,27.');else await next('date','Дата: «Сегодня» или ГГГГ-ММ-ДД.',choices([['Сегодня','rdate:today']]));return true;}
-  if(s.phase==='rate'&&!isCallback){const value=command.replace(',','.');const rate=Number(value);if(!/^\d{1,5}(\.\d{1,6})?$/.test(value)||rate<=0||rate>10000){await send('Введите положительный фактический курс.');return true;}const debit=usdDebitMinor(p.amount_minor,value);if(debit<=0||debit>2147483647){await send('Списание USD по этому курсу вне допустимого диапазона. Проверьте курс.');return true;}p.exchange_rate=value;await next('date','Дата: «Сегодня» или ГГГГ-ММ-ДД.',choices([['Сегодня','rdate:today']]));return true;}
-  if(s.phase==='date'){const date=command==='rdate:today'?localDay(bot.clock()):command;if(!validDay(date)||date>localDay(bot.clock())){await send('Введите существующую дату ГГГГ-ММ-ДД, не в будущем.');return true;}p.date=date;await next('category','Выберите статью или напишите её название:',choices(categories.map((name,i)=>[name,`rcat:${i}`])));return true;}
-  if(s.phase==='category'){const c=/^rcat:(\d)$/.exec(command);const name=c?categories[Number(c[1])]:command;if(!name||name.length>150||/конвертаци|перемещени|INTERNAL_TRANSFER|CURRENCY_CONVERSION/i.test(name)){await send('Укажите обычную статью расхода. Перемещения оформляются в CRM.');return true;}p.category=name;await next('recipient','Кому оплачено? Введите получателя.');return true;}
+  if(s.phase==='source'&&/^rsrc:(TJS|USD)$/.test(command)){p.source_currency=command.slice(5);if(p.source_currency==='USD')await next('rate','Введите фактический курс: сколько сомони за 1 USD, например 9,27.');else await next('recipient','Кому оплачено? Введите получателя.');return true;}
+  if(s.phase==='rate'&&!isCallback){const value=command.replace(',','.');const rate=Number(value);if(!/^\d{1,5}(\.\d{1,6})?$/.test(value)||rate<=0||rate>10000){await send('Введите положительный фактический курс.');return true;}const debit=usdDebitMinor(p.amount_minor,value);if(debit<=0||debit>2147483647){await send('Списание USD по этому курсу вне допустимого диапазона. Проверьте курс.');return true;}p.exchange_rate=value;await next('recipient','Кому оплачено? Введите получателя.');return true;}
+  if(s.phase==='date') {
+    if(command==='rdate:manual'){await send('Введите дату расхода в формате ДД.ММ.ГГГГ, например 12.10.2026.');return true;}
+    let date=command==='rdate:today'?localDay(bot.clock()):command.startsWith('rdate:')?command.slice(6):command;
+    if(/^\d{2}\.\d{2}\.\d{4}$/.test(date))date=date.split('.').reverse().join('-');
+    if(!validDay(date)||date>localDay(bot.clock())){await send('Выберите существующую дату, не в будущем.',dateChoices(localDay(bot.clock())));return true;}
+    p.date=date;
+    s.categories=(await repo.expenseCategories()).map(c=>c.name);
+    await next('category','Выберите статью расхода из CRM:',choices(s.categories.map((name,i)=>[name,`rcat:${i}`])));return true;
+  }
+  if(s.phase==='category') {
+    const c=/^rcat:(\d+)$/.exec(command);const name=c?s.categories?.[Number(c[1])]:null;
+    if(!name||/конвертаци|перемещени|INTERNAL_TRANSFER|CURRENCY_CONVERSION/i.test(name)){await send('Выберите статью расхода кнопкой из списка.');return true;}
+    p.category=name;await next('amount',`Введите сумму в ${p.currency==='TJS'?'сомони':'долларах'}, например 1500,50.`);return true;
+  }
   if(s.phase==='recipient'&&!isCallback){if(command.length<1||command.length>200){await send('Получатель: от 1 до 200 символов.');return true;}p.recipient=command;await next('description','За что оплачено? Введите назначение расхода.');return true;}
   if(s.phase==='description'&&!isCallback){if(command.length<1||command.length>1000){await send('Назначение: от 1 до 1000 символов.');return true;}p.description=command;
     const draft=await repo.draft(user,s.desk,p);await repo.saveSession(id,{...s,phase:'confirm',draft_id:draft.id,payload:p});

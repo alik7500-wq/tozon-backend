@@ -1,7 +1,7 @@
 import {it,expect,vi} from 'vitest';
 import {readFileSync} from 'node:fs';
 import {PGlite} from '@electric-sql/pglite';
-import {cashCommand,scopeSnapshot,amountMinor,usdDebitMinor} from './cash.js';
+import {cashCommand,scopeSnapshot,amountMinor,usdDebitMinor,dateChoices} from './cash.js';
 const a='11111111-1111-4111-8111-111111111111',b='22222222-2222-4222-8222-222222222222';
 const user={telegram_id:'12345',slot:'ILHOM',status:'APPROVED',cash_desk_id:a,crm_user_id:1,can_create_expense:true};
 it('scopes cash reports to the exact assigned desk and fails closed without assignment',()=>{
@@ -12,8 +12,8 @@ it('rejects bad monetary values without floating point input rounding',()=>{expe
 it('matches positive numeric database rounding for USD debit previews',()=>{expect(usdDebitMinor(92700,'9.27')).toBe(10000);expect(usdDebitMinor(201,'2')).toBe(101);});
 it('denies a forged foreign cash callback before reading the ledger',async()=>{const repo={ledger:vi.fn()},api={send:vi.fn()};await cashCommand({repo,api},user,`book:expense:${b}:0`,true);expect(repo.ledger).not.toHaveBeenCalled();expect(api.send.mock.calls[0][1]).toContain('запрещён');});
 it('does not write an expense before confirmation and preserves the draft across steps',async()=>{
- let session=null;const repo={session:async()=>session,saveSession:async(id,s)=>{session=structuredClone(s);},cashDesks:async()=>[{id:a,name:'Own'}],draft:vi.fn(async()=>({id:b})),postExpense:vi.fn(async()=>({reference:'РКО-1',amount:100,currency:'USD'})),clearSession:async()=>{session=null;}};const api={send:vi.fn()};const bot={repo,api,clock:()=>new Date('2026-10-12T09:00Z')};
- for(const [c,cb] of [['rnew',true],['rval:USD',true],['100',false],['rdate:today',true],['rcat:0',true],['Synthetic recipient',false],['Synthetic description',false]])await cashCommand(bot,user,c,cb);
+ let session=null;const repo={session:async()=>session,saveSession:async(id,s)=>{session=structuredClone(s);},cashDesks:async()=>[{id:a,name:'Own'}],expenseCategories:async()=>[{name:'Строительные материалы'}],draft:vi.fn(async()=>({id:b})),postExpense:vi.fn(async()=>({reference:'РКО-1',amount:100,currency:'USD'})),clearSession:async()=>{session=null;}};const api={send:vi.fn()};const bot={repo,api,clock:()=>new Date('2026-10-12T09:00Z')};
+ for(const [c,cb] of [['rnew',true],['rval:USD',true],['rdate:today',true],['rcat:0',true],['100',false],['Synthetic recipient',false],['Synthetic description',false]])await cashCommand(bot,user,c,cb);
  expect(repo.draft).toHaveBeenCalledOnce();expect(repo.postExpense).not.toHaveBeenCalled();expect(session.phase).toBe('confirm');
  await cashCommand(bot,user,`rpost:${b}`,true);expect(repo.postExpense).toHaveBeenCalledWith('12345',b);expect(session).toBeNull();
 });
@@ -42,4 +42,19 @@ it('validates the additive migration, read-only grants and atomic confirmation o
  await db.exec("UPDATE telegram_finance_subscribers SET status='REVOKED'");await expect(db.query(`SELECT telegram_finance_post_expense('12345',$1)`,[id])).rejects.toThrow('CASH_ACCESS_DENIED');
  const grants=(await db.query("SELECT has_function_privilege('anon','telegram_finance_post_expense(text,uuid)','EXECUTE') a,has_table_privilege('authenticated','telegram_finance_sessions','SELECT') b")).rows[0];expect(grants).toEqual({a:false,b:false});
  }finally{await db.close();}
+});
+
+it('offers today and three earlier dates across month boundaries',()=>{
+ const rows=dateChoices('2026-03-01').inline_keyboard;
+ expect(rows.map(r=>r[0].callback_data)).toEqual(['rdate:2026-03-01','rdate:2026-02-28','rdate:2026-02-27','rdate:2026-02-26','rdate:manual']);
+});
+it('shows every CRM expense category after a manually entered date and accepts indices above nine',async()=>{
+ let session={phase:'date',desk:a,payload:{currency:'TJS'}};
+ const names=Array.from({length:15},(_,i)=>'Статья '+i);
+ const repo={session:async()=>session,saveSession:async(id,s)=>{session=structuredClone(s)},expenseCategories:async()=>names.map(name=>({name}))};
+ const api={send:vi.fn()};const bot={repo,api,clock:()=>new Date('2026-10-12T09:00Z')};
+ await cashCommand(bot,user,'11.10.2026',false);
+ expect(session.payload.date).toBe('2026-10-11');expect(api.send.mock.calls[0][2].inline_keyboard).toHaveLength(15);
+ await cashCommand(bot,user,'rcat:14',true);
+ expect(session.phase).toBe('amount');expect(session.payload.category).toBe('Статья 14');
 });
