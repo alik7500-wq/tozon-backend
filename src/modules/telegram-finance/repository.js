@@ -45,6 +45,9 @@ export class TelegramFinanceRepository {
       if(visible.length>=offset+10||rows.length<100)return visible.slice(offset,offset+10);
     }
   }
+  async sheetJobs() { return checked(await this.db.from('telegram_finance_sheet_outbox').select('*').eq('status','PENDING').lte('next_attempt_at',new Date().toISOString()).order('created_at').limit(1)); }
+  async finishSheetJob(id,status) { return checked(await this.db.from('telegram_finance_sheet_outbox').update({status,sent_at:status==='SENT'?new Date().toISOString():null}).eq('id',id)); }
+  async retrySheetJob(id,attempts) { return checked(await this.db.from('telegram_finance_sheet_outbox').update({attempts,next_attempt_at:new Date(Date.now()+Math.min(3600000,30000*2**Math.min(attempts,7))).toISOString()}).eq('id',id)); }
   async enqueue(update) {
     const result = await this.db.from('telegram_finance_updates').insert({ update_id: update.update_id, payload: update });
     if (result.error?.code === '23505') return;

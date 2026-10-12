@@ -1,3 +1,4 @@
+import {syncSheets} from './sheets-sync.js';
 import crypto from 'node:crypto';
 import { buildReport, renderReport, periodFor, validDay, localDay, dailyDue, splitMessage } from './report.js';
 import { cashCommand, scopeSnapshot } from './cash.js';
@@ -147,6 +148,7 @@ export class FinanceBot {
         } catch { /* Do not block report processing on diagnostics. */ }
       }
       try { await this.daily(); } catch { this.logger.warn('Telegram finance daily report unavailable'); }
+      try { await syncSheets(this.repo); } catch { this.logger.warn('Telegram sheets sync unavailable'); }
       const updates = await this.repo.pending();
       for (const item of updates) {
         const update = item.payload;

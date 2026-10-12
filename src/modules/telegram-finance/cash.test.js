@@ -32,13 +32,16 @@ it('validates the additive migration, read-only grants and atomic confirmation o
  `);
  await db.exec(readFileSync(new URL('../../../supabase/migrations/20261012094220_telegram_cash_operations.sql',import.meta.url),'utf8'));
  await db.exec(readFileSync(new URL('../../../supabase/migrations/20261012110000_telegram_crm_user_active_integer.sql',import.meta.url),'utf8'));
+ await db.exec(readFileSync(new URL('../../../supabase/migrations/20261012120000_telegram_sheet_outbox.sql',import.meta.url),'utf8'));
  await db.exec(`UPDATE telegram_finance_subscribers SET cash_desk_id='${a}',crm_user_id=1,can_create_expense=true;SET ROLE service_role;`);
  const payload={date:'2026-10-12',amount_minor:92700,currency:'TJS',source_currency:'USD',exchange_rate:9.27,category:'Строительные материалы',recipient:'Synthetic',description:'Synthetic'};
  const make=async(desk,p=payload)=>(await db.query(`INSERT INTO telegram_finance_expense_drafts(telegram_id,cash_desk_id,payload)VALUES('12345',$1,$2)RETURNING id`,[desk,JSON.stringify(p)])).rows[0].id;
  const id=await make(a);const first=(await db.query(`SELECT telegram_finance_post_expense('12345',$1) result`,[id])).rows[0].result;
  expect(first).toMatchObject({amount:100,currency:'USD'});expect((await db.query(`SELECT telegram_finance_post_expense('12345',$1) result`,[id])).rows[0].result).toEqual(first);expect((await db.query('SELECT count(*) n FROM test_expenses')).rows[0].n).toBe(1);
+ expect((await db.query('SELECT count(*) n FROM telegram_finance_sheet_outbox')).rows[0].n).toBe(1);
  const foreign=await make(b);await expect(db.query(`SELECT telegram_finance_post_expense('12345',$1)`,[foreign])).rejects.toThrow('CASH_ACCESS_DENIED');
  const large=await make(a,{...payload,currency:'USD',amount_minor:100001});await expect(db.query(`SELECT telegram_finance_post_expense('12345',$1)`,[large])).rejects.toThrow('INSUFFICIENT_FUNDS');expect((await db.query('SELECT status FROM telegram_finance_expense_drafts WHERE id=$1',[large])).rows[0].status).toBe('DRAFT');
+ expect((await db.query('SELECT count(*) n FROM telegram_finance_sheet_outbox')).rows[0].n).toBe(1);
  await db.exec("UPDATE telegram_finance_subscribers SET status='REVOKED'");await expect(db.query(`SELECT telegram_finance_post_expense('12345',$1)`,[id])).rejects.toThrow('CASH_ACCESS_DENIED');
  const grants=(await db.query("SELECT has_function_privilege('anon','telegram_finance_post_expense(text,uuid)','EXECUTE') a,has_table_privilege('authenticated','telegram_finance_sessions','SELECT') b")).rows[0];expect(grants).toEqual({a:false,b:false});
  }finally{await db.close();}
