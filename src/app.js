@@ -7,6 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { errorHandler } from './shared/errors/errorHandler.js';
 
+import constructionRouter from './modules/construction/construction.router.js';
 import authRouter from './modules/auth/auth.router.js';
 import projectsRouter from './modules/projects/projects.router.js';
 import inventoryRouter from './modules/inventory/inventory.router.js';
@@ -79,6 +80,7 @@ app.get('/api/health', (req, res) => {
 // Handle authenticated Telegram callbacks before the broad /api media routers.
 // The bot router has its own secret verification and CRM administrator checks.
 app.use('/api/telegram-finance', telegramFinanceRouter);
+app.use('/api/construction', constructionRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/inventory', inventoryRouter);
