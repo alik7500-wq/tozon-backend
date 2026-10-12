@@ -30,7 +30,9 @@ export function active(row) {
   return !invalidStatuses.has(row.status) && !row.voided_at;
 }
 export function internal(row) {
-  return Boolean(row.transfer_id || row.conversion_id || row.conversion_expense_id ||
+  // Conversion IDs group the exchange legs AND the actual expense paid afterwards.
+  // Only an explicit exchange/transfer operation is internal; the linked РКО is external.
+  return Boolean(row.transfer_id ||
     ['INTERNAL_CASH_TRANSFER', 'PAYMENT_ON_BEHALF', 'INTERNAL_TRANSFER', 'CONVERSION'].includes(row.operation_type) ||
     ['INTERNAL_TRANSFER', 'CONVERSION'].includes(row.settlement_method) ||
     ['Внутренние перемещения между кассами', 'Конвертация валюты', 'INTERNAL_TRANSFER', 'CURRENCY_CONVERSION'].includes(row.category) ||

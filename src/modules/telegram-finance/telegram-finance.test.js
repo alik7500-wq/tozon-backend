@@ -49,6 +49,29 @@ describe('Finance report calculations', () => {
     const r = buildReport(snapshot({ payments: [payment({ status: 'VOIDED' }), payment({ status: 'REVERSED' }), payment({ status: 'CANCELLED' }), payment({ voided_at: now.toISOString() }), payment({ settlement_method: 'NON_CASH_BARTER' }), payment({ id: 94, settlement_method: null }), payment({ payment_date: '2026-10-12' }), payment({ created_at: '2026-10-11T18:00Z' })] }), '2026-10-11', '2026-10-11', now);
     expect(r.income).toEqual({}); expect(r.desks[0].closing).toEqual({});
   });
+  it('counts the TJS expense after USD conversion exactly once, without counting exchange legs', () => {
+    const r = buildReport(snapshot({
+      payments: [payment({ currency: 'TJS', amount_minor: 92700, conversion_id: 'conversion-1', reference: 'ПКО-КОНВ-1' })],
+      expenses: [
+        expense({ amount_minor: 10000, conversion_id: 'conversion-1', category: 'Конвертация валюты', reference: 'КОНВ-1' }),
+        expense({ id: 2, currency: 'TJS', amount_minor: 92700, conversion_id: 'conversion-1', conversion_expense_id: 1, category: 'Строительные материалы', reference: 'РКО-2' }),
+      ],
+    }), '2026-10-11', '2026-10-11', now);
+    expect(r.expense).toEqual({ TJS: 92700 });
+    expect(r.income).toEqual({});
+    expect(r.details).toHaveLength(1);
+    expect(r.desks[0].closing).toEqual({ USD: -10000, TJS: 0 });
+    expect(renderReport(r)).toContain('927,00 TJS');
+  });
+  it('retains expenses with either conversion linkage field and still rejects cancelled linked expenses', () => {
+    const r = buildReport(snapshot({ expenses: [
+      expense({ conversion_id: 'group', amount_minor: 10000 }),
+      expense({ id: 2, conversion_expense_id: 1, amount_minor: 5000 }),
+      expense({ id: 3, conversion_id: 'group', conversion_expense_id: 1, status: 'VOIDED', amount_minor: 99999 }),
+    ] }), '2026-10-11', '2026-10-11', now);
+    expect(r.expense).toEqual({ USD: 15000 });
+    expect(r.details).toHaveLength(2);
+  });
   it('counts bank receipts in movement but not cash', () => {
     const r = buildReport(snapshot({ payments: [payment({ settlement_method: 'BANK', deal_id: 7 })] }), '2026-10-11', '2026-10-11', now);
     expect(r.income.USD).toBe(10000); expect(r.desks[0].closing).toEqual({});
