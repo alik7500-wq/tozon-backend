@@ -28,8 +28,9 @@ function doPost(e) {
     let last=-1;
     for(let i=0;i<totalIndex;i++)if(rows[i][0] instanceof Date||typeof rows[i][0]==='number')last=i;
     if(last<0)throw new Error('EXEMPLAR_MISSING');
-    let row=last+6;
-    if(row>=totalIndex+5||rows[row-5].some(v=>v!=='')) {row=totalIndex+5;sheet.insertRowBefore(row);}
+    let row=last+6,inserted=false;
+    const totals=sheet.getRange(totalIndex+5,1,1,9).getFormulas()[0];
+    if(row>=totalIndex+5||rows[row-5].some(v=>v!=='')) {row=totalIndex+5;sheet.insertRowBefore(row);inserted=true;}
     const exemplar=sheet.getRange(last+5,1,1,9),destination=sheet.getRange(row,1,1,9);
     exemplar.copyTo(destination,SpreadsheetApp.CopyPasteType.PASTE_FORMAT,false);
     exemplar.copyTo(destination,SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION,false);
@@ -43,7 +44,12 @@ function doPost(e) {
     const cells=[date,p.recipient,null,usd,p.category,(p.reference||'РКО')+' · '+p.description,rate,tjs===null?null:-tjs,usd===null?null:-usd].map(literal);
     cells[5].note=marker;
     SpreadsheetApp.flush();
-    Sheets.Spreadsheets.batchUpdate({requests:[{updateCells:{range:{sheetId:sheet.getSheetId(),startRowIndex:row-1,endRowIndex:row,startColumnIndex:0,endColumnIndex:9},rows:[{values:cells}],fields:'userEnteredValue,note'}}]},TOZON_SPREADSHEET_ID);
+    const requests=[{updateCells:{range:{sheetId:sheet.getSheetId(),startRowIndex:row-1,endRowIndex:row,startColumnIndex:0,endColumnIndex:9},rows:[{values:cells}],fields:'userEnteredValue,note'}}];
+    if(inserted)for(const col of [2,3,7]) {
+      const letter=String.fromCharCode(65+col);
+      if(totals[col])requests.push({updateCells:{range:{sheetId:sheet.getSheetId(),startRowIndex:row,endRowIndex:row+1,startColumnIndex:col,endColumnIndex:col+1},rows:[{values:[{userEnteredValue:{formulaValue:totals[col].replace(new RegExp(':'+letter+(row-1)+'(?=[)\\s])','g'),':'+letter+row)}}]}],fields:'userEnteredValue'}});
+    }
+    Sheets.Spreadsheets.batchUpdate({requests},TOZON_SPREADSHEET_ID);
     return tozonResponse({ok:true,id:p.id,row});
   } catch(error) { return tozonResponse({ok:false,error:'SYNC_FAILED'}); }
   finally {if(lock.hasLock())lock.releaseLock();}
