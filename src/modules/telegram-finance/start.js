@@ -1,9 +1,10 @@
+import {sheetConfiguration} from './sheets-sync.js';
 import { TelegramFinanceRepository } from './repository.js';
 import { TelegramAPI, FinanceBot } from './bot.js';
 
 let instance;
 export function financeBotHealth() {
-  return { configured: Boolean(process.env.TELEGRAM_FINANCE_BOT_TOKEN?.trim()), running: Boolean(instance?.running), ...(instance?.diagnostics || {}) };
+  return { sheets: sheetConfiguration(), configured: Boolean(process.env.TELEGRAM_FINANCE_BOT_TOKEN?.trim()), running: Boolean(instance?.running), ...(instance?.diagnostics || {}) };
 }
 export function getFinanceBot() {
   const token = process.env.TELEGRAM_FINANCE_BOT_TOKEN?.trim();
