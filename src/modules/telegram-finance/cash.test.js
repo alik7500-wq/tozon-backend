@@ -20,7 +20,7 @@ it('does not write an expense before confirmation and preserves the draft across
 it('validates the additive migration, read-only grants and atomic confirmation on isolated PostgreSQL',async()=>{
  const db=new PGlite();try{
  await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role BYPASSRLS;
- CREATE TABLE users(id integer primary key,is_active boolean);INSERT INTO users VALUES(1,true);
+ CREATE TABLE users(id integer primary key,is_active integer);INSERT INTO users VALUES(1,1);
  CREATE TABLE dictionaries(id uuid primary key,type text,is_active boolean,code text,name text);INSERT INTO dictionaries VALUES('${a}','CASH_DESK',true,'MAIN','Own'),('${b}','CASH_DESK',true,'OTHER','Other');
  CREATE TABLE telegram_finance_subscribers(telegram_id text primary key,slot text,status text);INSERT INTO telegram_finance_subscribers VALUES('12345','ILHOM','APPROVED');
  CREATE TABLE test_expenses(id serial primary key,key text UNIQUE,desk uuid,amount bigint,currency text);
@@ -31,6 +31,7 @@ it('validates the additive migration, read-only grants and atomic confirmation o
  GRANT SELECT,UPDATE ON telegram_finance_subscribers TO service_role;GRANT SELECT ON users,dictionaries TO service_role;GRANT ALL ON test_expenses TO service_role;GRANT USAGE,SELECT ON SEQUENCE test_expenses_id_seq TO service_role;
  `);
  await db.exec(readFileSync(new URL('../../../supabase/migrations/20261012094220_telegram_cash_operations.sql',import.meta.url),'utf8'));
+ await db.exec(readFileSync(new URL('../../../supabase/migrations/20261012110000_telegram_crm_user_active_integer.sql',import.meta.url),'utf8'));
  await db.exec(`UPDATE telegram_finance_subscribers SET cash_desk_id='${a}',crm_user_id=1,can_create_expense=true;SET ROLE service_role;`);
  const payload={date:'2026-10-12',amount_minor:92700,currency:'TJS',source_currency:'USD',exchange_rate:9.27,category:'Строительные материалы',recipient:'Synthetic',description:'Synthetic'};
  const make=async(desk,p=payload)=>(await db.query(`INSERT INTO telegram_finance_expense_drafts(telegram_id,cash_desk_id,payload)VALUES('12345',$1,$2)RETURNING id`,[desk,JSON.stringify(p)])).rows[0].id;
