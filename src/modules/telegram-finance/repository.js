@@ -1,4 +1,5 @@
 import { getServiceDB } from '../../db/connection.js';
+import { actualOperation } from './report.js';
 
 const checked = result => { if (result.error) throw result.error; return result.data; };
 export class TelegramFinanceRepository {
@@ -31,10 +32,17 @@ export class TelegramFinanceRepository {
   async ledger(user,kind,desk,offset=0) {
     if (user.status!=='APPROVED' || (user.slot!=='AKMALKHON' && (!user.cash_desk_id || (desk && desk!==user.cash_desk_id)))) throw new Error('CASH_ACCESS_DENIED');
     const income=kind==='income';
-    let q=this.db.from(income?'payments':'expenses').select(income?'id,reference,document_number,payment_date,amount_minor,currency,payer_name,comment,status,cash_desk_id':'id,reference,document_number,expense_date,amount_minor,currency,recipient,category,description,status,cash_desk_id');
+    const columns=income?'id,reference,document_number,payment_date,amount_minor,currency,payer_name,comment,status,cash_desk_id,voided_at,transfer_id,conversion_id,operation_type,settlement_method':'id,reference,document_number,expense_date,amount_minor,currency,recipient,category,description,status,cash_desk_id,voided_at,transfer_id,conversion_id,conversion_expense_id,operation_type,settlement_method,amount_tjs,amount_usd,exchange_rate';
     const scope=user.slot==='AKMALKHON'?desk:user.cash_desk_id;
-    if(scope)q=q.eq('cash_desk_id',scope);
-    return checked(await q.order(income?'payment_date':'expense_date',{ascending:false}).order('id',{ascending:false}).range(offset,offset+9));
+    // Paginate visible actual operations, not raw exchange legs: no empty pages/gaps.
+    const visible=[];
+    for(let start=0;;start+=100){
+      let q=this.db.from(income?'payments':'expenses').select(columns);
+      if(scope)q=q.eq('cash_desk_id',scope);
+      const rows=checked(await q.order(income?'payment_date':'expense_date',{ascending:false}).order('id',{ascending:false}).range(start,start+99));
+      visible.push(...rows.filter(r=>actualOperation(r,kind)));
+      if(visible.length>=offset+10||rows.length<100)return visible.slice(offset,offset+10);
+    }
   }
   async enqueue(update) {
     const result = await this.db.from('telegram_finance_updates').insert({ update_id: update.update_id, payload: update });

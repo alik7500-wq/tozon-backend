@@ -44,6 +44,30 @@ function nonCash(row, kind) {
   // Same proven legacy barter documents as the existing CRM cash ledger.
   return (kind === 'income' ? [94, 96, 98] : [165, 167, 169]).includes(Number(row.id));
 }
+export function actualOperation(row,kind) {
+  return active(row)&&!internal(row)&&!nonCash(row,kind);
+}
+export function expenseAmounts(row) {
+  const currency=(row.currency||'USD').toUpperCase();
+  const amount=Number(row.amount_minor||0)/100;
+  const rate=Number(row.exchange_rate);
+  const values={};
+  if(currency==='TJS') {
+    values.TJS=Number(row.amount_minor||0);
+    const usd=Number(row.amount_usd)>0?Number(row.amount_usd):rate>0?amount/rate:null;
+    if(usd!==null)values.USD=Math.round(usd*100);
+  } else if(currency==='USD') {
+    values.USD=Number(row.amount_minor||0);
+    const legacy=(row.description||'').match(/([\d]+(?:[ \u00a0\u202f][\d]{3})*(?:[.,]\d{1,2})?)\s*(?:TJS|сомони|смн)\b/i);
+    const original=Number(row.amount_tjs)>0?Number(row.amount_tjs):legacy?Number(legacy[1].replace(/[ \u00a0\u202f]/g,'').replace(',','.')):rate>0?amount*rate:null;
+    if(original!==null)values.TJS=Math.round(original*100);
+  } else values[currency]=Number(row.amount_minor||0);
+  return values;
+}
+export function formatExpense(row) {
+  const values=expenseAmounts(row);
+  return formatAmounts(values)+(!Object.hasOwn(values,'USD')?' · USD: курс не указан':!Object.hasOwn(values,'TJS')?' · TJS: курс не указан':'');
+}
 function add(bucket, currency, minor) {
   const n = Number(minor || 0);
   if (!Number.isSafeInteger(n)) throw new Error('INVALID_FINANCIAL_AMOUNT');
@@ -79,7 +103,7 @@ export function buildReport(snapshot, from, to, now = new Date()) {
       if (inPeriod && !internal(row)) {
         add(report[kind], currency, amount);
         if (kind === 'income' && row.deal_id) add(report.customerIncome, currency, amount);
-        if (kind === 'expense') report.details.push({ date, currency, amount, category: row.category || 'Прочее', description: row.description || '' });
+        if (kind === 'expense') report.details.push({ ...row, date, currency, amount, category: row.category || 'Прочее', description: row.description || '' });
       }
       // Bank payments affect company movement, but not cash on hand.
       const desk = desks.find(d => d.id === row.cash_desk_id);
@@ -125,7 +149,7 @@ export function renderReport(r, view = 'summary', role = 'PARTNER') {
     if (role !== 'OWNER') throw new Error('DETAILS_FORBIDDEN');
     lines.push('', `Расходы всего: ${formatAmounts(r.expense)}`);
     const sorted = [...r.details].sort((a, b) => b.date.localeCompare(a.date));
-    for (const d of sorted.slice(0, 40)) lines.push(`${d.date} · ${money.format(d.amount / 100)} ${d.currency} · ${d.category} · ${d.description.slice(0, 160)}`);
+    for (const d of sorted.slice(0, 40)) lines.push(`${d.date} · ${formatExpense(d)} · ${d.category} · ${d.description.slice(0, 160)}`);
     if (sorted.length > 40) lines.push('Показаны последние 40 расходов. Полный список — в CRM.');
   }
   lines.push('', 'Отчёт отражает текущие действующие документы CRM.');

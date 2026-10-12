@@ -1,4 +1,4 @@
-import { localDay, validDay, formatAmounts } from './report.js';
+import { localDay, validDay, formatAmounts,formatExpense } from './report.js';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const owner = user => user.slot === 'AKMALKHON';
 export function scopeSnapshot(user,snapshot) {
@@ -50,8 +50,8 @@ export async function cashCommand(bot,user,command,isCallback) {
     const fresh=await repo.find(id);if(fresh?.status!=='APPROVED')return true;
     const rows=await repo.ledger(fresh,kind,desk,offset);
     const desks=await repo.cashDesks(); const title=kind==='income'?'ПКО':'РКО';
-    const lines=[`${title} · ${desk?(desks.find(d=>d.id===desk)?.name||'Касса'):'Все кассы'} · записи ${offset+1}–${offset+rows.length}`];
-    for(const r of rows)lines.push(`\n${r.document_number||r.reference||title+'-'+r.id} · ${r.payment_date||r.expense_date}\n${formatAmounts({[r.currency||'USD']:r.amount_minor})} · ${r.status||'ACTIVE'}\n${r.payer_name||r.recipient||''}${r.category?' · '+r.category:''}\n${r.comment||r.description||''}${!desk?'\nКасса: '+(desks.find(d=>d.id===r.cash_desk_id)?.name||'Не указана'):''}`);
+    const lines=[`${title} · ${desk?(desks.find(d=>d.id===desk)?.name||'Касса'):'Все кассы'} · ${rows.length?'записи '+(offset+1)+'–'+(offset+rows.length):'операций нет'}`];
+    for(const r of rows)lines.push(`\n${r.document_number||r.reference||title+'-'+r.id} · ${r.payment_date||r.expense_date}\n${kind==='expense'?formatExpense(r):formatAmounts({[r.currency||'USD']:r.amount_minor})}\n${r.payer_name||r.recipient||''}${r.category?' · '+r.category:''}\n${r.comment||r.description||''}${!desk?'\nКасса: '+(desks.find(d=>d.id===r.cash_desk_id)?.name||'Не указана'):''}`);
     if(!rows.length)lines.push('Операций больше нет.');
     const nav=[];if(offset>=10)nav.push(['Предыдущие',`book:${kind}:${key}:${offset-10}`]);if(rows.length===10&&offset<999990)nav.push(['Следующие',`book:${kind}:${key}:${offset+10}`]);nav.push(['Выбрать кассу',`bookpick:${kind}`]);
     const check=await repo.find(id);if(check?.status==='APPROVED'&&check.slot===fresh.slot&&check.cash_desk_id===fresh.cash_desk_id)await send(lines.join('\n'),choices(nav));
