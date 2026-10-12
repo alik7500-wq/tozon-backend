@@ -5,6 +5,11 @@ import { cashCommand, scopeSnapshot } from './cash.js';
 export const slots = { AKMALKHON: 'Акмалхон', ILHOM: 'Илхом', ASRORKHON: 'Асрорхон', MUBINCHON: 'Мубинчон' };
 export const roleFor = user => user.slot === 'AKMALKHON' ? 'OWNER' : 'PARTNER';
 export const webhookSecret = token => crypto.createHmac('sha256', token).update('tozon-finance-webhook-v1').digest('hex');
+export function withMainMenu(markup) {
+  const rows=markup?.inline_keyboard||[];
+  if(rows.some(row=>row.some(button=>button.callback_data==='main_menu')))return markup;
+  return {...markup,inline_keyboard:[...rows,[{text:'🏠 В главное меню',callback_data:'main_menu'}]]};
+}
 export function keyboard(role) {
   const rows = [[{ text: 'Сегодня', callback_data: 'summary:today' }, { text: 'Вчера', callback_data: 'summary:yesterday' }], [{ text: 'За месяц', callback_data: 'summary:month' }], [{ text: 'Продажи', callback_data: 'sales:today' }, { text: 'Остатки касс', callback_data: 'cash:today' }], [{ text: 'Движение средств', callback_data: 'movement:today' }]];
   rows.push([{ text: 'ПКО — операции', callback_data: 'bookpick:income' },{ text: 'РКО — операции', callback_data: 'bookpick:expense' }]);
@@ -37,7 +42,7 @@ export class TelegramAPI {
   }
   async send(chatId, text, markup, options={}) {
     const parts = splitMessage(text);
-    for (let i = 0; i < parts.length; i++) await this.call('sendMessage', { chat_id: chatId, text: parts[i], ...(options.html?{parse_mode:'HTML'}:{}), ...(i === parts.length - 1 && markup ? { reply_markup: markup } : {}) });
+    for (let i = 0; i < parts.length; i++) await this.call('sendMessage', { chat_id: chatId, text: parts[i], ...(options.html?{parse_mode:'HTML'}:{}),reply_markup:withMainMenu(i===parts.length-1?markup:undefined) });
   }
 }
 
@@ -68,6 +73,13 @@ export class FinanceBot {
       return;
     }
     const command = callback?.data || text.trim();
+    if(command==='main_menu'||command==='/menu') {
+      const session=await this.repo.session(user.telegram_id);
+      if(session?.draft_id)await this.repo.cancelDraft(session.draft_id,user.telegram_id);
+      await this.repo.clearSession(user.telegram_id);
+      await this.api.send(user.telegram_id,'🏠 Главное меню\nВыберите нужный раздел:',keyboard(roleFor(user)));
+      return;
+    }
     if(await cashCommand(this,user,command,Boolean(callback)))return;
     const last = this.lastRequests.get(sender.id) || 0;
     if (this.clock().getTime() - last < 2000) return;
