@@ -1,12 +1,15 @@
 import crypto from 'node:crypto';
 import { buildReport, renderReport, periodFor, validDay, localDay, dailyDue, splitMessage } from './report.js';
+import { cashCommand, scopeSnapshot } from './cash.js';
 
 export const slots = { AKMALKHON: 'Акмалхон', ILHOM: 'Илхом', ASRORKHON: 'Асрорхон', MUBINCHON: 'Мубинчон' };
 export const roleFor = user => user.slot === 'AKMALKHON' ? 'OWNER' : 'PARTNER';
 export const webhookSecret = token => crypto.createHmac('sha256', token).update('tozon-finance-webhook-v1').digest('hex');
 export function keyboard(role) {
   const rows = [[{ text: 'Сегодня', callback_data: 'summary:today' }, { text: 'Вчера', callback_data: 'summary:yesterday' }], [{ text: 'За месяц', callback_data: 'summary:month' }], [{ text: 'Продажи', callback_data: 'sales:today' }, { text: 'Остатки касс', callback_data: 'cash:today' }], [{ text: 'Движение средств', callback_data: 'movement:today' }]];
-  if (role === 'OWNER') rows.push([{ text: 'Расходы подробно', callback_data: 'details:today' }]);
+  rows.push([{ text: 'ПКО — операции', callback_data: 'bookpick:income' },{ text: 'РКО — операции', callback_data: 'bookpick:expense' }]);
+  rows.push([{ text: 'Добавить РКО', callback_data: 'rnew' }]);
+  rows.push([{ text: 'Расходы подробно', callback_data: 'details:today' }]);
   rows.push([{ text: 'Выбрать период', callback_data: 'help' }]);
   return { inline_keyboard: rows };
 }
@@ -41,18 +44,15 @@ export class TelegramAPI {
 export class FinanceBot {
   constructor(repo, api, { clock = () => new Date(), logger = console } = {}) { this.repo = repo; this.api = api; this.clock = clock; this.logger = logger; this.worker = crypto.randomUUID(); this.running = false; this.busy = false; this.lastRequests = new Map(); }
   async report(user, view = 'summary', period = 'today', custom) {
-    if (view === 'details' && roleFor(user) !== 'OWNER') {
-      await this.api.send(user.telegram_id, 'Доступна только итоговая сумма расходов.', keyboard('PARTNER'));
-      return;
-    }
     const { from, to } = custom || periodFor(period, this.clock());
     // Recheck access immediately before reading financial information.
     const fresh = await this.repo.find(user.telegram_id);
     if (fresh?.status !== 'APPROVED') return;
-    const report = buildReport(await this.repo.snapshot(), from, to, this.clock());
+    if(roleFor(fresh)!=='OWNER'&&!fresh.cash_desk_id){await this.api.send(user.telegram_id,'Ваша касса ещё не назначена в настройках CRM.');return;}
+    const report = buildReport(scopeSnapshot(fresh,await this.repo.snapshot()), from, to, this.clock());
     const stillAllowed = await this.repo.find(user.telegram_id);
-    if (stillAllowed?.status !== 'APPROVED' || stillAllowed.slot !== fresh.slot) return;
-    await this.api.send(user.telegram_id, renderReport(report, view, roleFor(stillAllowed)), keyboard(roleFor(stillAllowed)));
+    if (stillAllowed?.status !== 'APPROVED' || stillAllowed.slot !== fresh.slot || stillAllowed.cash_desk_id!==fresh.cash_desk_id) return;
+    await this.api.send(user.telegram_id, renderReport(report, view, 'OWNER'), keyboard(roleFor(stillAllowed)));
   }
   async handle(update) {
     const callback = update.callback_query;
@@ -67,13 +67,14 @@ export class FinanceBot {
       await this.api.send(sender.id, `Доступ к финансовым отчётам закрыт. Ваш Telegram ID: ${sender.id}.\n${user?.status === 'REVOKED' ? 'Доступ отозван.' : 'Заявка ожидает подтверждения Акмалхона в настройках TOZON CRM.'}`);
       return;
     }
+    const command = callback?.data || text.trim();
+    if(await cashCommand(this,user,command,Boolean(callback)))return;
     const last = this.lastRequests.get(sender.id) || 0;
     if (this.clock().getTime() - last < 2000) return;
     this.lastRequests.set(sender.id, this.clock().getTime());
     if (this.lastRequests.size > 100) this.lastRequests.clear();
-    const command = callback?.data || text.trim();
     if (command === 'help' || /^\/help$/.test(command)) {
-      await this.api.send(sender.id, 'Отчёты ежедневно в 22:00 по Худжанду.\nЗа дату: /report 2026-10-11\nЗа период: /report 2026-10-01 2026-10-11\nСегодня: /today · Вчера: /yesterday · Месяц: /month\nЛичные данные покупателей не публикуются.', keyboard(roleFor(user)));
+      await this.api.send(sender.id, 'Отчёты ежедневно в 22:00 по Худжанду.\nПКО: /pko · РКО: /rko_list · Добавить РКО: /rko · Отмена ввода: /cancel\nЗа дату: /report 2026-10-11\nЗа период: /report 2026-10-01 2026-10-11\nСегодня: /today · Вчера: /yesterday · Месяц: /month\nКассовые операции доступны только по назначенной кассе; Акмалхону — по всем.', keyboard(roleFor(user)));
       return;
     }
     if (command.startsWith('/report')) {
@@ -101,11 +102,13 @@ export class FinanceBot {
     const users = (await this.repo.subscribers()).filter(u => u.status === 'APPROVED' && !alreadyClaimed.has(u.telegram_id));
     if (!users.length) return;
     // Prepare and validate once before claiming any delivery.
-    const report = buildReport(await this.repo.snapshot(), date, date, this.clock());
+    const snapshot = await this.repo.snapshot();
     for (const user of users) {
       if (!await this.repo.claimLease(this.worker)) return;
       const fresh = await this.repo.find(user.telegram_id);
       if (fresh?.status !== 'APPROVED') continue;
+      if(roleFor(fresh)!=='OWNER'&&!fresh.cash_desk_id)continue;
+      const report=buildReport(scopeSnapshot(fresh,snapshot),date,date,this.clock());
       const delivery = await this.repo.beginDelivery(user.telegram_id, date);
       if (!delivery) continue;
       try {
@@ -160,7 +163,7 @@ export class FinanceBot {
     const webhook = await this.api.call('getWebhookInfo');
     if (webhook.url && webhook.url !== url) throw new Error('FINANCE_BOT_WEBHOOK_CONFLICT');
     await this.api.call('setWebhook', { url, secret_token: webhookSecret(this.api.token), allowed_updates: ['message', 'callback_query'] });
-    await this.api.call('setMyCommands', { commands: [{ command: 'start', description: 'Запрос доступа / меню' }, { command: 'today', description: 'Отчёт за сегодня' }, { command: 'yesterday', description: 'Отчёт за вчера' }, { command: 'month', description: 'Отчёт за месяц' }, { command: 'report', description: 'Отчёт за дату или период' }, { command: 'help', description: 'Помощь' }] });
+    await this.api.call('setMyCommands', {commands:[{command:'start',description:'Меню'},{command:'pko',description:'Операции ПКО'},{command:'rko_list',description:'Операции РКО'},{command:'rko',description:'Ввести новый РКО'},{command:'cancel',description:'Отменить ввод'},{command:'today',description:'Сегодня'},{command:'yesterday',description:'Вчера'},{command:'month',description:'За месяц'},{command:'report',description:'Выбранный период'},{command:'help',description:'Помощь'}]});
     this.running = true;
     void this.tick();
     this.timer = setInterval(() => { if (this.running) void this.tick(); }, 5000);

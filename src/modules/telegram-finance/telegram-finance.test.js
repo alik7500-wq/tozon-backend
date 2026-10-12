@@ -8,7 +8,7 @@ const now = new Date('2026-10-11T17:00:00Z');
 const payment = overrides => ({ id: 1, currency: 'USD', amount_minor: 10000, payment_date: '2026-10-11', settlement_method: 'CASH', status: 'ACTIVE', cash_desk_id: 'a', ...overrides });
 const expense = overrides => ({ id: 1, currency: 'USD', amount_minor: 2000, expense_date: '2026-10-11', settlement_method: 'CASH', status: 'ACTIVE', cash_desk_id: 'a', ...overrides });
 const snapshot = overrides => ({ desks: [{ id: 'a', name: 'Касса А' }, { id: 'b', name: 'Касса Б' }], payments: [], expenses: [], deals: [], ...overrides });
-const approved = { telegram_id: '12345', status: 'APPROVED', slot: 'ILHOM' };
+const approved = { telegram_id: '12345', status: 'APPROVED', slot: 'ILHOM',cash_desk_id:'a' };
 function setup(user = approved) {
   const seen = new Set();
   const repo = { find: vi.fn(async () => user), register: vi.fn(), snapshot: vi.fn(async () => snapshot()), subscribers: vi.fn(async () => [user]), beginDelivery: vi.fn(async (id, date) => { const key = `${id}:${date}`; if (seen.has(key)) return null; seen.add(key); return {}; }), finishDelivery: vi.fn(), claimLease: vi.fn(async () => true), state: vi.fn(async () => ({ update_offset: 0 })), offset: vi.fn() };
@@ -89,7 +89,7 @@ describe('Finance report calculations', () => {
     expect(renderReport(r)).not.toContain('PRIVATE DETAILS');
     expect(() => renderReport(r, 'details', 'PARTNER')).toThrow('DETAILS_FORBIDDEN');
     expect(renderReport(r, 'details', 'OWNER')).toContain('PRIVATE DETAILS');
-    expect(JSON.stringify(keyboard('PARTNER'))).not.toContain('details');
+    expect(JSON.stringify(keyboard('PARTNER'))).toContain('bookpick:expense');
   });
   it('splits long reports below Telegram message limits', () => {
     const parts = splitMessage('a'.repeat(9000) + '\n' + 'b'.repeat(1000));
@@ -106,8 +106,8 @@ describe('Telegram access and reliable dispatch', () => {
   it('rejects group chats and chat/user identity mismatches', async () => {
     const { bot, api } = setup(); const u = update('/today'); u.message.chat.type = 'group'; await bot.handle(u); u.message.chat.type = 'private'; u.message.chat.id = 99; await bot.handle(u); expect(api.send).not.toHaveBeenCalled();
   });
-  it('checks authorization for forged detailed callbacks', async () => {
-    const { bot, api, repo } = setup(); const u = update('/today'); await bot.handle({ callback_query: { id: 'cb', from: u.message.from, message: u.message, data: 'details:today' } }); expect(repo.snapshot).not.toHaveBeenCalled(); expect(api.send.mock.calls[0][1]).toContain('итоговая');
+  it('allows detailed callbacks only within the assigned cash scope', async () => {
+    const { bot, api, repo } = setup(); repo.snapshot.mockResolvedValue(snapshot({expenses:[expense({cash_desk_id:'a',description:'OWN'}),expense({cash_desk_id:'b',description:'OTHER PRIVATE'})]}));const u=update('/today');await bot.handle({callback_query:{id:'cb',from:u.message.from,message:u.message,data:'details:today'}});expect(api.send.mock.calls[0][1]).toContain('OWN');expect(api.send.mock.calls[0][1]).not.toContain('OTHER PRIVATE');
   });
   it('does not send a report when access was revoked during generation', async () => {
     const { bot, api, repo } = setup(); repo.find.mockResolvedValueOnce(approved).mockResolvedValueOnce({ ...approved, status: 'REVOKED' }); await bot.report(approved); expect(api.send).not.toHaveBeenCalled();

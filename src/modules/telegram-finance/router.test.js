@@ -2,7 +2,7 @@ import { it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { readFileSync } from 'node:fs';
-const state = vi.hoisted(() => ({ enqueue: vi.fn(), tick: vi.fn(), setAccess: vi.fn(), find: vi.fn(), subscribers: vi.fn(), deliveries: vi.fn(), state: vi.fn() }));
+const state = vi.hoisted(() => ({ enqueue: vi.fn(), tick: vi.fn(), setAccess: vi.fn(), find: vi.fn(), subscribers: vi.fn(), deliveries: vi.fn(), state: vi.fn(),cashDesks:vi.fn(),crmUsers:vi.fn(),cashAccess:vi.fn() }));
 vi.mock('./repository.js', () => ({ TelegramFinanceRepository: class { constructor() { Object.assign(this, state); } } }));
 vi.mock('./start.js', () => ({ getFinanceBot: () => ({ tick: state.tick }) }));
 vi.mock('../../middleware/auth.middleware.js', () => ({ protect: (req, res, next) => { if (!req.headers['x-test-role']) return res.sendStatus(401); req.user = { id: 1, role: req.headers['x-test-role'] }; next(); }, restrictTo: (...roles) => (req, res, next) => roles.includes(req.user.role) ? next() : res.sendStatus(403) }));
@@ -34,4 +34,12 @@ it('registers the bot router before broad authenticated API routers', () => {
   for (const router of ['visual3dRouter', 'tour360Router', 'projectMediaRouter']) {
     expect(bot).toBeLessThan(source.indexOf(`app.use('/api', ${router})`));
   }
+});
+it('limits cash assignment to admins and requires a real cashier for expense creation',async()=>{
+ state.cashDesks.mockResolvedValue([{id:'desk-a'}]);state.crmUsers.mockResolvedValue([{id:2}]);
+ expect((await request(app).put('/bot/subscribers/12345/cash-access').set('x-test-role','MANAGER').send({})).status).toBe(403);
+ expect((await request(app).put('/bot/subscribers/12345/cash-access').set('x-test-role','ADMIN').send({cash_desk_id:'desk-a',crm_user_id:null,can_create_expense:true})).status).toBe(400);
+ expect(state.cashAccess).not.toHaveBeenCalled();
+ expect((await request(app).put('/bot/subscribers/12345/cash-access').set('x-test-role','ADMIN').send({cash_desk_id:'desk-a',crm_user_id:2,can_create_expense:true})).status).toBe(200);
+ expect(state.cashAccess).toHaveBeenCalledWith('12345',{cash_desk_id:'desk-a',crm_user_id:2,can_create_expense:true});
 });
