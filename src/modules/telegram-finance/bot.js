@@ -35,9 +35,9 @@ export class TelegramAPI {
       throw safe;
     }
   }
-  async send(chatId, text, markup) {
+  async send(chatId, text, markup, options={}) {
     const parts = splitMessage(text);
-    for (let i = 0; i < parts.length; i++) await this.call('sendMessage', { chat_id: chatId, text: parts[i], ...(i === parts.length - 1 && markup ? { reply_markup: markup } : {}) });
+    for (let i = 0; i < parts.length; i++) await this.call('sendMessage', { chat_id: chatId, text: parts[i], ...(options.html?{parse_mode:'HTML'}:{}), ...(i === parts.length - 1 && markup ? { reply_markup: markup } : {}) });
   }
 }
 

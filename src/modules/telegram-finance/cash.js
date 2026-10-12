@@ -1,4 +1,5 @@
-import { localDay, validDay, formatAmounts,formatExpense } from './report.js';
+import { localDay, validDay, formatAmounts } from './report.js';
+import {ledgerMessage} from './ledger-format.js';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const owner = user => user.slot === 'AKMALKHON';
 export function scopeSnapshot(user,snapshot) {
@@ -49,12 +50,10 @@ export async function cashCommand(bot,user,command,isCallback) {
     if(!owner(user)&&(!desk||desk!==user.cash_desk_id)){await send('Доступ к чужой кассе запрещён.');return true;}
     const fresh=await repo.find(id);if(fresh?.status!=='APPROVED')return true;
     const rows=await repo.ledger(fresh,kind,desk,offset);
-    const desks=await repo.cashDesks(); const title=kind==='income'?'ПКО':'РКО';
-    const lines=[`${title} · ${desk?(desks.find(d=>d.id===desk)?.name||'Касса'):'Все кассы'} · ${rows.length?'записи '+(offset+1)+'–'+(offset+rows.length):'операций нет'}`];
-    for(const r of rows)lines.push(`\n${r.document_number||r.reference||title+'-'+r.id} · ${r.payment_date||r.expense_date}\n${kind==='expense'?formatExpense(r):formatAmounts({[r.currency||'USD']:r.amount_minor})}\n${r.payer_name||r.recipient||''}${r.category?' · '+r.category:''}\n${kind==='expense'?(r.description||'').replace(/\[Касса:\s*[^\]]*\]\s*/gi,'').trim():(r.comment||'')}${!desk?'\nКасса: '+(desks.find(d=>d.id===r.cash_desk_id)?.name||'Не указана'):''}`);
-    if(!rows.length)lines.push('Операций больше нет.');
+    const desks=await repo.cashDesks();
+    const text=ledgerMessage(rows,kind,desk,desks,offset);
     const nav=[];if(offset>=10)nav.push(['Предыдущие',`book:${kind}:${key}:${offset-10}`]);if(rows.length===10&&offset<999990)nav.push(['Следующие',`book:${kind}:${key}:${offset+10}`]);nav.push(['Выбрать кассу',`bookpick:${kind}`]);
-    const check=await repo.find(id);if(check?.status==='APPROVED'&&check.slot===fresh.slot&&check.cash_desk_id===fresh.cash_desk_id)await send(lines.join('\n'),choices(nav));
+    const check=await repo.find(id);if(check?.status==='APPROVED'&&check.slot===fresh.slot&&check.cash_desk_id===fresh.cash_desk_id)await api.send(id,text,choices(nav),{html:true});
     return true;
   }
   const post=/^rpost:([0-9a-f-]{36})$/.exec(command);
