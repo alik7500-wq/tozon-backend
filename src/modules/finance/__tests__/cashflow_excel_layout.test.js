@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import ExcelJS from 'exceljs';
 import PizZip from 'pizzip';
-vi.mock('../finance.repository.js', () => ({ FinanceRepository: { getCashflow: vi.fn() } }));
+vi.mock('../finance.repository.js', () => ({ FinanceRepository: { getCashflow: vi.fn(), getIncome: vi.fn() } }));
 import { FinanceRepository } from '../finance.repository.js';
 import { CashflowExcelService } from '../cashflow_excel.service.js';
 
@@ -25,7 +25,26 @@ async function build(data, access = { isAdmin: true }) {
   return book;
 }
 describe('DDS export formula rows and separate cash desk ledgers', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); FinanceRepository.getIncome.mockResolvedValue({ list: [] }); });
+  it('includes all-time investment contributions by investor without transfers or cancelled receipts', async () => {
+    FinanceRepository.getIncome.mockResolvedValue({ list: [
+      { payerName: 'Инвестор А', operationType: 'INVESTMENT', amount: 100, currency: 'USD' },
+      { payerName: 'инвестор  а', contract: 'Инвестиция партнёра', amount: 900, currency: 'TJS', amountUsd: 90 },
+      { payerName: 'Инвестор Б', operationType: 'INVESTMENT', amount: 40, currency: 'USD' },
+      { payerName: 'Инвестор Б', operationType: 'INVESTMENT', amount: 50, currency: 'TJS' },
+      { payerName: 'Инвестор Б', operationType: 'INVESTMENT', amount: 999, currency: 'USD', transferId: 'transfer' },
+      { payerName: 'Инвестор Б', operationType: 'INVESTMENT', amount: 999, currency: 'USD', status: 'VOIDED' }
+    ] });
+    const access = { isAdmin: false, cashDeskId: 'own' };
+    const book = await build(fixture(), access);
+    const summary = book.getWorksheet('Свод по кассам');
+    const rows = [];
+    summary.eachRow(row => rows.push(row));
+    expect(rows.find(r => r.getCell(1).value === 'Инвестор А').getCell(2).value).toBe(190);
+    expect(rows.find(r => r.getCell(1).value === 'ВСЕГО ВНЕСЕНО, USD').getCell(2).result).toBe(230);
+    expect(rows.some(r => String(r.getCell(1).value).includes('Без сохранённого USD-эквивалента: 1'))).toBe(true);
+    expect(FinanceRepository.getIncome).toHaveBeenCalledWith({ year: 'ALL', currency: 'ALL' }, access);
+  });
   it('calculates each ending balance on its own row, including the first desk', async () => {
     const book = await build(fixture());
     const summary = book.getWorksheet('Свод по кассам');
