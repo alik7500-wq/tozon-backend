@@ -42,6 +42,7 @@ export class CashflowExcelService {
     workbook.creator = 'TOZON CRM';
     workbook.lastModifiedBy = currentUser?.name || 'TOZON System';
     workbook.created = new Date();
+    workbook.calcProperties.fullCalcOnLoad = true;
 
     const brandBlue = '1E3A8A'; // Navy Blue #1E3A8A
     const brandGreen = '059669'; // Emerald #059669
@@ -140,6 +141,7 @@ export class CashflowExcelService {
       const startUsd = 0;
       const startTjs = 0;
 
+      const rowIndex = sheet1.rowCount + 1;
       const row = sheet1.addRow([
         deskName,
         startUsd,
@@ -147,13 +149,13 @@ export class CashflowExcelService {
         desk.totalExpenseUsd || 0,
         internalIncomeUsd,
         internalExpenseUsd,
-        { formula: `B${sheet1.rowCount}+C${sheet1.rowCount}-D${sheet1.rowCount}` },
+        { formula: `B${rowIndex}+C${rowIndex}-D${rowIndex}`, result: Number((startUsd + (desk.totalIncomeUsd || 0) - (desk.totalExpenseUsd || 0)).toFixed(2)) },
         startTjs,
         desk.totalIncomeTjs || 0,
         desk.totalExpenseTjs || 0,
         internalIncomeTjs,
         internalExpenseTjs,
-        { formula: `H${sheet1.rowCount}+I${sheet1.rowCount}-J${sheet1.rowCount}` },
+        { formula: `H${rowIndex}+I${rowIndex}-J${rowIndex}`, result: Number((startTjs + (desk.totalIncomeTjs || 0) - (desk.totalExpenseTjs || 0)).toFixed(2)) },
         pkoCount,
         rkoCount
       ]);
@@ -427,7 +429,8 @@ export class CashflowExcelService {
     ]);
 
     s4HeaderRow.font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
-    s4HeaderRow.height = 26;
+    s4HeaderRow.height = 44;
+    s4HeaderRow.alignment = { vertical: 'middle', wrapText: true };
     s4HeaderRow.eachCell((cell) => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '475569' } };
     });
@@ -436,13 +439,13 @@ export class CashflowExcelService {
       {
         id: 1,
         name: 'Сумма приходов по детализации ПКО (USD) = приходу в своде',
-        calcFormula: incomeTransactions.length > 0 ? `'Приходы ПКО'!K${endRowS3 + 2 || endRowS2 + 2}` : '0',
+        calcFormula: incomeTransactions.length > 0 ? `SUM('Приходы ПКО'!K${startRowS2}:K${endRowS2})` : '0',
         ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!C${endRowS1 + 1}` : '0'
       },
       {
         id: 2,
         name: 'Сумма расходов по детализации РКО (USD) = расходу в своде',
-        calcFormula: expenseTransactions.length > 0 ? `'Расходы РКО'!K${endRowS3 + 2}` : '0',
+        calcFormula: expenseTransactions.length > 0 ? `SUM('Расходы РКО'!K${startRowS3}:K${endRowS3})` : '0',
         ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!D${endRowS1 + 1}` : '0'
       },
       {
@@ -466,8 +469,26 @@ export class CashflowExcelService {
       {
         id: 6,
         name: 'Отсутствие аннулированных (VOIDED) операций в финансовом своде',
-        calcFormula: '0',
+        calcFormula: `COUNTIF('Приходы ПКО'!P2:P${Math.max(2, endRowS2)},"VOIDED")+COUNTIF('Расходы РКО'!P2:P${Math.max(2, endRowS3)},"VOIDED")`,
         ctrlFormula: '0'
+      },
+      {
+        id: 7,
+        name: 'Сумма приходов TJS по детализации = приходу TJS в своде',
+        calcFormula: incomeTransactions.length > 0 ? `SUMIF('Приходы ПКО'!J${startRowS2}:J${endRowS2},"TJS",'Приходы ПКО'!L${startRowS2}:L${endRowS2})` : '0',
+        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!I${endRowS1 + 1}` : '0'
+      },
+      {
+        id: 8,
+        name: 'Сумма расходов TJS по детализации = расходу TJS в своде',
+        calcFormula: expenseTransactions.length > 0 ? `SUMIF('Расходы РКО'!J${startRowS3}:J${endRowS3},"TJS",'Расходы РКО'!L${startRowS3}:L${endRowS3})` : '0',
+        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!J${endRowS1 + 1}` : '0'
+      },
+      {
+        id: 9,
+        name: 'Начальный остаток TJS + Приход TJS − Расход TJS = Конечный остаток TJS',
+        calcFormula: desksSummary.length > 0 ? `'Свод по кассам'!H${endRowS1 + 1}+'Свод по кассам'!I${endRowS1 + 1}-'Свод по кассам'!J${endRowS1 + 1}` : '0',
+        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!M${endRowS1 + 1}` : '0'
       }
     ];
 
@@ -482,7 +503,8 @@ export class CashflowExcelService {
         { formula: `IF(ABS(E${rIdx})<0.01, "СОВПАДАЕТ", "РАСХОЖДЕНИЕ")` }
       ]);
 
-      row.height = 24;
+      row.height = 36;
+      row.alignment = { vertical: 'middle', wrapText: true };
       row.getCell(3).numFmt = '#,##0.00';
       row.getCell(4).numFmt = '#,##0.00';
       row.getCell(5).numFmt = '#,##0.00';
@@ -495,6 +517,75 @@ export class CashflowExcelService {
     sheet4.getColumn(1).width = 6;
     sheet4.getColumn(2).width = 60;
     sheet4.getColumn(6).width = 18;
+
+
+    // One movement ledger per visible desk, using the same exported transactions.
+    const deskNames = [...new Set([
+      ...desksSummary.map(d => d.name),
+      ...transactions.map(t => t.cashDeskName || t.cash_desk_name || 'Без кассы')
+    ])];
+    deskNames.forEach((name, index) => {
+      const safeName = String(name).replace(/[\\\\/?*\[\]:]/g, ' ').replace(/^'+|'+$/g, '').trim();
+      const tabName = `Касса ${index + 1} - ${safeName}`.slice(0, 31);
+      const sheet = workbook.addWorksheet(tabName, { views: [{ state: 'frozen', ySplit: 4 }] });
+      sheet.addRow(['Движение кассы', sanitizeCellString(name)]);
+      sheet.getRow(1).font = { bold: true, size: 13, color: { argb: brandBlue } };
+      sheet.addRow([periodText]);
+      sheet.addRow(['Остаток рассчитан по выгруженным операциям от нуля. Внутренние перемещения включены.']);
+      const header = sheet.addRow([
+        '№', 'Дата', 'Документ', 'Тип', 'Контрагент', 'Статья ДДС', 'Назначение',
+        'Приход USD', 'Расход USD', 'Остаток USD',
+        'Приход TJS', 'Расход TJS', 'Остаток TJS',
+        'Валюта', 'Сумма', 'Примечание', 'ID документа'
+      ]);
+      header.height = 32;
+      header.alignment = { vertical: 'middle', wrapText: true };
+      header.font = { bold: true, color: { argb: 'FFFFFF' } };
+      header.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandBlue } }; });
+      const deskTransactions = transactions
+        .filter(t => (t.cashDeskName || t.cash_desk_name || 'Без кассы') === name)
+        .slice().sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) ||
+          String(a.createdAt || '').localeCompare(String(b.createdAt || '')) ||
+          String(a.id || '').localeCompare(String(b.id || ''), undefined, { numeric: true }));
+      sheet.addRow(['', '', 'Остаток на начало', '', '', '', '', 0, 0, 0, 0, 0, 0]);
+      let usdBalance = 0, tjsBalance = 0;
+      deskTransactions.forEach((t, idx) => {
+        const cur = String(t.currency || 'USD').toUpperCase();
+        const amount = Number(t.amount) || 0;
+        const income = t.type === 'INCOME';
+        const incUsd = income && cur === 'USD' ? amount : 0;
+        const expUsd = !income && cur === 'USD' ? amount : 0;
+        const incTjs = income && cur === 'TJS' ? amount : 0;
+        const expTjs = !income && cur === 'TJS' ? amount : 0;
+        usdBalance = Number((usdBalance + incUsd - expUsd).toFixed(2));
+        tjsBalance = Number((tjsBalance + incTjs - expTjs).toFixed(2));
+        const rowIndex = sheet.rowCount + 1;
+        sheet.addRow([
+          idx + 1, t.date || '', sanitizeCellString(t.reference || t.document_number || ''),
+          income ? 'ПКО' : 'РКО',
+          sanitizeCellString(t.payer_name || t.recipient || t.counterparty || ''),
+          sanitizeCellString(t.category || ''), sanitizeCellString(t.title || t.purpose || ''),
+          incUsd, expUsd, { formula: `J${rowIndex - 1}+H${rowIndex}-I${rowIndex}`, result: usdBalance },
+          incTjs, expTjs, { formula: `M${rowIndex - 1}+K${rowIndex}-L${rowIndex}`, result: tjsBalance },
+          cur, amount, sanitizeCellString(t.comment || t.description || ''), t.rawId || t.id
+        ]);
+      });
+      const end = sheet.rowCount;
+      const total = sheet.addRow(['ИТОГО', `${deskTransactions.length} операций`]);
+      [8, 9, 11, 12].forEach(col => {
+        const letter = sheet.getColumn(col).letter;
+        total.getCell(col).value = deskTransactions.length ? { formula: `SUM(${letter}6:${letter}${end})` } : 0;
+      });
+      total.getCell(10).value = { formula: `J${end}`, result: usdBalance };
+      total.getCell(13).value = { formula: `M${end}`, result: tjsBalance };
+      total.font = { bold: true };
+      total.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E2E8F0' } }; });
+      sheet.columns.forEach(col => { col.width = 18; });
+      sheet.getColumn(1).width = 6;
+      [5, 6, 7, 16].forEach(col => { sheet.getColumn(col).width = 32; });
+      [8, 9, 10, 11, 12, 13, 15].forEach(col => { sheet.getColumn(col).numFmt = '#,##0.00;[Red]-#,##0.00;0.00'; });
+      sheet.autoFilter = { from: 'A4', to: `Q${end}` };
+    });
 
     const buffer = await workbook.xlsx.writeBuffer();
     return buffer;
