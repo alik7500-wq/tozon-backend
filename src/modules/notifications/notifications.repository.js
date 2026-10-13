@@ -87,7 +87,18 @@ export class NotificationsRepository {
       }).length,
       leads_and_reservations: list.filter(n => {
         const type = n.event_type || n.type;
-        return type === 'LEAD_CREATED' || type === 'RESERVATION_CREATED';
+        return [
+          'LEAD_CREATED',
+          'RESERVATION_CREATED',
+          'LEAD_UNASSIGNED',
+          'LEAD_FIRST_CONTACT_WARNING',
+          'LEAD_FIRST_CONTACT_OVERDUE',
+          'LEAD_STAGNANT',
+          'LEADS_CONTROL_DIGEST',
+          'CALL_REMINDER',
+          'MEETING_REMINDER',
+          'MANAGER_TASK_OVERDUE'
+        ].includes(type);
       }).length,
       sms_failed: list.filter(n => (n.event_type || n.type) === 'SMS_FAILED').length
     };
@@ -111,7 +122,18 @@ export class NotificationsRepository {
       } else if (filters.category === 'payments') {
         query = query.in('event_type', ['PAYMENT_DUE', 'PAYMENT_OVERDUE']);
       } else if (filters.category === 'leads') {
-        query = query.in('event_type', ['LEAD_CREATED', 'RESERVATION_CREATED']);
+        query = query.in('event_type', [
+          'LEAD_CREATED',
+          'RESERVATION_CREATED',
+          'LEAD_UNASSIGNED',
+          'LEAD_FIRST_CONTACT_WARNING',
+          'LEAD_FIRST_CONTACT_OVERDUE',
+          'LEAD_STAGNANT',
+          'LEADS_CONTROL_DIGEST',
+          'CALL_REMINDER',
+          'MEETING_REMINDER',
+          'MANAGER_TASK_OVERDUE'
+        ]);
       } else if (filters.category === 'sms') {
         query = query.eq('event_type', 'SMS_FAILED');
       }

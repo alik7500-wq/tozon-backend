@@ -233,4 +233,94 @@ export class NotificationsService {
       metadata: { task_id: task.id, due_date: task.due_date, time: task.time || null }
     });
   }
+
+  // 10. LEAD_FIRST_CONTACT_WARNING Event Notification (V1.1)
+  static async notifyLeadFirstContactWarning(lead, managerId, minutesElapsed = 60) {
+    if (!lead || !lead.id || !managerId) return;
+    const userId = Number(managerId);
+    const leadName = lead.full_name || 'Клиент';
+
+    await NotificationsRepository.createNotification({
+      user_id: userId,
+      type: 'LEAD_FIRST_CONTACT_WARNING',
+      title: 'Внимание: ожидается контакт с клиентом',
+      message: `Прошёл 1 час с момента назначения лида ${leadName}. Зафиксируйте контакт, комментарий или задачу.`,
+      entity_type: 'LEAD',
+      entity_id: lead.id,
+      action_url: `/clients?clientId=${lead.id}`,
+      dedupe_key: `LEAD_FIRST_CONTACT_WARNING:${lead.id}:${userId}`,
+      metadata: { lead_id: lead.id, phone: lead.phone, minutes_elapsed: minutesElapsed }
+    });
+  }
+
+  // 11. LEAD_FIRST_CONTACT_OVERDUE Event Notification (V1.1)
+  static async notifyLeadFirstContactOverdue(lead, managerId, minutesElapsed = 120) {
+    if (!lead || !lead.id) return;
+    const recipientIds = await this.resolveRecipients(managerId);
+    const leadName = lead.full_name || 'Клиент';
+    const managerName = lead.responsible_user_name || lead.users?.name || 'Ответственный сотрудник';
+
+    for (const userId of recipientIds) {
+      await NotificationsRepository.createNotification({
+        user_id: userId,
+        type: 'LEAD_FIRST_CONTACT_OVERDUE',
+        title: 'Просрочен первый контакт по лиду',
+        message: `Просрочен первый контакт с лидом ${leadName} (>2 рабочих часов без действия). Менеджер: ${managerName}.`,
+        entity_type: 'LEAD',
+        entity_id: lead.id,
+        action_url: `/clients?clientId=${lead.id}`,
+        dedupe_key: `LEAD_FIRST_CONTACT_OVERDUE:${lead.id}:${userId}`,
+        metadata: { lead_id: lead.id, phone: lead.phone, minutes_elapsed: minutesElapsed, manager_id: managerId }
+      });
+    }
+  }
+
+  // 12. LEAD_STAGNANT Event Notification (V1.1)
+  static async notifyLeadStagnant(lead, managerId, hoursInactive = 48, dateBucket = '') {
+    if (!lead || !lead.id) return;
+    const recipientIds = await this.resolveRecipients(managerId);
+    const leadName = lead.full_name || 'Клиент';
+    const statusName = lead.status === 'IN_PROGRESS' ? 'В работе' : (lead.status === 'NEGOTIATION' ? 'Переговоры' : lead.status);
+    const bucketStr = dateBucket || new Date().toISOString().split('T')[0];
+
+    for (const userId of recipientIds) {
+      await NotificationsRepository.createNotification({
+        user_id: userId,
+        type: 'LEAD_STAGNANT',
+        title: 'Лид без движения и следующего шага',
+        message: `Лид ${leadName} находится в стадии «${statusName}» более ${hoursInactive} часов без запланированных задач и действий.`,
+        entity_type: 'LEAD',
+        entity_id: lead.id,
+        action_url: `/clients?clientId=${lead.id}`,
+        dedupe_key: `LEAD_STAGNANT:${lead.id}:${userId}:${bucketStr}`,
+        metadata: { lead_id: lead.id, hours_inactive: hoursInactive, status: lead.status }
+      });
+    }
+  }
+
+  // 13. LEADS_CONTROL_DIGEST Event Notification (V1.1)
+  static async notifyLeadsControlDigest(stats, period = 'MORNING', businessDate = '') {
+    const adminIds = await NotificationsRepository.getAdminUserIds();
+    if (!adminIds || adminIds.length === 0) return;
+
+    const bDate = businessDate || new Date().toISOString().split('T')[0];
+    const periodName = period === 'MORNING' ? 'Утренняя' : 'Вечерняя';
+
+    const msg = `${periodName} сводка контроля лидов: без ответственного — ${stats.unassignedCount || 0}, без первого контакта (>2ч) — ${stats.overdueContactCount || 0}, без движения (>48ч) — ${stats.stagnantCount || 0}, просрочено задач — ${stats.overdueTasksCount || 0}.`;
+
+    for (const userId of adminIds) {
+      await NotificationsRepository.createNotification({
+        user_id: userId,
+        type: 'LEADS_CONTROL_DIGEST',
+        title: `${periodName} сводка контроля лидов`,
+        message: msg,
+        entity_type: 'DIGEST',
+        entity_id: 0,
+        action_url: '/leads?tab=control',
+        dedupe_key: `LEADS_CONTROL_DIGEST:${userId}:${bDate}:${period}`,
+        metadata: { stats, period, business_date: bDate }
+      });
+    }
+  }
 }
+

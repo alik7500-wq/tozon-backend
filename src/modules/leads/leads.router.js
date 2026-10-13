@@ -43,6 +43,22 @@ router.post('/webhook', async (req, res, next) => {
 
 router.use(protect);
 
+// GET /api/leads/sla-control - SLA & processing control dashboard
+router.get('/sla-control', async (req, res, next) => {
+  try {
+    const filters = {
+      search: req.query.search,
+      slaStatus: req.query.slaStatus || req.query.status,
+      projectId: parseOptionalBigInt(req.query.projectId),
+      responsibleUserId: parseOptionalBigInt(req.query.responsibleUserId),
+      page: req.query.page,
+      limit: req.query.limit
+    };
+    const result = await LeadsRepository.getSlaControlData(filters, req.user);
+    res.status(200).json({ status: 'success', data: result });
+  } catch (error) { next(error); }
+});
+
 router.get('/', async (req, res, next) => {
   try {
     const filters = {
@@ -77,6 +93,9 @@ router.post('/', async (req, res, next) => {
 router.put('/:id', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    if (req.body.responsible_user_id !== undefined && !['ADMIN', 'DIRECTOR'].includes(req.user.role)) {
+      return next(new AppError('Переназначение ответственного менеджера разрешено только руководителю или администратору', 403));
+    }
     const lead = await LeadsRepository.update(cleanId, req.body);
     res.status(200).json({ status: 'success', data: { lead } });
   } catch (error) { next(error); }
@@ -85,6 +104,9 @@ router.put('/:id', async (req, res, next) => {
 router.patch('/:id', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    if (req.body.responsible_user_id !== undefined && !['ADMIN', 'DIRECTOR'].includes(req.user.role)) {
+      return next(new AppError('Переназначение ответственного менеджера разрешено только руководителю или администратору', 403));
+    }
     const lead = await LeadsRepository.update(cleanId, req.body);
     res.status(200).json({ status: 'success', data: { lead } });
   } catch (error) { next(error); }

@@ -48,3 +48,104 @@ export function getBusinessDateTime(nowInput = null) {
     timeStr: `${hour}:${minute}`
   };
 }
+
+export const WORK_HOURS = {
+  START: 8,  // 08:00 Asia/Dushanbe
+  END: 20    // 20:00 Asia/Dushanbe
+};
+
+const DUSHANBE_OFFSET_MS = 5 * 3600 * 1000;
+
+/**
+ * Returns true if the given or current timestamp is within business hours (08:00–20:00 Asia/Dushanbe).
+ */
+export function isWithinWorkingHours(dateInput = null, options = {}) {
+  const { skipWeekends = false, skipSunday = false } = options;
+  const d = dateInput ? new Date(dateInput) : new Date();
+  const local = new Date(d.getTime() + DUSHANBE_OFFSET_MS);
+  const day = local.getUTCDay();
+  if (skipWeekends && (day === 0 || day === 6)) return false;
+  if (skipSunday && day === 0) return false;
+  const hour = local.getUTCHours();
+  return hour >= WORK_HOURS.START && hour < WORK_HOURS.END;
+}
+
+/**
+ * Returns true if date falls on an active business day.
+ */
+export function isBusinessDay(dateInput = null, options = {}) {
+  const { skipWeekends = false, skipSunday = false } = options;
+  const d = dateInput ? new Date(dateInput) : new Date();
+  const local = new Date(d.getTime() + DUSHANBE_OFFSET_MS);
+  const day = local.getUTCDay();
+  if (skipWeekends && (day === 0 || day === 6)) return false;
+  if (skipSunday && day === 0) return false;
+  return true;
+}
+
+/**
+ * Calculates working minutes elapsed between startInput and endInput (defaults to now)
+ * within the working hours window (08:00 - 20:00 Asia/Dushanbe).
+ * Overnight and out-of-bounds time is excluded.
+ * Options allow configuring weekend behavior (e.g. skipWeekends, skipSunday).
+ */
+export function calculateWorkingMinutes(startInput, endInput = null, options = {}) {
+  if (!startInput) return 0;
+  const start = new Date(startInput);
+  const end = endInput ? new Date(endInput) : new Date();
+
+  if (end <= start) return 0;
+
+  let totalMinutes = 0;
+
+  // Determine starting and ending dates in Dushanbe time
+  const startLocal = new Date(start.getTime() + DUSHANBE_OFFSET_MS);
+  const endLocal = new Date(end.getTime() + DUSHANBE_OFFSET_MS);
+
+  // Iterate calendar days in Dushanbe time from start to end
+  const currentDay = new Date(Date.UTC(startLocal.getUTCFullYear(), startLocal.getUTCMonth(), startLocal.getUTCDate()));
+  const lastDay = new Date(Date.UTC(endLocal.getUTCFullYear(), endLocal.getUTCMonth(), endLocal.getUTCDate()));
+
+  while (currentDay <= lastDay) {
+    const y = currentDay.getUTCFullYear();
+    const m = currentDay.getUTCMonth();
+    const d = currentDay.getUTCDate();
+    const dayOfWeek = currentDay.getUTCDay();
+
+    const isWeekend = options.skipWeekends && (dayOfWeek === 0 || dayOfWeek === 6);
+    const isSundayOff = options.skipSunday && dayOfWeek === 0;
+
+    if (!isWeekend && !isSundayOff) {
+      // 08:00 TJT on this day in UTC ms
+      const dayStartUtcMs = Date.UTC(y, m, d, WORK_HOURS.START, 0, 0) - DUSHANBE_OFFSET_MS;
+      // 20:00 TJT on this day in UTC ms
+      const dayEndUtcMs = Date.UTC(y, m, d, WORK_HOURS.END, 0, 0) - DUSHANBE_OFFSET_MS;
+
+      const windowStart = Math.max(start.getTime(), dayStartUtcMs);
+      const windowEnd = Math.min(end.getTime(), dayEndUtcMs);
+
+      if (windowEnd > windowStart) {
+        totalMinutes += Math.floor((windowEnd - windowStart) / 60000);
+      }
+    }
+
+    // Move to next day
+    currentDay.setUTCDate(currentDay.getUTCDate() + 1);
+  }
+
+  return totalMinutes;
+}
+
+/**
+ * Formats minutes into human-readable duration in Russian:
+ * e.g. 15 -> "15 мин", 75 -> "1 ч 15 мин", 1500 -> "25 ч"
+ */
+export function formatWorkingDuration(minutes) {
+  if (!minutes || minutes <= 0) return '0 мин';
+  const hrs = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hrs === 0) return `${mins} мин`;
+  if (mins === 0) return `${hrs} ч`;
+  return `${hrs} ч ${mins} мин`;
+}
+
