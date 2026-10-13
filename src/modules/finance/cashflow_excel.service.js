@@ -37,6 +37,7 @@ export class CashflowExcelService {
   static async generateExcelBuffer(filters = {}, userAccess = null, currentUser = null) {
     // Fetch data using canonical FinanceRepository getCashflow
     const cashflowData = await FinanceRepository.getCashflow(filters, userAccess);
+    const investmentIncome = await FinanceRepository.getIncome({ year: 'ALL', currency: 'ALL' }, userAccess);
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'TOZON CRM';
@@ -206,6 +207,59 @@ export class CashflowExcelService {
         }
       });
     }
+
+
+    // Match the all-time investment card: contributions, not cash balance.
+    const investors = new Map();
+    let investmentTotalMinor = 0, missingInvestmentRate = 0;
+    for (const item of investmentIncome?.list || []) {
+      if (['VOIDED', 'CANCELLED', 'REVERSED'].includes(item.status) || item.voidedAt || item.transferId) continue;
+      if (item.operationType !== 'INVESTMENT' && item.category !== 'Инвестиции партнёров' && item.contract !== 'Инвестиция партнёра') continue;
+      const name = (item.payerName || item.clientName || 'Инвестор не указан').trim() || 'Инвестор не указан';
+      const key = name.replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU');
+      if (!investors.has(key)) investors.set(key, { name, usdMinor: 0, currencies: {} });
+      const investor = investors.get(key);
+      const currency = item.currency || 'USD';
+      const amount = Number(item.amount);
+      if (!Number.isFinite(amount)) continue;
+      investor.currencies[currency] = (investor.currencies[currency] || 0) + Math.round(amount * 100);
+      const usd = currency === 'USD' ? amount : Number(item.amountUsd ?? item.amount_usd);
+      if (currency !== 'USD' && (item.amountUsd ?? item.amount_usd) == null) { missingInvestmentRate++; continue; }
+      if (!Number.isFinite(usd)) { missingInvestmentRate++; continue; }
+      const minor = Math.round(usd * 100);
+      investor.usdMinor += minor;
+      investmentTotalMinor += minor;
+    }
+    sheet1.addRow([]);
+    const investmentTitle = sheet1.addRow(['ИНВЕСТИЦИИ ИНВЕСТОРОВ — ЗА ВСЁ ВРЕМЯ']);
+    sheet1.mergeCells(investmentTitle.number, 1, investmentTitle.number, 5);
+    investmentTitle.font = { bold: true, size: 13, color: { argb: '7E22CE' } };
+    const investmentHeader = sheet1.addRow(['Инвестор', 'Внесено, эквивалент USD', 'Взносы в исходной валюте']);
+    investmentHeader.font = { bold: true, color: { argb: 'FFFFFF' } };
+    investmentHeader.height = 32;
+    investmentHeader.alignment = { wrapText: true, vertical: 'middle' };
+    investmentHeader.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '7E22CE' } }; });
+    const firstInvestmentRow = sheet1.rowCount + 1;
+    for (const investor of [...investors.values()].sort((a, b) => b.usdMinor - a.usdMinor)) {
+      const row = sheet1.addRow([
+        sanitizeCellString(investor.name), investor.usdMinor / 100,
+        Object.entries(investor.currencies).map(([currency, minor]) =>
+          `${(minor / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`).join(' · ')
+      ]);
+      sheet1.mergeCells(row.number, 3, row.number, 5);
+      row.getCell(2).numFmt = '#,##0.00';
+      row.height = 24;
+    }
+    const lastInvestmentRow = sheet1.rowCount;
+    const investmentTotal = sheet1.addRow([
+      'ВСЕГО ВНЕСЕНО, USD',
+      investors.size ? { formula: `SUM(B${firstInvestmentRow}:B${lastInvestmentRow})`, result: investmentTotalMinor / 100 } : 0
+    ]);
+    investmentTotal.font = { bold: true, size: 12, color: { argb: '7E22CE' } };
+    investmentTotal.getCell(2).numFmt = '#,##0.00';
+    investmentTotal.eachCell(cell => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F3E8FF' } }; });
+    sheet1.addRow(['Внесённые инвестиции, независимо от остатка в кассе. Период и фильтры ДДС к этому блоку не применяются.']);
+    if (missingInvestmentRate) sheet1.addRow([`Без сохранённого USD-эквивалента: ${missingInvestmentRate}. Эти взносы не включены в общий итог USD.`]);
 
     // Auto-fit columns for Sheet 1
     sheet1.columns.forEach((col) => {
