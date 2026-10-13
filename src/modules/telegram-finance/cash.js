@@ -90,7 +90,8 @@ export async function cashCommand(bot,user,command,isCallback) {
   if(s.phase==='currency'&&/^rval:(USD|TJS)$/.test(command)){p.currency=command.slice(5);await next('date','📅 Выберите дату расхода:',dateChoices(localDay(bot.clock())));return true;}
   if(s.phase==='amount'&&!isCallback) {
     const n=amountMinor(command);if(n===null){await send('Введите положительную сумму, максимум два знака после запятой.');return true;}p.amount_minor=n;
-    if(p.currency==='TJS')await next('source','Из какой валюты кассы списать?',choices([['Списать сомони','rsrc:TJS'],['Списать USD по курсу','rsrc:USD']]));
+    p.source_currency='USD';
+    if(p.currency==='TJS')await next('rate','Введите фактический курс: сколько сомони за 1 USD, например 9,27.');
     else {p.source_currency='USD';await next('recipient','Кому оплачено? Введите получателя.');}return true;
   }
   if(s.phase==='source'&&/^rsrc:(TJS|USD)$/.test(command)){p.source_currency=command.slice(5);if(p.source_currency==='USD')await next('rate','Введите фактический курс: сколько сомони за 1 USD, например 9,27.');else await next('recipient','Кому оплачено? Введите получателя.');return true;}

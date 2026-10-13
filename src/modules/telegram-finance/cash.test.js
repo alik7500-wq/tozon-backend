@@ -4,6 +4,18 @@ import {PGlite} from '@electric-sql/pglite';
 import {cashCommand,scopeSnapshot,amountMinor,usdDebitMinor,dateChoices} from './cash.js';
 const a='11111111-1111-4111-8111-111111111111',b='22222222-2222-4222-8222-222222222222';
 const user={telegram_id:'12345',slot:'ILHOM',status:'APPROVED',cash_desk_id:a,crm_user_id:1,can_create_expense:true};
+it('uses USD for a TJS expense and requires a valid actual rate before recipient entry',async()=>{
+ let session={phase:'amount',desk:a,payload:{currency:'TJS'}};
+ const repo={session:async()=>session,saveSession:async(id,s)=>{session=structuredClone(s);}};
+ const api={send:vi.fn()};const bot={repo,api};
+ await cashCommand(bot,user,'200',false);
+ expect(session.phase).toBe('rate');expect(session.payload.source_currency).toBe('USD');
+ expect(api.send.mock.calls[0][1]).toContain('фактический курс');
+ await cashCommand(bot,user,'0',false);expect(session.phase).toBe('rate');
+ await cashCommand(bot,user,'9,26',false);
+ expect(session.phase).toBe('recipient');expect(session.payload.exchange_rate).toBe('9.26');
+ expect(usdDebitMinor(session.payload.amount_minor,session.payload.exchange_rate)).toBe(2160);
+});
 it('scopes cash reports to the exact assigned desk and fails closed without assignment',()=>{
  const data={desks:[{id:a},{id:b}],payments:[{cash_desk_id:a},{cash_desk_id:b},{cash_desk_id:null}],expenses:[{cash_desk_id:a},{cash_desk_id:b}]};
  expect(scopeSnapshot(user,data).payments).toEqual([{cash_desk_id:a}]);expect(scopeSnapshot(user,data).expenses).toEqual([{cash_desk_id:a}]);expect(()=>scopeSnapshot({...user,cash_desk_id:null},data)).toThrow();expect(scopeSnapshot({...user,slot:'AKMALKHON'},data)).toBe(data);
