@@ -1,0 +1,50 @@
+name: TOZON Sales Automation Detector Scheduler
+
+on:
+  schedule:
+    # 08:00 - 19:30 Asia/Dushanbe (UTC+5) = 03:00 - 14:30 UTC every 30 minutes (24 runs/day)
+    - cron: '*/30 3-14 * * *'
+    # 20:00 Asia/Dushanbe (UTC+5) = 15:00 UTC (1 run/day)
+    - cron: '0 15 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tozon-sales-automation-cron
+  cancel-in-progress: false
+
+jobs:
+  trigger-sales-automation-detector:
+    name: Trigger TOZON Sales Automation Detector
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger Sales Automation Endpoint
+        env:
+          SALES_AUTOMATION_CRON_SECRET: ${{ secrets.SALES_AUTOMATION_CRON_SECRET || 'TOZON_SALES_AUTOMATION_SECRET_2026' }}
+        run: |
+          set -euo pipefail
+
+          echo "Triggering TOZON CRM Sales Automation Detector endpoint..."
+
+          # Secret is passed securely via x-cron-secret header without echoing in stdout/stderr
+          HTTP_STATUS=$(curl -s -S -o /tmp/detector_response.json -w "%{http_code}" \
+            --connect-timeout 20 \
+            --max-time 180 \
+            -X POST "https://tozon-backend.onrender.com/api/automation/run-detector" \
+            -H "Content-Type: application/json" \
+            -H "x-cron-secret: $SALES_AUTOMATION_CRON_SECRET")
+
+          echo "HTTP Response Status Code: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+            echo "Sales Automation detection cycle completed successfully."
+            cat /tmp/detector_response.json
+          else
+            echo "::error::Sales Automation detector request failed with HTTP status code: $HTTP_STATUS"
+            cat /tmp/detector_response.json || true
+            exit 1
+          fi
