@@ -14,7 +14,7 @@ export const resolveCashDeskAccess = async (req, res, next) => {
     }
 
     // Администратор, Директор и Финансовый менеджер имеют полный доступ ко всем кассам компании
-    if (user.role === 'ADMIN' || user.role === 'DIRECTOR' || user.role === 'FINANCE_MANAGER') {
+    if (user.role === 'ADMIN' || user.role === 'DIRECTOR' || (user.role === 'FINANCE_MANAGER' && !user.permissions?.includes('finance.restricted'))) {
       req.cashDeskAccess = {
         isAdmin: true,
         allDesks: true,
@@ -121,12 +121,14 @@ export const resolveCashDeskAccess = async (req, res, next) => {
       return next(new AppError('У вас нет прав доступа к кассовым операциям', 403));
     }
 
-    const primaryDeskId = viewableDeskIds[0] || expenseDeskIds[0] || incomeDeskIds[0] || null;
+    const primaryDeskId = user.permissions?.includes('finance.restricted')
+      ? (expenseDeskIds[0] || viewableDeskIds[0] || null)
+      : (viewableDeskIds[0] || expenseDeskIds[0] || incomeDeskIds[0] || null);
 
     req.cashDeskAccess = {
       userId: user.id,
-      isAdmin: false,
-      allDesks: false,
+      isAdmin: Boolean(user.permissions?.includes('finance.restricted') && ['GET', 'HEAD'].includes(req.method)),
+      allDesks: Boolean(user.permissions?.includes('finance.restricted') && ['GET', 'HEAD'].includes(req.method)),
       cashDeskId: primaryDeskId,
       viewableDeskIds,
       incomeDeskIds,
@@ -142,7 +144,7 @@ export const resolveCashDeskAccess = async (req, res, next) => {
 
     // Валидация кассы в параметрах GET-запроса (просмотр)
     const requestedViewDesk = req.query.cash_desk_id;
-    if (requestedViewDesk && !viewableDeskIds.includes(requestedViewDesk)) {
+    if (requestedViewDesk && requestedViewDesk !== 'ALL' && !viewableDeskIds.includes(requestedViewDesk)) {
       return next(new AppError('Доступ к просмотру чужой кассы запрещен', 403));
     }
 
