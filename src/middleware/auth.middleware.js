@@ -29,6 +29,16 @@ export const protect = async (req, res, next) => {
       return next(new AppError('This user has been deactivated.', 401));
     }
 
+    // Restricted finance profile: read finance, create only expense receipts.
+    if (currentUser.permissions?.includes('finance.restricted')) {
+      const path = String(req.originalUrl || '').split('?')[0].replace(/\/$/, '');
+      const readOnly = ['GET', 'HEAD'].includes(req.method);
+      const allowed = path.startsWith('/api/auth/') ||
+        (readOnly && (path.startsWith('/api/finance/') || path === '/api/dictionaries' || path.startsWith('/api/dictionaries/') || path === '/api/deals' || path.startsWith('/api/deals/') || path === '/api/projects' || path.startsWith('/api/projects/'))) ||
+        (req.method === 'POST' && path === '/api/finance/expenses');
+      if (!allowed) return next(new AppError('Доступ разрешён только к просмотру финансов и оформлению РКО', 403));
+    }
+
     // Grant access to protected route
     req.user = currentUser;
     next();
