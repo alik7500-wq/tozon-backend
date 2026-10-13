@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 let lastResult=null;
+const scriptErrors=['SECRET_PROPERTY_MISSING_OR_SHORT','REQUEST_FORMAT_INVALID','REQUEST_TIMESTAMP_EXPIRED','SIGNATURE_MISMATCH'];
 export const cashSheets = {
   'ab90800a-73af-4cf7-88c2-397c304e2edf': 'Касса Акмалхон',
   '6ddf2f64-0a77-4aeb-8daf-a391b2da0141': 'Касса Илхомчон',
@@ -24,9 +25,9 @@ export async function syncSheets(repo, fetchImpl=fetch) {
       const res=await fetchImpl(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({payload,timestamp,signature}),signal:AbortSignal.timeout(45000)});
       if(!res.ok)throw new Error('GOOGLE_HTTP_ERROR');
       let result;try {result=await res.json();}catch {throw new Error('GOOGLE_NON_JSON_RESPONSE');}
-      if(result.ok===false)throw new Error(result.error==='SYNC_FAILED'?'GOOGLE_SCRIPT_FAILED':'GOOGLE_REJECTED_SIGNATURE_OR_PAYLOAD');
+      if(result.ok===false)throw new Error(scriptErrors.includes(result.error)?result.error:result.error==='SYNC_FAILED'?'GOOGLE_SCRIPT_FAILED':'GOOGLE_REJECTED_SIGNATURE_OR_PAYLOAD');
       if(result.ok!==true||result.id!==job.id)throw new Error('SHEETS_ACK_MISMATCH');
       await repo.finishSheetJob(job.id,'SENT');lastResult='SENT';
-    } catch(e) {lastResult=['GOOGLE_HTTP_ERROR','GOOGLE_NON_JSON_RESPONSE','GOOGLE_SCRIPT_FAILED','GOOGLE_REJECTED_SIGNATURE_OR_PAYLOAD','SHEETS_ACK_MISMATCH'].includes(e.message)?e.message:e.name==='TimeoutError'?'GOOGLE_TIMEOUT':'GOOGLE_NETWORK_OR_QUEUE_ERROR';await repo.retrySheetJob(job.id,job.attempts+1);}
+    } catch(e) {lastResult=[...scriptErrors,'GOOGLE_HTTP_ERROR','GOOGLE_NON_JSON_RESPONSE','GOOGLE_SCRIPT_FAILED','GOOGLE_REJECTED_SIGNATURE_OR_PAYLOAD','SHEETS_ACK_MISMATCH'].includes(e.message)?e.message:e.name==='TimeoutError'?'GOOGLE_TIMEOUT':'GOOGLE_NETWORK_OR_QUEUE_ERROR';await repo.retrySheetJob(job.id,job.attempts+1);}
   }
 }
