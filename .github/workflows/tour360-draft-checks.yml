@@ -20,7 +20,7 @@ jobs:
           node --check src/modules/tour360/tour360.repository.js
           node --check src/modules/tour360/tour360.router.js
       - name: 360 draft safety unit tests (mocked database)
-        run: npx vitest run src/modules/tour360/tour360.security.test.js src/modules/tour360/panoramaCopyStaging.test.js
+        run: npx vitest run src/modules/tour360/tour360.security.test.js src/modules/tour360/panoramaCopyStaging.test.js src/modules/tour360/tour360PublishJournal.test.js
         env:
           NODE_ENV: development
           SUPABASE_URL: https://example.supabase.co
