@@ -360,13 +360,21 @@ export class Tour360Repository {
       throw new AppError('Файл панорамы ещё не загружен в защищённое хранилище', 409);
     }
 
+    const roomName = (data.name || data.title || 'Панорама').trim();
+    const { data: duplicates, error: duplicateError } = await db.from('panorama_360')
+      .select('id, name, storage_path').eq('tour_id', tId);
+    if (duplicateError) throw duplicateError;
+    if ((duplicates || []).some(p => p.name === roomName || p.storage_path === data.storage_path)) {
+      throw new AppError('Это помещение или файл уже добавлены в черновик тура', 409);
+    }
+
     if (data.entity_type && data.entity_id) {
       await this.validateEntityBelongsToProject(tour.project_id, data.entity_type, data.entity_id);
     }
 
     const { data: newPano, error } = await db.from('panorama_360').insert([{
       tour_id: tId,
-      name: (data.name || data.title || 'Панорама').trim(),
+      name: roomName,
       storage_path: data.storage_path.trim(),
       thumbnail_path: data.thumbnail_path ? data.thumbnail_path.trim() : null,
       entity_type: data.entity_type || null,
