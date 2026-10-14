@@ -202,6 +202,8 @@ router.delete('/360-panoramas/:panoramaId', requireDraftEditor, async (req, res,
 // GET /api/360-panoramas/:panoramaId/hotspots
 router.get('/360-panoramas/:panoramaId/hotspots', async (req, res, next) => {
   try {
+    const visibility = await Tour360Repository.getPanoramaTourVisibility(req.params.panoramaId);
+    if (!visibility || (!visibility.is_active && !['ADMIN', 'DIRECTOR'].includes(req.user?.role))) throw new AppError('Панорама не найдена', 404);
     const hotspots = await Tour360Repository.getHotspots(req.params.panoramaId);
     res.status(200).json({
       status: 'success',
