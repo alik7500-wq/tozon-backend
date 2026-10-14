@@ -144,6 +144,12 @@ describe('Database controls (isolated PGlite)', () => {
       await db.exec(readFileSync(new URL('../../../supabase/migrations/20261011191647_telegram_finance_reports.sql', import.meta.url), 'utf8'));
       await db.exec('ALTER TABLE expenses ADD COLUMN amount_tjs numeric, ADD COLUMN amount_usd numeric, ADD COLUMN exchange_rate numeric');
       await db.exec(readFileSync(new URL('../../../supabase/migrations/20261012100452_telegram_expense_currency_metadata.sql', import.meta.url), 'utf8'));
+      await db.exec('ALTER TABLE expenses ADD COLUMN recipient text');
+      await db.exec(readFileSync(new URL('../../../supabase/migrations/20261014133030_telegram_snapshot_expense_recipient.sql', import.meta.url), 'utf8'));
+      await db.exec("INSERT INTO expenses(id,amount_minor,currency,expense_date,reference,category,recipient,description,status) VALUES(1,10000,'USD','2026-10-11','РКО-1','Материалы','Synthetic recipient','Synthetic purpose','ACTIVE')");
+      const snapshotData=(await db.query('SELECT telegram_finance_snapshot() data')).rows[0].data;
+      expect(snapshotData.expenses[0].recipient).toBe('Synthetic recipient');
+      expect(renderReport(buildReport(snapshotData,'2026-10-11','2026-10-11',now),'details','OWNER')).toContain('Кому: Synthetic recipient');
       const grants = await db.query(`select has_table_privilege('anon','telegram_finance_subscribers','SELECT') a, has_table_privilege('authenticated','telegram_finance_state','UPDATE') b, has_function_privilege('anon','telegram_finance_snapshot()','EXECUTE') c, has_function_privilege('service_role','telegram_finance_snapshot()','EXECUTE') d`);
       expect(grants.rows[0]).toEqual({ a: false, b: false, c: false, d: true });
       await db.exec(`INSERT INTO payments(id,amount_minor) SELECT n,100 FROM generate_series(1,1005) n; SET ROLE service_role;`);
