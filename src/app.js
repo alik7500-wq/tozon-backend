@@ -36,6 +36,7 @@ import documentsRouter from './modules/documents/documents.router.js';
 import documentSettingsRouter from './modules/document-settings/document-settings.router.js';
 import telegramFinanceRouter from './modules/telegram-finance/router.js';
 import { financeBotHealth } from './modules/telegram-finance/start.js';
+import salesPlansRouter from './modules/sales-plans/salesPlans.router.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -107,6 +108,7 @@ app.use('/api', projectMediaRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/documents', documentsRouter);
 app.use('/api/document-settings', documentSettingsRouter);
+app.use('/api/sales-plans', salesPlansRouter);
 
 // Global Error Handler
 app.use(errorHandler);
