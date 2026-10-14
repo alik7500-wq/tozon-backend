@@ -79,6 +79,14 @@ router.get('/360-tours/:tourId/publish-preflight', requireDraftEditor, async (re
   } catch (error) { next(error); }
 });
 
+// GET /api/360-tours/:tourId/publish-manifest — admin-only, no writes
+router.get('/360-tours/:tourId/publish-manifest', requireDraftEditor, async (req, res, next) => {
+  try {
+    const manifest = await Tour360Repository.getPublishManifest(req.params.tourId);
+    res.status(200).json({ status: 'success', data: { manifest } });
+  } catch (error) { next(error); }
+});
+
 // PATCH /api/360-tours/:tourId
 router.patch('/360-tours/:tourId', requireDraftEditor, async (req, res, next) => {
   try {
