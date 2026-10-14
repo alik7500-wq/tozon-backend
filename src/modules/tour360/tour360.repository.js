@@ -186,7 +186,7 @@ export class Tour360Repository {
       tour_type: data.tour_type,
       entity_type: data.entity_type || null,
       entity_id: data.entity_id || null,
-      is_active: data.is_active !== undefined ? data.is_active : true,
+      is_active: false, // New tours always begin as private drafts; activation requires verified publish.
       created_at: now,
       updated_at: now
     }]).select().single();
@@ -204,7 +204,7 @@ export class Tour360Repository {
     const { data: existing } = await db.from('tours_360').select('id, project_id, is_active').eq('id', tourId).single();
     if (!existing) throw new AppError('360 тур не найден', 404);
     // Never switch storage buckets implicitly: a published tour must not point at private draft files.
-    if (data.is_active === true && !existing.is_active) {
+    if (data.is_active === true) {
       throw new AppError('Публикация черновика недоступна до безопасного переноса панорам в публичное хранилище', 409);
     }
 
@@ -239,7 +239,7 @@ export class Tour360Repository {
     if (panoramaError) throw panoramaError;
     const expectedPrefix = `projects/${tour.project_id}/360/${tour.id}/`;
     const files = (panoramas || []).flatMap(p => [p.storage_path, p.thumbnail_path].filter(Boolean));
-    const invalidPaths = files.filter(path => typeof path !== 'string' || !path.startsWith(expectedPrefix));
+    const invalidPaths = files.filter(path => typeof path !== 'string' || !path.startsWith(expectedPrefix) || path.includes('..'));
     const missing = [];
     for (const path of new Set(files.filter(p => typeof p === 'string' && p.startsWith(expectedPrefix)))) {
       const segments = path.slice(expectedPrefix.length).split('/');
@@ -331,7 +331,7 @@ export class Tour360Repository {
     if (!tour) throw new AppError('360 тур не найден', 404);
     if (tour.is_active) throw new AppError('Изменять опубликованный тур запрещено', 409);
     const expectedPrefix = `projects/${tour.project_id}/360/${tId}/`;
-    if (!data.storage_path.startsWith(expectedPrefix)) throw new AppError('Путь панорамы не принадлежит черновику тура', 400);
+    if (typeof data.storage_path !== 'string' || !data.storage_path.startsWith(expectedPrefix) || data.storage_path.includes('..')) throw new AppError('Путь панорамы не принадлежит черновику тура', 400);
 
     if (data.entity_type && data.entity_id) {
       await this.validateEntityBelongsToProject(tour.project_id, data.entity_type, data.entity_id);
@@ -378,7 +378,8 @@ export class Tour360Repository {
       .single();
 
     if (error) throw error;
-    const imageUrl = await this.getSignedReadUrl('panoramas-360', updated.storage_path);
+    const { data: owningTour } = await db.from('tours_360').select('is_active').eq('id', updated.tour_id).maybeSingle();
+    const imageUrl = await this.getSignedReadUrl(owningTour?.is_active ? PUBLISHED_BUCKET : DRAFT_BUCKET, updated.storage_path);
     return { ...updated, image_url: imageUrl, panorama_url: imageUrl, title: updated.name };
   }
 
