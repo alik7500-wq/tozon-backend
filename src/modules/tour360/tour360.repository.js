@@ -426,6 +426,31 @@ export class Tour360Repository {
     return tour;
   }
 
+  /** Only draft tours can be edited via regular CRUD routes. */
+  static async assertDraftTourEditable(tourId) {
+    const db = getServiceDB();
+    const { data: tour, error } = await db.from('tours_360').select('is_active').eq('id', tourId).maybeSingle();
+    if (error) throw error;
+    if (!tour) throw new AppError('Тур не найден', 404);
+    if (tour.is_active !== false) throw new AppError('Изменять опубликованный тур запрещено', 409);
+  }
+
+  static async assertDraftPanoramaEditable(panoramaId) {
+    const db = getServiceDB();
+    const { data: panorama, error } = await db.from('panorama_360').select('tour_id').eq('id', panoramaId).maybeSingle();
+    if (error) throw error;
+    if (!panorama) throw new AppError('Панорама не найдена', 404);
+    await this.assertDraftTourEditable(panorama.tour_id);
+  }
+
+  static async assertDraftHotspotEditable(hotspotId) {
+    const db = getServiceDB();
+    const { data: hotspot, error } = await db.from('panorama_hotspots').select('panorama_id').eq('id', hotspotId).maybeSingle();
+    if (error) throw error;
+    if (!hotspot) throw new AppError('Хотспот не найден', 404);
+    await this.assertDraftPanoramaEditable(hotspot.panorama_id);
+  }
+
   /**
    * Get hotspots of a panorama
    */
