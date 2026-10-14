@@ -58,7 +58,10 @@ export const authorizeSectionRequest = async req => {
     if (read) allowed = hasSection(user,'deals.view') || hasAny(user, financeReads);
   } else if (path.startsWith('/api/leads')) key = 'leads.view';
   else if (path.startsWith('/api/tasks')) key = 'tasks.view';
-  else if (path.startsWith('/api/users')) key = 'users.view';
+  else if (path.startsWith('/api/users')) {
+    key = 'users.view';
+    if (read && path === '/api/users' && String(req.query?.lookup) === '1') allowed = hasAny(user, ['users.view','leads.view','tasks.view','deals.view','settings.view',...financeReads,...constructionReads]);
+  }
   else if (path.startsWith('/api/document-settings')) {
     key = /\/render\//.test(path) ? 'contracts.view' : 'settings.view';
     if (/\/render\//.test(path)) allowed = hasSection(user, 'contracts.view'); // document rendering is read-only
@@ -67,7 +70,7 @@ export const authorizeSectionRequest = async req => {
   else if (path.startsWith('/api/sms') || path.startsWith('/api/automation')) {
     key = 'automation.view';
     if (req.method === 'POST' && /\/preview$|\/template-availability$|\/events\/[^/]+\/preview$/.test(path)) allowed = hasSection(user,key);
-  } else if (path.startsWith('/api/reports')) key = 'analytics.reports';
+  } else if (path.startsWith('/api/reports')) key = /\/analytics-[123]$/.test(path) ? 'analytics.view' : 'analytics.reports';
   else if (path.startsWith('/api/dashboard')) key = 'analytics.view';
   else if (path.startsWith('/api/dictionaries')) {
     key = 'settings.view';
@@ -77,7 +80,7 @@ export const authorizeSectionRequest = async req => {
     allowed = read && ['leads.view','deals.view','inventory.view'].every(k => hasSection(user,k));
   } else if (/^\/api\/(?:projects|inventory|apartments|visual-maps|visual3d|tour360|project-media|3d-scenes|3d-scene-entities|360-tours|360-panoramas|360-hotspots|upload)(?:\/|$)/.test(path)) {
     key = 'inventory.view';
-    if (read && path.startsWith('/api/projects')) allowed = hasSection(user,key) || hasAny(user,financeReads);
+    if (read && path.startsWith('/api/projects')) allowed = hasSection(user,key) || hasAny(user,[...financeReads,'analytics.view','analytics.reports']);
   }
   if (allowed === undefined) allowed = key ? hasSection(user,key,!read) : false;
   if (!allowed) throw new AppError(read ? 'Нет права чтения этого раздела' : 'Нет права добавления или редактирования в этом разделе', 403);

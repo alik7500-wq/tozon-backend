@@ -11,7 +11,10 @@ router.use(protect);
 // GET /api/users - List all users
 router.get('/', async (req, res, next) => {
   try {
-    const users = await UsersRepository.findAll();
+    const allUsers = await UsersRepository.findAll();
+    const users = String(req.query.lookup) === '1'
+      ? allUsers.map(({ id, name, is_active }) => ({ id, name, is_active }))
+      : allUsers;
     res.status(200).json({
       status: 'success',
       data: { users }
@@ -160,3 +163,4 @@ router.delete('/:id', restrictTo('ADMIN'), async (req, res, next) => {
 });
 
 export default router;
+
