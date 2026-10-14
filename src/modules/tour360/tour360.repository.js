@@ -261,6 +261,27 @@ export class Tour360Repository {
   }
 
   /**
+   * Prepare a deterministic, read-only publication manifest.
+   * No storage writes, database updates or activation occur here.
+   */
+  static async getPublishManifest(tourId) {
+    const preflight = await this.getPublishPreflight(tourId);
+    const db = getServiceDB();
+    const { data: panoramas, error } = await db.from('panorama_360')
+      .select('id, storage_path, thumbnail_path').eq('tour_id', tourId).order('id');
+    if (error) throw error;
+    const files = [...new Set((panoramas || []).flatMap(p => [p.storage_path, p.thumbnail_path].filter(Boolean)))];
+    return {
+      ...preflight,
+      source_bucket: DRAFT_BUCKET,
+      destination_bucket: PUBLISHED_BUCKET,
+      files: files.map(path => ({ source_path: path, destination_path: path })),
+      can_execute: false,
+      note: 'План только для чтения. Копирование и активация не выполняются.'
+    };
+  }
+
+  /**
    * Delete tour
    */
   static async deleteTour(tourId) {
