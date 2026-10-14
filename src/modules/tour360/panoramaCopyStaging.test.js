@@ -20,7 +20,8 @@ describe('panorama copy staging', () => {
   it('rolls back first copied object if second upload fails', async () => {
     const upload = vi.fn().mockResolvedValueOnce({ error: null }).mockResolvedValueOnce({ error: new Error('network') });
     const remove = vi.fn().mockResolvedValue({ error: null });
-    const storage = { from: name => name === 'panoramas-360-drafts' ? { download: async () => ({ data: new Blob(['x']), error: null }) } : { upload, remove, list: async () => ({ data: [], error: null }) } };
+    let operationId;
+    const storage = { from: name => name === 'panoramas-360-drafts' ? { download: async () => ({ data: new Blob(['x']), error: null }) } : { upload: async (...args) => { operationId = args[2]?.metadata?.tour360_operation_id; return upload(...args); }, remove, list: async () => ({ data: operationId ? [{ name: 'a.jpg', metadata: { tour360_operation_id: operationId } }] : [], error: null }) } };
     await expect(stagePanoramaCopies(storage, manifest)).rejects.toThrow('PANORAMA_UPLOAD_FAILED');
     expect(remove).toHaveBeenCalledWith(['projects/3/360/8/a.jpg']);
   });
