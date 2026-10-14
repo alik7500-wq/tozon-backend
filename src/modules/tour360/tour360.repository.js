@@ -351,6 +351,15 @@ export class Tour360Repository {
     const expectedPrefix = `projects/${tour.project_id}/360/${tId}/`;
     if (typeof data.storage_path !== 'string' || !data.storage_path.startsWith(expectedPrefix) || data.storage_path.includes('..')) throw new AppError('Путь панорамы не принадлежит черновику тура', 400);
 
+    const filename = data.storage_path.slice(expectedPrefix.length);
+    if (!filename || filename.includes('/')) throw new AppError('Некорректный путь панорамы', 400);
+    const { data: uploadedFiles, error: storageError } = await getServiceDB().storage
+      .from(DRAFT_BUCKET).list(expectedPrefix.replace(/\/$/, ''), { search: filename, limit: 100 });
+    if (storageError) throw new AppError('Не удалось проверить загруженный файл', 503);
+    if (!(uploadedFiles || []).some(file => file.name === filename)) {
+      throw new AppError('Файл панорамы ещё не загружен в защищённое хранилище', 409);
+    }
+
     if (data.entity_type && data.entity_id) {
       await this.validateEntityBelongsToProject(tour.project_id, data.entity_type, data.entity_id);
     }
