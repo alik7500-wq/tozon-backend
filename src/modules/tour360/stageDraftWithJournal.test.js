@@ -26,4 +26,20 @@ describe('journaled panorama staging', () => {
     await expect(stageDraftWithJournal({ journal, storage, manifest })).rejects.toThrow('PANORAMA_DOWNLOAD_FAILED');
     expect(transitions.map(t => t[2])).toEqual(['COPYING', 'FAILED']);
   });
+  it('requires recovery rather than FAILED when journal fails after copying', async () => {
+    const transitions = [];
+    const journal = {
+      start: async () => ({ id: 'job-3' }),
+      transition: async (...args) => {
+        transitions.push(args);
+        if (args[2] === 'VERIFYING') throw new Error('journal unavailable');
+      }
+    };
+    const storage = { from: name => name === 'panoramas-360-drafts'
+      ? { download: async () => ({ data: new Blob(['x']), error: null }) }
+      : { list: async () => ({ data: [], error: null }), upload: async () => ({ error: null }) } };
+    await expect(stageDraftWithJournal({ journal, storage, manifest })).rejects.toThrow('PUBLISH_NEEDS_RECOVERY');
+    expect(transitions.map(t => t[2])).toEqual(['COPYING', 'VERIFYING', 'NEEDS_RECOVERY']);
+    expect(transitions[2][3].copied_paths).toEqual(['projects/3/360/8/a.jpg']);
+  });
 });
