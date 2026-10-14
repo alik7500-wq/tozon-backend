@@ -71,6 +71,14 @@ router.post('/projects/:projectId/360-tours', requireDraftEditor, async (req, re
   }
 });
 
+// GET /api/360-tours/:tourId/publish-preflight — read-only, privileged
+router.get('/360-tours/:tourId/publish-preflight', requireDraftEditor, async (req, res, next) => {
+  try {
+    const preflight = await Tour360Repository.getPublishPreflight(req.params.tourId);
+    res.status(200).json({ status: 'success', data: { preflight } });
+  } catch (error) { next(error); }
+});
+
 // PATCH /api/360-tours/:tourId
 router.patch('/360-tours/:tourId', requireDraftEditor, async (req, res, next) => {
   try {
