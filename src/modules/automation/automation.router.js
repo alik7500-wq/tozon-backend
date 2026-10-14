@@ -1,6 +1,7 @@
 import express from 'express';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { SalesAutomationDetector } from './salesAutomationDetector.js';
+import { isWithinSalesAutomationWindow, getBusinessDateTime } from '../../utils/businessTime.js';
 
 const router = express.Router();
 
@@ -209,6 +210,20 @@ router.post('/run-detector', async (req, res) => {
 
     const businessDate = req.query.businessDate || req.body?.businessDate || null;
     const effectiveDryRun = isDryRun || !isFeatureEnabled;
+
+    // Safe Working Hours Window Enforcement (08:00 - 20:00 Asia/Dushanbe inclusive)
+    // Allows 20:00 run (up to 20:05 for container startup), but strictly excludes 20:30 (15:30 UTC) or nighttime.
+    const enforceWindow = req.query.enforceWindow !== 'false' && req.body?.enforceWindow !== false && !isDryRun;
+    if (enforceWindow && !isWithinSalesAutomationWindow()) {
+      const bdt = getBusinessDateTime();
+      return res.json({
+        success: true,
+        skipped: true,
+        reason: 'OUTSIDE_WORKING_HOURS',
+        message: `Вызов пропущен: текущее время (${bdt.timeStr} Asia/Dushanbe) находится вне рабочего окна 08:00–20:00 включительно.`,
+        dushanbeTime: bdt.timeStr
+      });
+    }
 
     const stats = await SalesAutomationDetector.runDetectionCycle({
       businessDate,

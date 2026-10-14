@@ -6,6 +6,7 @@ import {
   formatWorkingDuration,
   getBusinessDate,
   getBusinessDateTime,
+  isWithinSalesAutomationWindow,
   WORK_HOURS
 } from '../utils/businessTime.js';
 import {
@@ -501,4 +502,39 @@ describe('Sales Automation V1.1 — Lead SLA & Processing Control Suite', () => 
       );
     });
   });
+
+  // =========================================================================
+  // TEST 11: Sales Automation Execution Window Guard (08:00 - 20:00 Asia/Dushanbe)
+  // =========================================================================
+  describe('11. Sales Automation Execution Window Guard', () => {
+    it('accurately identifies working window 08:00 to 20:00 Asia/Dushanbe inclusive', () => {
+      // 07:59 TJT (02:59 UTC) -> Outside
+      expect(isWithinSalesAutomationWindow('2026-10-14T02:59:00Z')).toBe(false);
+
+      // 08:00 TJT (03:00 UTC) -> Inside (Day Start)
+      expect(isWithinSalesAutomationWindow('2026-10-14T03:00:00Z')).toBe(true);
+
+      // 12:30 TJT (07:30 UTC) -> Inside
+      expect(isWithinSalesAutomationWindow('2026-10-14T07:30:00Z')).toBe(true);
+
+      // 19:30 TJT (14:30 UTC) -> Inside
+      expect(isWithinSalesAutomationWindow('2026-10-14T14:30:00Z')).toBe(true);
+
+      // 20:00 TJT (15:00 UTC) -> Inside (Day End closing run)
+      expect(isWithinSalesAutomationWindow('2026-10-14T15:00:00Z')).toBe(true);
+
+      // 20:03 TJT (15:03 UTC) -> Inside (Tolerates container startup buffer for 20:00 run)
+      expect(isWithinSalesAutomationWindow('2026-10-14T15:03:00Z')).toBe(true);
+
+      // 20:06 TJT (15:06 UTC) -> Outside
+      expect(isWithinSalesAutomationWindow('2026-10-14T15:06:00Z')).toBe(false);
+
+      // 20:30 TJT (15:30 UTC) -> Strictly Outside (blocks extra 15:30 cron slot from */30 3-15)
+      expect(isWithinSalesAutomationWindow('2026-10-14T15:30:00Z')).toBe(false);
+
+      // 23:00 TJT (18:00 UTC) -> Outside (Night)
+      expect(isWithinSalesAutomationWindow('2026-10-14T18:00:00Z')).toBe(false);
+    });
+  });
 });
+

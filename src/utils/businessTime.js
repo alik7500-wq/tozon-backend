@@ -71,6 +71,19 @@ export function isWithinWorkingHours(dateInput = null, options = {}) {
 }
 
 /**
+ * Checks if current time in Asia/Dushanbe is within Sales Automation execution window:
+ * 08:00 to 20:00 Asia/Dushanbe inclusive.
+ * Allows buffer up to 20:05 (1205 min) for container spin-up of the 20:00 TJT run.
+ * Strictly excludes 20:30 (1230 min / 15:30 UTC) or any other off-hours.
+ */
+export function isWithinSalesAutomationWindow(nowInput = null) {
+  const bdt = getBusinessDateTime(nowInput);
+  const [hStr, mStr] = bdt.timeStr.split(':');
+  const timeInMinutes = parseInt(hStr, 10) * 60 + parseInt(mStr, 10);
+  return timeInMinutes >= 480 && timeInMinutes <= 1205;
+}
+
+/**
  * Returns true if date falls on an active business day.
  */
 export function isBusinessDay(dateInput = null, options = {}) {
