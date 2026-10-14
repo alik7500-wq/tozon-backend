@@ -16,3 +16,11 @@ it('limits generated payment annotations and rates to two decimal places without
  expect(formatNumber('21.6')).toBe('21,60');
  expect(formatDescription('Оплачено: 2,015 USD')).toBe('Оплачено: 2,02 USD');
 });
+
+it('uses the deal client when payer is blank and preserves an explicitly named payer',()=>{
+ const row={reference:'ПКО-1',payment_date:'2026-10-14',currency:'USD',amount_minor:40000,deals:{leads:{full_name:'Synthetic Client'}}};
+ expect(ledgerMessage([row],'income','a',[],0)).toContain('От кого: Synthetic Client');
+ expect(ledgerMessage([{...row,payer_name:'Actual Payer'}],'income','a',[],0)).toContain('От кого: Actual Payer');
+ expect(ledgerMessage([{...row,payer_name:'  '}],'income','a',[],0)).toContain('От кого: Synthetic Client');
+ expect(ledgerMessage([{...row,deals:null}],'income','a',[],0)).toContain('От кого: Не указан');
+});

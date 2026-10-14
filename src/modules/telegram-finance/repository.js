@@ -38,7 +38,7 @@ export class TelegramFinanceRepository {
     // Paginate visible actual operations, not raw exchange legs: no empty pages/gaps.
     const visible=[];
     for(let start=0;;start+=100){
-      let q=this.db.from(income?'payments':'expenses').select(columns);
+      let q=this.db.from(income?'payments':'expenses').select(income?columns+',deals(leads(full_name))':columns);
       if(scope)q=q.eq('cash_desk_id',scope);
       const rows=checked(await q.order(income?'payment_date':'expense_date',{ascending:false}).order('id',{ascending:false}).range(start,start+99));
       visible.push(...rows.filter(r=>actualOperation(r,kind)));

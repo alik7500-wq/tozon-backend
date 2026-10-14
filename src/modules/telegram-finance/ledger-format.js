@@ -23,7 +23,7 @@ export function ledgerMessage(rows,kind,desk,desks,offset){
    lines.push(`Сомони: <b>${amounts.TJS!==undefined?number.format(amounts.TJS/100):'курс не указан'}</b>`,`Доллары: <b>${amounts.USD!==undefined?number.format(amounts.USD/100):'курс не указан'}</b>`);
    if(amounts.TJS===undefined&&amounts.USD===undefined)lines.push('Сумма: '+escapeText(formatAmounts(amounts),100));
   }
-  const person=income?r.payer_name:r.recipient;
+  const person=income?(r.payer_name?.trim()||r.deals?.leads?.full_name):r.recipient;
   lines.push(`${income?'От кого':'Кому'}: ${escapeText(person||'Не указан',200)}`);
   if(!income)lines.push('Категория: '+escapeText(r.category||'Прочие расходы',150));
   const description=formatDescription((income?r.comment:r.description)||'').replace(/\[Касса:\s*[^\]]*\]\s*/gi,'').trim();
