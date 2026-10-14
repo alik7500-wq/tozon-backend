@@ -250,6 +250,7 @@ export class Tour360Repository {
     }
     return {
       tour_id: tour.id,
+      project_id: tour.project_id,
       panorama_count: (panoramas || []).length,
       file_count: files.length,
       invalid_paths: invalidPaths,
