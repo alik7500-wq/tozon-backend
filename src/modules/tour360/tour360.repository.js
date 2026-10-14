@@ -233,6 +233,9 @@ export class Tour360Repository {
    */
   static async getPanoramas(tourId) {
     const db = getDB();
+    const { data: tour } = await db.from('tours_360').select('id, is_active').eq('id', tourId).maybeSingle();
+    if (!tour) throw new AppError('360 тур не найден', 404);
+    const bucket = tour.is_active ? PUBLISHED_BUCKET : DRAFT_BUCKET;
     const { data: panoramas, error } = await db.from('panorama_360')
       .select('*, panorama_hotspots:panorama_hotspots!panorama_hotspots_panorama_id_fkey(*)')
       .eq('tour_id', tourId)
@@ -241,7 +244,7 @@ export class Tour360Repository {
     if (error) throw error;
 
     return Promise.all((panoramas || []).map(async (p) => {
-      const imageUrl = await this.getSignedReadUrl('panoramas-360', p.storage_path);
+      const imageUrl = await this.getSignedReadUrl(bucket, p.storage_path);
       return {
         ...p,
         image_url: imageUrl,
@@ -260,8 +263,11 @@ export class Tour360Repository {
     const db = getDB();
     const now = new Date().toISOString();
     const tId = parseInt(tourId, 10);
-    const { data: tour } = await db.from('tours_360').select('id, project_id').eq('id', tId).single();
+    const { data: tour } = await db.from('tours_360').select('id, project_id, is_active').eq('id', tId).single();
     if (!tour) throw new AppError('360 тур не найден', 404);
+    if (tour.is_active) throw new AppError('Изменять опубликованный тур запрещено', 409);
+    const expectedPrefix = `projects/${tour.project_id}/360/${tId}/`;
+    if (!data.storage_path.startsWith(expectedPrefix)) throw new AppError('Путь панорамы не принадлежит черновику тура', 400);
 
     if (data.entity_type && data.entity_id) {
       await this.validateEntityBelongsToProject(tour.project_id, data.entity_type, data.entity_id);
@@ -283,7 +289,7 @@ export class Tour360Repository {
     }]).select().single();
 
     if (error) throw error;
-    const imageUrl = await this.getSignedReadUrl('panoramas-360', newPano.storage_path);
+    const imageUrl = await this.getSignedReadUrl(DRAFT_BUCKET, newPano.storage_path);
     return { ...newPano, image_url: imageUrl, panorama_url: imageUrl, title: newPano.name, hotspots: [] };
   }
 
