@@ -137,7 +137,7 @@ export const resolveCashDeskAccess = async (req, res, next) => {
       : (viewableDeskIds[0] || expenseDeskIds[0] || incomeDeskIds[0] || null);
 
     // A saved matrix controls operations, while desk assignments control where they can occur.
-    if (matrixPermissions && user.permissions?.includes('finance.restricted') && canWriteIncome && !incomeDeskIds.length && primaryDeskId) incomeDeskIds = [primaryDeskId];
+    if (matrixPermissions && user.permissions?.includes('finance.restricted') && canWriteIncome && !incomeDeskIds.length && primaryDeskId && expenseDeskIds.includes(primaryDeskId)) incomeDeskIds = [primaryDeskId];
     const editableIncomeDeskIds = incomeDeskIds.filter(id => viewableDeskIds.includes(id));
     const editableExpenseDeskIds = expenseDeskIds.filter(id => viewableDeskIds.includes(id));
 
