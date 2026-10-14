@@ -17,7 +17,7 @@ const schema = z.object({id:uuid,kind:z.enum(TYPES),doc_date:date,due_date:date.
 const parse = (schema,input) => { const r=schema.safeParse(input); if(!r.success)throw new AppError(r.error.issues.map(x=>`${x.path.join('.')}: ${x.message}`).join('; '),400);return r.data; };
 const wrap = fn => async(req,res,next)=>{try{await fn(req,res);}catch(e){next(e);}};
 router.use(protect);
-router.use((req,res,next)=>{if(['construction.stock','construction.advance','construction.settlements'].some(p=>can(req.user,p)))next();else next(new AppError('Нет доступа к строительному учёту',403));});
+router.use((req,res,next)=>{if(['construction.stock','construction.advance','construction.settlements','construction.settings'].some(p=>can(req.user,p)))next();else next(new AppError('Нет доступа к строительному учёту',403));});
 const all = async (db,table) => {
  const data=[];
  for(let offset=0;;offset+=500){const rows=checked(await db.from(table).select('*').order('id').range(offset,offset+499));data.push(...rows);if(rows.length<500)return data;}

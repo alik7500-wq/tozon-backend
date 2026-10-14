@@ -75,7 +75,7 @@ export const protectOptional = async (req, res, next) => {
 
 export const restrictTo = (...roles) => {
   return (req, res, next) => {
-    if (isMatrixUser(req.user) && req.sectionAccessGranted && ['POST','PUT','PATCH'].includes(req.method) && !String(req.originalUrl || '').startsWith('/api/users')) return next();
+    if (isMatrixUser(req.user) && req.sectionAccessGranted && ['GET','HEAD','POST','PUT','PATCH'].includes(req.method)) return next();
     if (!roles.includes(req.user.role)) {
       return next(new AppError('You do not have permission to perform this action', 403));
     }
