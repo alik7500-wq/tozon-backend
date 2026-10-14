@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { authorizeSectionRequest, isMatrixUser, hasSection, readKey } from './sectionAccess.js';
 import { AppError } from '../shared/errors/errorHandler.js';
 import { UsersRepository } from '../modules/users/users.repository.js';
 
@@ -41,9 +42,10 @@ export const protect = async (req, res, next) => {
 
     // Grant access to protected route
     req.user = currentUser;
+    await authorizeSectionRequest(req);
     next();
   } catch (error) {
-    next(new AppError('Invalid token or authorization error', 401));
+    next(error instanceof AppError ? error : new AppError('Invalid token or authorization error', 401));
   }
 };
 
@@ -61,16 +63,19 @@ export const protectOptional = async (req, res, next) => {
       const currentUser = await UsersRepository.findById(decoded.id);
       if (currentUser && currentUser.is_active) {
         req.user = currentUser;
+        await authorizeSectionRequest(req);
       }
     }
     next();
-  } catch {
+  } catch (error) {
+    if (error instanceof AppError) return next(error);
     next();
   }
 };
 
 export const restrictTo = (...roles) => {
   return (req, res, next) => {
+    if (isMatrixUser(req.user) && req.sectionAccessGranted && ['POST','PUT','PATCH'].includes(req.method) && !String(req.originalUrl || '').startsWith('/api/users')) return next();
     if (!roles.includes(req.user.role)) {
       return next(new AppError('You do not have permission to perform this action', 403));
     }
@@ -82,6 +87,12 @@ export const checkPermission = (requiredPermission) => {
   return (req, res, next) => {
     if (!req.user) {
       return next(new AppError('You are not logged in', 401));
+    }
+    if (isMatrixUser(req.user)) {
+      const key = requiredPermission.startsWith('sms.') ? 'automation.view' : readKey(requiredPermission);
+      const write = requiredPermission === 'sms.send' || !['GET','HEAD'].includes(req.method);
+      if (hasSection(req.user, key, write) || (requiredPermission === 'sms.send' && req.sectionAccessGranted && /\/preview$|\/template-availability$/.test(String(req.originalUrl || '')))) return next();
+      return next(new AppError('Недостаточно прав доступа', 403));
     }
     if (req.user.role === 'ADMIN' || req.user.role === 'DIRECTOR') {
       return next();
@@ -109,3 +120,4 @@ export const checkPermission = (requiredPermission) => {
     return next(new AppError(`Недостаточно прав доступа (${requiredPermission})`, 403));
   };
 };
+
