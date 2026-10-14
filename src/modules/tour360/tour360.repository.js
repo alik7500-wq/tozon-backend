@@ -223,6 +223,41 @@ export class Tour360Repository {
   }
 
   /**
+   * Read-only publication preflight. Does not copy files or activate a tour.
+   * A separate, transactional publish operation is required before release.
+   */
+  static async getPublishPreflight(tourId) {
+    const db = getServiceDB();
+    const { data: tour, error: tourError } = await db.from('tours_360')
+      .select('id, project_id, is_active').eq('id', tourId).maybeSingle();
+    if (tourError) throw tourError;
+    if (!tour) throw new AppError('360 тур не найден', 404);
+    if (tour.is_active) throw new AppError('Тур уже опубликован', 409);
+
+    const { data: panoramas, error: panoramaError } = await db.from('panorama_360')
+      .select('id, name, storage_path, thumbnail_path').eq('tour_id', tourId).order('id');
+    if (panoramaError) throw panoramaError;
+    const expectedPrefix = `projects/${tour.project_id}/360/${tour.id}/`;
+    const files = (panoramas || []).flatMap(p => [p.storage_path, p.thumbnail_path].filter(Boolean));
+    const invalidPaths = files.filter(path => typeof path !== 'string' || !path.startsWith(expectedPrefix));
+    const missing = [];
+    for (const path of new Set(files.filter(p => typeof p === 'string' && p.startsWith(expectedPrefix)))) {
+      const { data, error } = await db.storage.from(DRAFT_BUCKET).createSignedUrl(path, 60);
+      if (error || !data?.signedUrl) missing.push(path);
+    }
+    return {
+      tour_id: tour.id,
+      panorama_count: (panoramas || []).length,
+      file_count: files.length,
+      invalid_paths: invalidPaths,
+      missing_or_unreadable: missing,
+      ready_for_publish: files.length > 0 && invalidPaths.length === 0 && missing.length === 0,
+      published: false,
+      note: 'Только предварительная проверка. Файлы не переносились, тур не опубликован.'
+    };
+  }
+
+  /**
    * Delete tour
    */
   static async deleteTour(tourId) {
