@@ -31,7 +31,7 @@ export const protect = async (req, res, next) => {
     }
 
     // Restricted finance profile: read finance, create only expense receipts.
-    if (currentUser.permissions?.includes('finance.restricted')) {
+    if (!currentUser.permissions?.includes('access.v2') && currentUser.permissions?.includes('finance.restricted')) {
       const path = String(req.originalUrl || '').split('?')[0].replace(/\/$/, '');
       const readOnly = ['GET', 'HEAD'].includes(req.method);
       const allowed = path.startsWith('/api/auth/') ||

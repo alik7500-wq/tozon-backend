@@ -58,3 +58,22 @@ describe('restricted finance profile', () => {
     }
   });
 });
+
+describe('matrix permissions take precedence over legacy finance-only section restriction', () => {
+  it.each([
+    ['GET','/api/leads',true], ['GET','/api/projects/3',true],
+    ['GET','/api/reports/analytics-1',true], ['GET','/api/users',true],
+    ['POST','/api/leads',false], ['GET','/api/construction/state',false],
+    ['POST','/api/sms/send',false], ['POST','/api/finance/expenses',true]
+  ])('%s %s follows explicit permissions',async(method,originalUrl,allowed)=>{
+    UsersRepository.findById.mockResolvedValue({...user,permissions:[
+      'access.v2','finance.restricted','analytics.view','analytics.reports','inventory.view',
+      'leads.view','tasks.view','deals.view','contracts.view','users.view',
+      'finance.view','finance.payments','finance.payments.write','finance.expenses','finance.expenses.write','finance.cashflow'
+    ]});
+    const next=vi.fn();
+    await protect({method,originalUrl,headers:{authorization:'Bearer test'},query:{},body:{}},{},next);
+    if(allowed)expect(next).toHaveBeenCalledWith();
+    else expect(next.mock.calls[0][0].statusCode).toBe(403);
+  });
+});
