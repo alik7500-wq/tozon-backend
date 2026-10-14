@@ -628,35 +628,23 @@ export class Tour360Repository {
 
     try {
       const { data, error } = await db.storage.from(DRAFT_BUCKET).createSignedUploadUrl(storagePath);
-      if (error) {
-        return {
-          bucket: DRAFT_BUCKET,
-          storagePath,
-          storage_path: storagePath,
-          signedUrl: null,
-          signedUploadUrl: null,
-          uploadUrl: null
-        };
+      if (error || !data?.signedUrl) {
+        console.error('[Tour360] Draft storage unavailable:', error?.message || 'signed URL missing');
+        throw new AppError('Защищённое хранилище панорам недоступно. Загрузка отменена.', 503);
       }
-
       return {
         bucket: DRAFT_BUCKET,
         storagePath,
         storage_path: storagePath,
-        signedUrl: data?.signedUrl,
-        signedUploadUrl: data?.signedUrl,
-        uploadUrl: data?.signedUrl,
-        token: data?.token
+        signedUrl: data.signedUrl,
+        signedUploadUrl: data.signedUrl,
+        uploadUrl: data.signedUrl,
+        token: data.token
       };
-    } catch (e) {
-      return {
-        bucket: DRAFT_BUCKET,
-        storagePath,
-        storage_path: storagePath,
-        signedUrl: null,
-        signedUploadUrl: null,
-        uploadUrl: null
-      };
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      console.error('[Tour360] Failed to issue draft upload URL:', error?.message);
+      throw new AppError('Защищённое хранилище панорам недоступно. Загрузка отменена.', 503);
     }
   }
 }
