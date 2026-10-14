@@ -242,8 +242,11 @@ export class Tour360Repository {
     const invalidPaths = files.filter(path => typeof path !== 'string' || !path.startsWith(expectedPrefix));
     const missing = [];
     for (const path of new Set(files.filter(p => typeof p === 'string' && p.startsWith(expectedPrefix)))) {
-      const { data, error } = await db.storage.from(DRAFT_BUCKET).createSignedUrl(path, 60);
-      if (error || !data?.signedUrl) missing.push(path);
+      const segments = path.slice(expectedPrefix.length).split('/');
+      const filename = segments.pop();
+      const folder = [expectedPrefix.replace(/\/$/, ''), ...segments].filter(Boolean).join('/');
+      const { data, error } = await db.storage.from(DRAFT_BUCKET).list(folder, { search: filename, limit: 100 });
+      if (error || !(data || []).some(object => object.name === filename)) missing.push(path);
     }
     return {
       tour_id: tour.id,
