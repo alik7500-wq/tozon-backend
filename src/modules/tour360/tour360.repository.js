@@ -292,6 +292,22 @@ export class Tour360Repository {
     return true;
   }
 
+  /** Load one panorama only after its owning tour is authorized by the router. */
+  static async getPanoramaById(panoramaId) {
+    const db = getServiceDB();
+    const { data: panorama, error } = await db.from('panorama_360')
+      .select('*').eq('id', panoramaId).maybeSingle();
+    if (error) throw error;
+    if (!panorama) throw new AppError('Панорама не найдена', 404);
+    const { data: tour, error: tourError } = await db.from('tours_360')
+      .select('is_active').eq('id', panorama.tour_id).maybeSingle();
+    if (tourError) throw tourError;
+    if (!tour) throw new AppError('Тур не найден', 404);
+    const bucket = tour.is_active ? PUBLISHED_BUCKET : DRAFT_BUCKET;
+    const imageUrl = await this.getSignedReadUrl(bucket, panorama.storage_path);
+    return { ...panorama, is_tour_active: tour.is_active, image_url: imageUrl, panorama_url: imageUrl };
+  }
+
   /**
    * Get panoramas of a tour
    */
