@@ -150,7 +150,15 @@ export function renderReport(r, view = 'summary', role = 'PARTNER') {
     if (role !== 'OWNER') throw new Error('DETAILS_FORBIDDEN');
     lines.push('', `Расходы всего: ${formatAmounts(r.expense)}`);
     const sorted = [...r.details].sort((a, b) => b.date.localeCompare(a.date));
-    for (const d of sorted.slice(0, 40)) lines.push(`${d.date} · ${formatExpense(d)} · ${d.category} · ${formatDescription(d.description).slice(0, 160)}`);
+    for (const d of sorted.slice(0, 40)) {
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date.split('-').reverse().join('.') : d.date;
+      const reference = d.document_number || d.reference || (d.id ? `РКО-${d.id}` : 'Расход');
+      lines.push('', `🧾 ${reference} · ${date}`,
+        `Суммы: ${formatExpense(d)}`,
+        `Кому: ${d.recipient || 'Не указан'}`,
+        `Статья: ${d.category || 'Прочее'}`,
+        `Назначение: ${formatDescription(d.description).slice(0, 1000) || 'Не указано'}`);
+    }
     if (sorted.length > 40) lines.push('Показаны последние 40 расходов. Полный список — в CRM.');
   }
   lines.push('', 'Отчёт отражает текущие действующие документы CRM.');

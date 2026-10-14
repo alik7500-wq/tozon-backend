@@ -31,3 +31,11 @@ it('formats payment annotations in detailed reports before clipping the descript
  expect(text).toContain('57,00 TJS');expect(text).toContain('по курсу 9,26');expect(text).not.toContain('000000');
  expect(formatDescription('Курс: 9.260000; Акт 14.10.2026')).toBe('Курс: 9,26; Акт 14.10.2026');
 });
+
+it('separates detailed expenses into readable blocks with reference, payer and purpose',()=>{
+ const expense={date:'2026-10-14',currency:'USD',amount_minor:10000,reference:'РКО-1',recipient:'Synthetic',category:'Материалы',description:'Покупка'};
+ const report={from:'2026-10-14',to:'2026-10-14',updatedAt:'2026-10-14T12:00Z',expense:{USD:20000},details:[expense,{...expense,reference:'РКО-2'}]};
+ const text=renderReport(report,'details','OWNER');
+ expect(text).toContain('\n\n🧾 РКО-1 · 14.10.2026\nСуммы:');
+ expect(text).toContain('\nКому: Synthetic\nСтатья: Материалы\nНазначение: Покупка\n\n🧾 РКО-2');
+});
