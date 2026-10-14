@@ -10,7 +10,7 @@ describe('panorama copy staging', () => {
   it('copies all files without activating tour', async () => {
     const upload = vi.fn().mockResolvedValue({ error: null });
     const download = vi.fn().mockResolvedValue({ data: new Blob(['x'], { type: 'image/jpeg' }), error: null });
-    const storage = { from: name => name === 'panoramas-360-drafts' ? { download } : { upload } };
+    const storage = { from: name => name === 'panoramas-360-drafts' ? { download } : { upload, list: async () => ({ data: [], error: null }) } };
     const result = await stagePanoramaCopies(storage, manifest);
     expect(result.staged).toBe(true);
     expect(result.copied_paths).toHaveLength(2);
@@ -20,14 +20,14 @@ describe('panorama copy staging', () => {
   it('rolls back first copied object if second upload fails', async () => {
     const upload = vi.fn().mockResolvedValueOnce({ error: null }).mockResolvedValueOnce({ error: new Error('network') });
     const remove = vi.fn().mockResolvedValue({ error: null });
-    const storage = { from: name => name === 'panoramas-360-drafts' ? { download: async () => ({ data: new Blob(['x']), error: null }) } : { upload, remove } };
+    const storage = { from: name => name === 'panoramas-360-drafts' ? { download: async () => ({ data: new Blob(['x']), error: null }) } : { upload, remove, list: async () => ({ data: [], error: null }) } };
     await expect(stagePanoramaCopies(storage, manifest)).rejects.toThrow('PANORAMA_UPLOAD_FAILED');
     expect(remove).toHaveBeenCalledWith(['projects/3/360/8/a.jpg']);
   });
 
   it('fails closed when rollback fails', async () => {
     const upload = vi.fn().mockResolvedValueOnce({ error: null }).mockResolvedValueOnce({ error: new Error('network') });
-    const storage = { from: name => name === 'panoramas-360-drafts' ? { download: async () => ({ data: new Blob(['x']), error: null }) } : { upload, remove: async () => ({ error: new Error('denied') }) } };
+    const storage = { from: name => name === 'panoramas-360-drafts' ? { download: async () => ({ data: new Blob(['x']), error: null }) } : { upload, list: async () => ({ data: [], error: null }), remove: async () => ({ error: new Error('denied') }) } };
     await expect(stagePanoramaCopies(storage, manifest)).rejects.toThrow('PANORAMA_ROLLBACK_INCOMPLETE');
   });
 
