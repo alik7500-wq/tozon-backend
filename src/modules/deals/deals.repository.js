@@ -902,6 +902,17 @@ export class DealsRepository {
     const { count: paymentsCount } = await db.from('payments').select('*', { count: 'exact', head: true }).eq('deal_id', id);
     const hasPaidPayments = (paymentsCount || 0) > 0;
 
+    // Correct the agreed term atomically without changing receipt history or contract price.
+    if (hasPaidPayments && data.installment_months !== undefined && Number(data.installment_months) !== Number(existingDeal.installment_months)) {
+      const months = Number(data.installment_months);
+      if (!Number.isInteger(months) || months < 1 || months > 60) throw new AppError('Укажите срок рассрочки от 1 до 60 месяцев', 400);
+      const { error } = await getServiceDB().rpc('correct_installment_term_atomic', {
+        p_deal_id: Number(id), p_user_id: Number(userId), p_changes: data
+      });
+      if (error) throw new AppError(error.message?.includes('STALE_DEAL') ? 'Сделка изменена другим пользователем. Откройте её заново.' : (error.message || 'Не удалось изменить срок рассрочки'), error.message?.includes('STALE_DEAL') ? 409 : 400);
+      return this.getDealById(id);
+    }
+
     const financialKeys = ['base_price_minor', 'discount_minor', 'final_price_minor', 'deal_price_per_m2_minor', 'down_payment_minor', 'installment_months', 'exchange_rate', 'payment_type'];
     const containsFinancialUpdate = financialKeys.some(k => data[k] !== undefined);
 
