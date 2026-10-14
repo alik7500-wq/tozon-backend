@@ -136,6 +136,16 @@ router.post(['/360-tours/upload-url', '/360-panoramas/upload-url'], requireDraft
 // PANORAMAS
 // -------------------------------------------------------------
 
+// GET /api/360-panoramas/:panoramaId — consistent with frontend API contract
+router.get('/360-panoramas/:panoramaId', async (req, res, next) => {
+  try {
+    const visibility = await Tour360Repository.getPanoramaTourVisibility(req.params.panoramaId);
+    if (!visibility || (!visibility.is_active && !['ADMIN', 'DIRECTOR'].includes(req.user?.role))) throw new AppError('Панорама не найдена', 404);
+    const panorama = await Tour360Repository.getPanoramaById(req.params.panoramaId);
+    res.status(200).json({ status: 'success', data: { panorama } });
+  } catch (error) { next(error); }
+});
+
 // GET /api/360-tours/:tourId/panoramas
 router.get('/360-tours/:tourId/panoramas', async (req, res, next) => {
   try {
