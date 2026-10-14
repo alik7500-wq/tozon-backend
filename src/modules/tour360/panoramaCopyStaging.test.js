@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { stagePanoramaCopies } from './panoramaCopyStaging.js';
 
-const manifest = { ready_for_publish: true, source_bucket: 'panoramas-360-drafts', destination_bucket: 'panoramas-360', files: [
+const manifest = { tour_id: 8, project_id: 3, ready_for_publish: true, source_bucket: 'panoramas-360-drafts', destination_bucket: 'panoramas-360', files: [
   { source_path: 'projects/3/360/8/a.jpg', destination_path: 'projects/3/360/8/a.jpg' },
   { source_path: 'projects/3/360/8/b.jpg', destination_path: 'projects/3/360/8/b.jpg' }
 ] };
