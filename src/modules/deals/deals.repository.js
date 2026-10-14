@@ -95,6 +95,7 @@ export class DealsRepository {
 
       return {
         ...deal,
+        first_payment_date: deal.first_payment_date || rawSchedules.map(s => s.due_date).filter(Boolean).sort()[0] || null,
         lead_name: deal.leads?.full_name,
         lead_phone: deal.leads?.phone,
         passport_series: deal.leads?.passport_series,
