@@ -386,6 +386,10 @@ export class Tour360Repository {
     const { data: existing } = await db.from('panorama_360').select('*, tours_360(project_id)').eq('id', pId).maybeSingle();
     if (!existing) throw new AppError('Панорама не найдена', 404);
 
+    if (data.storage_path !== undefined || data.thumbnail_path !== undefined || data.tour_id !== undefined || data.id !== undefined) {
+      throw new AppError('Пути файлов и принадлежность панорамы нельзя менять через обычное редактирование', 409);
+    }
+
     if (data.entity_type && data.entity_id) {
       await this.validateEntityBelongsToProject(existing.tours_360?.project_id, data.entity_type, data.entity_id);
     }
