@@ -7,6 +7,15 @@ export async function stagePanoramaCopies(storage, manifest) {
   if (!manifest?.ready_for_publish || !Array.isArray(manifest.files) || manifest.files.length === 0) {
     throw new Error('PUBLISH_PREFLIGHT_NOT_READY');
   }
+  if (manifest.source_bucket !== 'panoramas-360-drafts' || manifest.destination_bucket !== 'panoramas-360' || !Number.isSafeInteger(Number(manifest.tour_id)) || Number(manifest.tour_id) <= 0 || !Number.isSafeInteger(Number(manifest.project_id)) || Number(manifest.project_id) <= 0) {
+    throw new Error('INVALID_PUBLISH_MANIFEST');
+  }
+  const expectedPrefix = `projects/${manifest.project_id}/360/${manifest.tour_id}/`;
+  for (const entry of manifest.files) {
+    if (typeof entry?.source_path !== 'string' || entry.source_path !== entry.destination_path || !entry.source_path.startsWith(expectedPrefix) || entry.source_path.includes('..')) {
+      throw new Error('INVALID_PANORAMA_STORAGE_PATH');
+    }
+  }
   const copied = [];
   const seen = new Set();
   try {
