@@ -1,3 +1,4 @@
+import {formatDescription} from './number-format.js';
 export const TIMEZONE = 'Asia/Dushanbe';
 const invalidStatuses = new Set(['VOIDED', 'CANCELLED', 'REVERSED']);
 const money = new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -149,7 +150,7 @@ export function renderReport(r, view = 'summary', role = 'PARTNER') {
     if (role !== 'OWNER') throw new Error('DETAILS_FORBIDDEN');
     lines.push('', `Расходы всего: ${formatAmounts(r.expense)}`);
     const sorted = [...r.details].sort((a, b) => b.date.localeCompare(a.date));
-    for (const d of sorted.slice(0, 40)) lines.push(`${d.date} · ${formatExpense(d)} · ${d.category} · ${d.description.slice(0, 160)}`);
+    for (const d of sorted.slice(0, 40)) lines.push(`${d.date} · ${formatExpense(d)} · ${d.category} · ${formatDescription(d.description).slice(0, 160)}`);
     if (sorted.length > 40) lines.push('Показаны последние 40 расходов. Полный список — в CRM.');
   }
   lines.push('', 'Отчёт отражает текущие действующие документы CRM.');

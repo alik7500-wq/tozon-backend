@@ -1,5 +1,6 @@
 import { localDay, validDay, formatAmounts } from './report.js';
-import {ledgerMessage,formatNumber} from './ledger-format.js';
+import {ledgerMessage} from './ledger-format.js';
+import {formatNumber,formatDescription} from './number-format.js';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const owner = user => user.slot === 'AKMALKHON';
 export function scopeSnapshot(user,snapshot) {
@@ -113,7 +114,7 @@ export async function cashCommand(bot,user,command,isCallback) {
   if(s.phase==='recipient'&&!isCallback){if(command.length<1||command.length>200){await send('Получатель: от 1 до 200 символов.');return true;}p.recipient=command;await next('description','За что оплачено? Введите назначение расхода.');return true;}
   if(s.phase==='description'&&!isCallback){if(command.length<1||command.length>1000){await send('Назначение: от 1 до 1000 символов.');return true;}p.description=command;
     const draft=await repo.draft(user,s.desk,p);await repo.saveSession(id,{...s,phase:'confirm',draft_id:draft.id,payload:p});
-    const desks=await repo.cashDesks();let text=`Проверьте РКО:\nКасса: ${desks.find(d=>d.id===s.desk)?.name}\nДата: ${p.date}\nРасход: ${formatAmounts({[p.currency]:p.amount_minor})}\nСтатья: ${p.category}\nПолучатель: ${p.recipient}\nНазначение: ${p.description}`;
+    const desks=await repo.cashDesks();let text=`Проверьте РКО:\nКасса: ${desks.find(d=>d.id===s.desk)?.name}\nДата: ${p.date}\nРасход: ${formatAmounts({[p.currency]:p.amount_minor})}\nСтатья: ${p.category}\nПолучатель: ${p.recipient}\nНазначение: ${formatDescription(p.description)}`;
     if(p.currency==='TJS'&&p.source_currency==='USD')text+=`\nУчётное списание: ${formatNumber(usdDebitMinor(p.amount_minor,p.exchange_rate)/100)} USD по курсу ${formatNumber(p.exchange_rate)}. Сумма TJS сохранится в РКО.`;
     await send(text,choices([['Подтвердить и создать РКО',`rpost:${draft.id}`],['Отменить','rcancel']]));return true;
   }

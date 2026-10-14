@@ -1,10 +1,7 @@
 import {expenseAmounts,formatAmounts} from './report.js';
 const number=new Intl.NumberFormat('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
-export const formatNumber = value => number.format(Number(value));
-export function formatDescription(value) {
- return String(value || '').replace(/(\d+[.,]\d+)(?=\s*(?:TJS|USD|RUB)\b)/g, value => formatNumber(value.replace(',', '.')))
-  .replace(/(по курсу\s+)(\d+(?:[.,]\d+)?)/gi, (_, prefix, value) => prefix + formatNumber(value.replace(',', '.')));
-}
+import {formatDescription} from './number-format.js';
+export {formatNumber,formatDescription} from './number-format.js';
 export function escapeText(value,max=600){return String(value||'').replace(/[\r\n]+/g,' ').slice(0,max).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 export function readableDate(value){const d=String(value||'').slice(0,10);return /^\d{4}-\d{2}-\d{2}$/.test(d)?d.slice(8,10)+'.'+d.slice(5,7)+'.'+d.slice(0,4):escapeText(value,40);}
 export function ledgerMessage(rows,kind,desk,desks,offset){
