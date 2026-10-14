@@ -15,27 +15,27 @@ describe('360 draft publication security', () => {
 
   it('blocks activation of unpublished draft before any update query', async () => {
     const single = vi.fn().mockResolvedValue({ data: { id: 3, project_id: 2, is_active: false } });
-    from.mockReturnValue({ select: () => ({ eq: () => ({ single }) }) });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ single, maybeSingle: vi.fn().mockResolvedValue({ data: { is_active: false }, error: null }) }) }) }) });
     await expect(Tour360Repository.updateTour(3, { is_active: true })).rejects.toThrow('Публикация черновика недоступна');
     expect(from).toHaveBeenCalledTimes(2);
   });
 
   it('rejects new panorama registration for an already published tour', async () => {
     const single = vi.fn().mockResolvedValue({ data: { id: 3, project_id: 2, is_active: true } });
-    from.mockReturnValue({ select: () => ({ eq: () => ({ single }) }) });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ single, maybeSingle: vi.fn().mockResolvedValue({ data: { is_active: false }, error: null }) }) }) }) });
     await expect(Tour360Repository.createPanorama(3, { name: 'Гостиная', storage_path: 'projects/2/360/3/a.jpg' })).rejects.toThrow('Изменять опубликованный тур запрещено');
     expect(from).toHaveBeenCalledTimes(1);
   });
 
   it('rejects foreign storage paths for a draft', async () => {
     const single = vi.fn().mockResolvedValue({ data: { id: 3, project_id: 2, is_active: false } });
-    from.mockReturnValue({ select: () => ({ eq: () => ({ single }) }) });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ single, maybeSingle: vi.fn().mockResolvedValue({ data: { is_active: false }, error: null }) }) }) }) });
     await expect(Tour360Repository.createPanorama(3, { name: 'Гостиная', storage_path: 'projects/99/360/3/a.jpg' })).rejects.toThrow('Путь панорамы не принадлежит');
     expect(from).toHaveBeenCalledTimes(1);
   });
   it('blocks activation even if an existing tour is active via generic PATCH', async () => {
     const single = vi.fn().mockResolvedValue({ data: { id: 3, project_id: 2, is_active: true } });
-    from.mockReturnValue({ select: () => ({ eq: () => ({ single }) }) });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ single, maybeSingle: vi.fn().mockResolvedValue({ data: { is_active: true }, error: null }) }) }) }) });
     await expect(Tour360Repository.updateTour(3, { is_active: true })).rejects.toThrow('Изменять опубликованный тур запрещено');
   });
 
@@ -48,7 +48,7 @@ describe('360 draft publication security', () => {
 
   it('rejects path traversal within an otherwise valid draft prefix', async () => {
     const single = vi.fn().mockResolvedValue({ data: { id: 3, project_id: 2, is_active: false } });
-    from.mockReturnValue({ select: () => ({ eq: () => ({ single }) }) });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ single, maybeSingle: vi.fn().mockResolvedValue({ data: { is_active: false }, error: null }) }) }) }) });
     await expect(Tour360Repository.createPanorama(3, { name: 'Тест', storage_path: 'projects/2/360/3/../other.jpg' })).rejects.toThrow('Путь панорамы не принадлежит');
   });
 
