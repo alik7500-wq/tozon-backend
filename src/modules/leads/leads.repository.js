@@ -1,9 +1,17 @@
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 import { matchSearchQuery } from '../../utils/searchUtils.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { calculateWorkingMinutes, formatWorkingDuration, getBusinessDate } from '../../utils/businessTime.js';
+
+const getHistoryDB = () => {
+  try {
+    return getServiceDB();
+  } catch {
+    return getDB();
+  }
+};
 
 export class LeadsRepository {
   static async findAll(filters = {}) {
@@ -54,6 +62,7 @@ export class LeadsRepository {
 
     const notes_list = (lead.lead_notes || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const deals_list = (lead.deals || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const status_history = await this.getStatusHistory(cleanId);
 
     return {
       ...lead,
@@ -61,6 +70,7 @@ export class LeadsRepository {
       interested_project_name: lead.projects?.name || null,
       notes_list,
       deals_list,
+      status_history,
       users: undefined,
       projects: undefined,
       lead_notes: undefined,
@@ -141,11 +151,77 @@ export class LeadsRepository {
     return this.findById(id);
   }
 
-  static async updateStatus(id, status, lostReason = null) {
+  static async updateStatus(id, status, lostReason = null, comment = null, changedByUserId = null) {
+    const cleanId = parseRequiredBigInt(id, 'id');
     const db = getDB();
     const now = new Date().toISOString();
-    await db.from('leads').update({ status, lost_reason: lostReason, updated_at: now }).eq('id', id);
-    return this.findById(id);
+
+    const { data: currentLead } = await db.from('leads').select('status').eq('id', cleanId).maybeSingle();
+    const fromStatus = currentLead?.status || null;
+
+    const { error } = await db.from('leads').update({
+      status,
+      lost_reason: lostReason || null,
+      updated_at: now
+    }).eq('id', cleanId);
+    if (error) throw error;
+
+    if (fromStatus && fromStatus !== status) {
+      try {
+        const historyDb = getHistoryDB();
+        const { error: insertErr } = await historyDb.from('lead_status_history').insert([{
+          lead_id: cleanId,
+          from_status: fromStatus,
+          to_status: status,
+          changed_by_user_id: changedByUserId || null,
+          lost_reason: lostReason || null,
+          comment: comment || null,
+          created_at: now
+        }]);
+        if (insertErr) throw insertErr;
+      } catch (histErr) {
+        console.error('[LeadsRepository] Status history recording failed:', {
+          leadId: cleanId,
+          fromStatus,
+          toStatus: status,
+          hasReason: Boolean(lostReason),
+          errorCode: histErr?.code || 'UNKNOWN',
+          errorMessage: histErr?.message
+            ? String(histErr.message)
+                .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[REDACTED_EMAIL]')
+                .replace(/\+?\d[\d -]{7,}\d/g, '[REDACTED_PHONE]')
+            : 'No error message'
+        });
+      }
+    }
+
+    return this.findById(cleanId);
+  }
+
+  static async getStatusHistory(leadId) {
+    const cleanId = parseRequiredBigInt(leadId, 'leadId');
+    const db = getHistoryDB();
+    try {
+      const { data, error } = await db
+        .from('lead_status_history')
+        .select('*, users!changed_by_user_id(name)')
+        .eq('lead_id', cleanId)
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.warn('[LeadsRepository] Failed to query status history:', {
+          leadId: cleanId,
+          errorCode: error.code || 'UNKNOWN'
+        });
+        return [];
+      }
+      return (data || []).map(h => ({
+        ...h,
+        changed_by_user_name: h.users?.name || 'Система',
+        users: undefined
+      }));
+    } catch {
+      return [];
+    }
   }
 
   static async addNote(leadId, authorUserId, body) {
