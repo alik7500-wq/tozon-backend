@@ -300,15 +300,15 @@ export class NotificationsService {
 
   // 13. LEADS_CONTROL_DIGEST Event Notification (V1.1)
   static async notifyLeadsControlDigest(stats, period = 'MORNING', businessDate = '') {
-    const adminIds = await NotificationsRepository.getAdminUserIds();
-    if (!adminIds || adminIds.length === 0) return;
+    const managementIds = await NotificationsRepository.getManagementUserIds();
+    if (!managementIds || managementIds.length === 0) return;
 
     const bDate = businessDate || new Date().toISOString().split('T')[0];
     const periodName = period === 'MORNING' ? 'Утренняя' : 'Вечерняя';
 
     const msg = `${periodName} сводка контроля лидов: без ответственного — ${stats.unassignedCount || 0}, без первого контакта (>2ч) — ${stats.overdueContactCount || 0}, без движения (>48ч) — ${stats.stagnantCount || 0}, просрочено задач — ${stats.overdueTasksCount || 0}.`;
 
-    for (const userId of adminIds) {
+    for (const userId of managementIds) {
       await NotificationsRepository.createNotification({
         user_id: userId,
         type: 'LEADS_CONTROL_DIGEST',

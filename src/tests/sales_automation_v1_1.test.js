@@ -26,6 +26,7 @@ vi.mock('../db/connection.js', () => ({
 vi.mock('../modules/notifications/notifications.repository.js', () => ({
   NotificationsRepository: {
     getAdminUserIds: vi.fn(),
+    getManagementUserIds: vi.fn(),
     createNotification: vi.fn()
   }
 }));
@@ -102,6 +103,7 @@ describe('Sales Automation V1.1 — Lead SLA & Processing Control Suite', () => 
     getServiceDB.mockReturnValue(mockSupabase);
     getDB.mockReturnValue(mockSupabase);
     NotificationsRepository.getAdminUserIds.mockResolvedValue([1, 5]);
+    NotificationsRepository.getManagementUserIds.mockResolvedValue([1, 2, 5]);
     NotificationsRepository.createNotification.mockResolvedValue({ id: 101 });
   });
 

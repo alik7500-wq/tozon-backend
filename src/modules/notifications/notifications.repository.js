@@ -18,6 +18,28 @@ export class NotificationsRepository {
     return data.map(u => u.id);
   }
 
+  static async getManagementUserIds() {
+    const db = getServiceDB();
+    const { data, error } = await db
+      .from('users')
+      .select('id, role, is_active')
+      .in('role', ['ADMIN', 'DIRECTOR']);
+
+    if (error) {
+      console.error('Failed to fetch management user IDs:', error.message);
+      throw error;
+    }
+
+    if (!data || data.length === 0) return [];
+
+    return Array.from(new Set(
+      data
+        .filter(u => ['ADMIN', 'DIRECTOR'].includes(u.role) &&
+          (u.is_active === 1 || u.is_active === true || u.is_active === '1' || u.is_active === 'true'))
+        .map(u => Number(u.id))
+    ));
+  }
+
   static async createNotification(data) {
     const db = getServiceDB();
     const payload = {
