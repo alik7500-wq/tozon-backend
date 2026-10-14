@@ -1,4 +1,4 @@
-import { getDB } from '../../db/connection.js';
+import { getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 export class LayoutPresentationRepository {
@@ -26,7 +26,7 @@ export class LayoutPresentationRepository {
    * Aggregated data for apartment unit interactive presentation
    */
   static async getUnitPresentationData(unitId, user = null) {
-    const db = getDB();
+    const db = getServiceDB();
 
     // 1. Fetch unit details
     const { data: unit, error: unitError } = await db
@@ -79,7 +79,7 @@ export class LayoutPresentationRepository {
 
     // 2. Fetch layout presentation details if layout exists
     if (layout?.id) {
-      const [{ data: roomsData }, { data: featuresData }] = await Promise.all([
+      const [{ data: roomsData, error: roomsError }, { data: featuresData, error: featuresError }] = await Promise.all([
         db
           .from('layout_rooms')
           .select('*')
@@ -95,6 +95,7 @@ export class LayoutPresentationRepository {
           .order('sort_order', { ascending: true }),
       ]);
 
+      if (roomsError || featuresError) throw new AppError('Не удалось загрузить описание помещений',500);
       rooms = roomsData || [];
       features = featuresData || [];
     }
@@ -149,7 +150,7 @@ export class LayoutPresentationRepository {
    * Fetch full layout presentation config for admin editor
    */
   static async getLayoutPresentationData(layoutId, user = null) {
-    const db = getDB();
+    const db = getServiceDB();
 
     const { data: layout, error } = await db
       .from('layout_types')
@@ -190,7 +191,7 @@ export class LayoutPresentationRepository {
    * Update extended fields of a layout type
    */
   static async updateLayoutExtended(layoutId, payload, user = null) {
-    const db = getDB();
+    const db = getServiceDB();
 
     // Verify layout existence and project access
     const { data: existingLayout } = await db
@@ -278,7 +279,7 @@ export class LayoutPresentationRepository {
       throw new AppError('Координаты метки должны быть в пределе от 0 до 100%', 400);
     }
 
-    const db = getDB();
+    const db = getServiceDB();
 
     // Verify layout existence
     const { data: layout } = await db
@@ -343,7 +344,7 @@ export class LayoutPresentationRepository {
   }
 
   static async updateRoom(layoutId, roomId, roomData, user = null) {
-    const db = getDB();
+    const db = getServiceDB();
 
     // Fetch existing room and check parent layout
     const { data: existingRoom } = await db
@@ -446,7 +447,7 @@ export class LayoutPresentationRepository {
   }
 
   static async deleteRoom(layoutId, roomId, user = null) {
-    const db = getDB();
+    const db = getServiceDB();
 
     const { data: room } = await db
       .from('layout_rooms')
@@ -481,7 +482,7 @@ export class LayoutPresentationRepository {
       throw new AppError('Русское наименование преимущества обязательно', 400);
     }
 
-    const db = getDB();
+    const db = getServiceDB();
 
     const { data: layout } = await db
       .from('layout_types')
@@ -521,7 +522,7 @@ export class LayoutPresentationRepository {
   }
 
   static async updateFeature(layoutId, featureId, featureData, user = null) {
-    const db = getDB();
+    const db = getServiceDB();
 
     const { data: feature } = await db
       .from('layout_features')
@@ -562,7 +563,7 @@ export class LayoutPresentationRepository {
   }
 
   static async deleteFeature(layoutId, featureId, user = null) {
-    const db = getDB();
+    const db = getServiceDB();
 
     const { data: feature } = await db
       .from('layout_features')
