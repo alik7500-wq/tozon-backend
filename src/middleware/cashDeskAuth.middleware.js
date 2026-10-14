@@ -1,4 +1,5 @@
 import { getDB } from '../db/connection.js';
+import { hasSection, isMatrixUser } from './sectionAccess.js';
 import { AppError } from '../shared/errors/errorHandler.js';
 
 /**
@@ -13,6 +14,10 @@ export const resolveCashDeskAccess = async (req, res, next) => {
       return next();
     }
 
+    const matrixPermissions = isMatrixUser(user);
+    const canWriteIncome = matrixPermissions && hasSection(user, 'finance.payments', true);
+    const canWriteExpense = matrixPermissions && hasSection(user, 'finance.expenses', true);
+
     // Администратор, Директор и Финансовый менеджер имеют полный доступ ко всем кассам компании
     if (user.role === 'ADMIN' || user.role === 'DIRECTOR' || (user.role === 'FINANCE_MANAGER' && !user.permissions?.includes('finance.restricted'))) {
       req.cashDeskAccess = {
@@ -24,8 +29,14 @@ export const resolveCashDeskAccess = async (req, res, next) => {
         incomeDeskIds: [],
         expenseDeskIds: [],
         canView: true,
-        canCreateIncome: true,
-        canCreateExpense: true,
+        canCreateIncome: !matrixPermissions || canWriteIncome,
+        canCreateExpense: !matrixPermissions || canWriteExpense,
+        matrixPermissions,
+        allWritableDesks: true,
+        canEditIncome: matrixPermissions ? canWriteIncome : user.role === 'ADMIN',
+        canEditExpense: matrixPermissions ? canWriteExpense : user.role === 'ADMIN',
+        editableIncomeDeskIds: [],
+        editableExpenseDeskIds: [],
         canEdit: user.role === 'ADMIN' || user.role === 'FINANCE_MANAGER',
         canVoid: user.role === 'ADMIN',
         canDelete: user.role === 'ADMIN',
@@ -114,7 +125,7 @@ export const resolveCashDeskAccess = async (req, res, next) => {
     }
 
     const viewableDeskIds = accessRecords.filter(r => r.can_view).map(r => r.cash_desk_id);
-    const incomeDeskIds = accessRecords.filter(r => r.can_create_income).map(r => r.cash_desk_id);
+    let incomeDeskIds = accessRecords.filter(r => r.can_create_income).map(r => r.cash_desk_id);
     const expenseDeskIds = accessRecords.filter(r => r.can_create_expense).map(r => r.cash_desk_id);
 
     if (viewableDeskIds.length === 0 && incomeDeskIds.length === 0 && expenseDeskIds.length === 0) {
@@ -125,7 +136,18 @@ export const resolveCashDeskAccess = async (req, res, next) => {
       ? (expenseDeskIds[0] || viewableDeskIds[0] || null)
       : (viewableDeskIds[0] || expenseDeskIds[0] || incomeDeskIds[0] || null);
 
+    // A saved matrix controls operations, while desk assignments control where they can occur.
+    if (matrixPermissions && user.permissions?.includes('finance.restricted') && canWriteIncome && !incomeDeskIds.length && primaryDeskId) incomeDeskIds = [primaryDeskId];
+    const editableIncomeDeskIds = incomeDeskIds.filter(id => viewableDeskIds.includes(id));
+    const editableExpenseDeskIds = expenseDeskIds.filter(id => viewableDeskIds.includes(id));
+
     req.cashDeskAccess = {
+      matrixPermissions,
+      allWritableDesks: false,
+      canEditIncome: matrixPermissions && canWriteIncome && editableIncomeDeskIds.length > 0,
+      canEditExpense: matrixPermissions && canWriteExpense && editableExpenseDeskIds.length > 0,
+      editableIncomeDeskIds,
+      editableExpenseDeskIds,
       userId: user.id,
       isAdmin: Boolean(user.permissions?.includes('finance.restricted') && ['GET', 'HEAD'].includes(req.method)),
       allDesks: Boolean(user.permissions?.includes('finance.restricted') && ['GET', 'HEAD'].includes(req.method)),
@@ -134,9 +156,9 @@ export const resolveCashDeskAccess = async (req, res, next) => {
       incomeDeskIds,
       expenseDeskIds,
       canView: viewableDeskIds.length > 0,
-      canCreateIncome: incomeDeskIds.length > 0,
-      canCreateExpense: expenseDeskIds.length > 0,
-      canEdit: accessRecords.some(r => r.can_edit),
+      canCreateIncome: incomeDeskIds.length > 0 && (!matrixPermissions || canWriteIncome),
+      canCreateExpense: expenseDeskIds.length > 0 && (!matrixPermissions || canWriteExpense),
+      canEdit: matrixPermissions ? (canWriteIncome && editableIncomeDeskIds.length > 0) || (canWriteExpense && editableExpenseDeskIds.length > 0) : accessRecords.some(r => r.can_edit),
       canVoid: accessRecords.some(r => r.can_void),
       canDelete: accessRecords.some(r => r.can_delete),
       accessRecords
@@ -158,6 +180,13 @@ export const resolveCashDeskAccess = async (req, res, next) => {
  * Запрет на любые изменения, аннулирования и удаления проведенных документов для менеджеров
  */
 export const requireCashDeskMutation = (req, res, next) => {
+  if (req.cashDeskAccess?.matrixPermissions && req.user?.role !== 'ADMIN') {
+    const access = req.cashDeskAccess;
+    if (req.method === 'DELETE') return next(new AppError('Право добавления и редактирования не разрешает удаление ордеров', 403));
+    const income = /\/income(?:\/|$)/.test(String(req.originalUrl || ''));
+    if (!(income ? access.canEditIncome : access.canEditExpense)) return next(new AppError('Нет права редактирования ордера', 403));
+    return next();
+  }
   if (req.cashDeskAccess?.isAdmin || req.cashDeskAccess?.canEdit) {
     return next();
   }
@@ -207,3 +236,4 @@ export const requireCashTransferPermission = (req, res, next) => {
   }
   return next(new AppError('Операции перемещения средств между кассами доступны только администраторам', 403));
 };
+

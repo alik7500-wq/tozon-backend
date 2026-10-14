@@ -39,6 +39,18 @@ router.get('/rates/eskhata', getEskhataRate);
 router.use(protect);
 router.use(resolveCashDeskAccess);
 
+router.get('/access', (req, res) => {
+  const a = req.cashDeskAccess || {};
+  res.json({ status: 'success', data: { cashAccess: {
+    allWritableDesks: Boolean(a.allWritableDesks),
+    incomeDeskIds: a.incomeDeskIds || [], expenseDeskIds: a.expenseDeskIds || [],
+    editableIncomeDeskIds: a.editableIncomeDeskIds || [], editableExpenseDeskIds: a.editableExpenseDeskIds || [],
+    canCreateIncome: Boolean(a.canCreateIncome), canCreateExpense: Boolean(a.canCreateExpense),
+    canEditIncome: Boolean(a.canEditIncome), canEditExpense: Boolean(a.canEditExpense),
+    canDelete: req.user.role === 'ADMIN' && Boolean(a.canDelete), primaryDeskId: a.cashDeskId
+  } } });
+});
+
 router.use(paymentCalendarRouter);
 
 router.get('/income', getIncome);
@@ -65,4 +77,5 @@ router.get('/cashflow', getCashflow);
 router.get('/plan-fact', getPlanFactReport);
 
 export default router;
+
 

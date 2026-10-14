@@ -47,8 +47,12 @@ export const authorizeSectionRequest = async req => {
       if (kind) key = constructionKey(kind);
     }
   } else if (path.startsWith('/api/finance')) {
+    if (path === '/api/finance/access' && read) allowed = hasAny(user, financeReads);
     if (/\/income(?:\/|$)/.test(path)) key = 'finance.payments';
-    else if (/\/expenses(?:\/|$)/.test(path)) key = 'finance.expenses';
+    else if (/\/expenses(?:\/|$)/.test(path)) {
+      key = 'finance.expenses';
+      if (!read && req.body?.auto_convert && !hasSection(user,'finance.cashflow',true)) throw new AppError('Автоконвертация требует права изменения ДДС',403);
+    }
     else if (/\/cashflow(?:\/|$)|\/transfers$|\/convert$/.test(path)) key = 'finance.cashflow';
     else if (/\/debtors(?:\/|$)/.test(path)) key = 'finance.debtors';
     else key = 'finance.view';
@@ -86,3 +90,4 @@ export const authorizeSectionRequest = async req => {
   if (!allowed) throw new AppError(read ? 'Нет права чтения этого раздела' : 'Нет права добавления или редактирования в этом разделе', 403);
   req.sectionAccessGranted = true;
 };
+

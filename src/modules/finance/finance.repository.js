@@ -706,7 +706,7 @@ export class FinanceRepository {
    * Обновить приходный ордер / платеж (только ADMIN)
    */
   static async updateIncome(id, data, userRole, userAccess = null) {
-    if (userRole !== 'ADMIN' || (userAccess && !userAccess.isAdmin)) {
+    if (!(userRole === 'ADMIN' && (!userAccess || userAccess.isAdmin)) && !(userAccess?.matrixPermissions && userAccess?.canEditIncome)) {
       throw new Error('Редактирование приходных кассовых ордеров запрещено для вашей роли');
     }
     const db = getDB();
@@ -720,7 +720,14 @@ export class FinanceRepository {
       throw new Error('Документ не найден');
     }
 
+    const scopedEditor = userRole !== 'ADMIN' && userAccess?.matrixPermissions;
+    const allowedDeskIds = userAccess?.editableIncomeDeskIds || [];
+    if (scopedEditor && !userAccess.allWritableDesks && !allowedDeskIds.includes(originalRecord.cash_desk_id)) {
+      const error = new Error('Нет права редактирования ордера этой кассы'); error.statusCode = 403; throw error;
+    }
+
     const isConversion = originalRecord.operation_type === 'CONVERSION' || Boolean(originalRecord.conversion_id);
+    if (scopedEditor && isConversion) { const error = new Error('Изменение связанных валютных ордеров доступно администратору'); error.statusCode = 403; throw error; }
     if (isConversion && data.amount !== undefined) {
       const newMinor = Math.round(Number(data.amount) * 100);
       if (newMinor !== originalRecord.amount_minor) {
@@ -764,6 +771,10 @@ export class FinanceRepository {
         err.statusCode = 400;
         throw err;
       }
+    }
+
+    if (scopedEditor && !userAccess.allWritableDesks && updatePayload.cash_desk_id && !allowedDeskIds.includes(updatePayload.cash_desk_id)) {
+      const error = new Error('Перенос ордера в эту кассу запрещён'); error.statusCode = 403; throw error;
     }
 
     const serviceDb = getServiceDB();
@@ -1627,7 +1638,7 @@ export class FinanceRepository {
    * Обновить расходный ордер (только ADMIN)
    */
   static async updateExpense(id, data, userRole, userAccess = null) {
-    if (userRole !== 'ADMIN' || (userAccess && !userAccess.isAdmin)) {
+    if (!(userRole === 'ADMIN' && (!userAccess || userAccess.isAdmin)) && !(userAccess?.matrixPermissions && userAccess?.canEditExpense)) {
       throw new Error('Редактирование расходных кассовых ордеров запрещено для вашей роли');
     }
     const db = getDB();
@@ -1640,7 +1651,14 @@ export class FinanceRepository {
       throw new Error('Документ не найден');
     }
 
+    const scopedEditor = userRole !== 'ADMIN' && userAccess?.matrixPermissions;
+    const allowedDeskIds = userAccess?.editableExpenseDeskIds || [];
+    if (scopedEditor && !userAccess.allWritableDesks && !allowedDeskIds.includes(originalRecord.cash_desk_id)) {
+      const error = new Error('Нет права редактирования ордера этой кассы'); error.statusCode = 403; throw error;
+    }
+
     const isConversion = originalRecord.operation_type === 'CONVERSION' || Boolean(originalRecord.conversion_id);
+    if (scopedEditor && isConversion) { const error = new Error('Изменение связанных валютных ордеров доступно администратору'); error.statusCode = 403; throw error; }
     if (isConversion && data.amount !== undefined) {
       const newMinor = Math.round(Number(data.amount) * 100);
       if (newMinor !== originalRecord.amount_minor) {
@@ -1676,6 +1694,10 @@ export class FinanceRepository {
         err.statusCode = 400;
         throw err;
       }
+    }
+
+    if (scopedEditor && !userAccess.allWritableDesks && updatePayload.cash_desk_id && !allowedDeskIds.includes(updatePayload.cash_desk_id)) {
+      const error = new Error('Перенос ордера в эту кассу запрещён'); error.statusCode = 403; throw error;
     }
 
     if (Object.keys(updatePayload).length === 0) {
@@ -3063,4 +3085,5 @@ export class FinanceRepository {
     return { success: true, supersededExpenseId: expenseId, supersededPaymentId: paymentId };
   }
 }
+
 

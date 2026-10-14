@@ -8,8 +8,8 @@ export const getDictionaryItems = async (req, res) => {
     // Изоляция касс для менеджеров:
     // Если purpose === 'income' — возвращаем кассы, куда разрешен приход (incomeDeskIds)
     // Иначе (для балансов и общих списков) — возвращаем только кассы, где разрешен просмотр (viewableDeskIds)
-    if (type === 'CASH_DESK' && req.cashDeskAccess && !req.cashDeskAccess.isAdmin) {
-      const isIncomePurpose = req.query.purpose === 'income' || req.query.for_income === 'true';
+    const isIncomePurpose = req.query.purpose === 'income' || req.query.for_income === 'true';
+    if (type === 'CASH_DESK' && req.cashDeskAccess && (!req.cashDeskAccess.isAdmin || (isIncomePurpose && req.cashDeskAccess.matrixPermissions && !req.cashDeskAccess.allWritableDesks))) {
       if (isIncomePurpose) {
         const allowedIncomeIds = req.cashDeskAccess.incomeDeskIds || [req.cashDeskAccess.cashDeskId];
         data = (data || []).filter(d => allowedIncomeIds.includes(d.id) || allowedIncomeIds.includes(d.code));
@@ -57,3 +57,4 @@ export const deleteDictionaryItem = async (req, res) => {
     res.status(500).json({ success: false, error: { message: error.message || 'Ошибка удаления элемента' } });
   }
 };
+
