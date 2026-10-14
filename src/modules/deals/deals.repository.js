@@ -297,6 +297,13 @@ export class DealsRepository {
     const unitAreaM2 = unit.area_m2_x100 ? (unit.area_m2_x100 / 100) : 0;
     const computedDealPricePerM2 = data.deal_price_per_m2_minor || (unitAreaM2 > 0 ? Math.round(data.final_price_minor / unitAreaM2) : (unit.price_per_m2_minor || 0));
 
+    if (['INSTALLMENT','PARTIAL_BARTER'].includes(data.payment_type)) {
+      const interval = Number(data.installment_interval_months ?? 1);
+      const firstDate = data.first_payment_date || data.schedules?.[0]?.due_date;
+      if (!Number.isInteger(interval) || interval < 1 || interval > 12) throw new AppError('Интервал должен быть от 1 до 12 месяцев', 400);
+      if (firstDate && (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(firstDate) || !Number.isFinite(Date.parse(firstDate)) || firstDate < data.deal_date)) throw new AppError('Неверная дата первого платежа', 400);
+    }
+
     // 3. Insert Deal
     const { data: newDeal, error: dealErr } = await db.from('deals').insert([{
       contract_number: contractNumber,
@@ -313,6 +320,8 @@ export class DealsRepository {
       exchange_rate: data.exchange_rate !== undefined && data.exchange_rate !== null ? parseFloat(data.exchange_rate) : null,
       down_payment_minor: data.down_payment_minor || 0,
       installment_months: data.installment_months || 0,
+      first_payment_date: data.first_payment_date || data.schedules?.[0]?.due_date || null,
+      installment_interval_months: Number(data.installment_interval_months) || 1,
       barter_description: data.barter_description || null,
       barter_amount_minor: data.barter_amount_minor || 0,
       reservation_expires_at: reservationExpiresAt,
@@ -903,11 +912,11 @@ export class DealsRepository {
     const hasPaidPayments = (paymentsCount || 0) > 0;
 
     // Correct the agreed term atomically without changing receipt history or contract price.
-    if (hasPaidPayments && data.installment_months !== undefined && Number(data.installment_months) !== Number(existingDeal.installment_months)) {
-      const months = Number(data.installment_months);
+    if ((data.first_payment_date !== undefined || data.installment_interval_months !== undefined || (hasPaidPayments && data.installment_months !== undefined && Number(data.installment_months) !== Number(existingDeal.installment_months))) && existingDeal.payment_type === 'INSTALLMENT') {
+      const months = Number(data.installment_months ?? existingDeal.installment_months);
       if (!Number.isInteger(months) || months < 1 || months > 60) throw new AppError('Укажите срок рассрочки от 1 до 60 месяцев', 400);
       const { error } = await getServiceDB().rpc('correct_installment_term_atomic', {
-        p_deal_id: Number(id), p_user_id: Number(userId), p_changes: data
+        p_deal_id: Number(id), p_user_id: Number(userId), p_changes: { ...data, installment_months: months }
       });
       if (error) throw new AppError(error.message?.includes('STALE_DEAL') ? 'Сделка изменена другим пользователем. Откройте её заново.' : (error.message || 'Не удалось изменить срок рассрочки'), error.message?.includes('STALE_DEAL') ? 409 : 400);
       return this.getDealById(id);
