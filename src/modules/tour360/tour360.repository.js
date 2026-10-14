@@ -204,7 +204,7 @@ export class Tour360Repository {
     const { data: existing } = await db.from('tours_360').select('id, project_id, is_active').eq('id', tourId).single();
     if (!existing) throw new AppError('360 тур не найден', 404);
     // Never switch storage buckets implicitly: a published tour must not point at private draft files.
-    if (data.is_active === true) {
+    if (data.is_active !== undefined) {
       throw new AppError('Публикация черновика недоступна до безопасного переноса панорам в публичное хранилище', 409);
     }
 
