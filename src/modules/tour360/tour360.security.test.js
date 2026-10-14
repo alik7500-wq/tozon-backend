@@ -10,13 +10,14 @@ describe('360 draft publication security', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getDB.mockReturnValue({ from });
+    getServiceDB.mockReturnValue({ from });
   });
 
   it('blocks activation of unpublished draft before any update query', async () => {
     const single = vi.fn().mockResolvedValue({ data: { id: 3, project_id: 2, is_active: false } });
     from.mockReturnValue({ select: () => ({ eq: () => ({ single }) }) });
     await expect(Tour360Repository.updateTour(3, { is_active: true })).rejects.toThrow('Публикация черновика недоступна');
-    expect(from).toHaveBeenCalledTimes(1);
+    expect(from).toHaveBeenCalledTimes(2);
   });
 
   it('rejects new panorama registration for an already published tour', async () => {
@@ -35,7 +36,14 @@ describe('360 draft publication security', () => {
   it('blocks activation even if an existing tour is active via generic PATCH', async () => {
     const single = vi.fn().mockResolvedValue({ data: { id: 3, project_id: 2, is_active: true } });
     from.mockReturnValue({ select: () => ({ eq: () => ({ single }) }) });
-    await expect(Tour360Repository.updateTour(3, { is_active: true })).rejects.toThrow('Публикация черновика недоступна');
+    await expect(Tour360Repository.updateTour(3, { is_active: true })).rejects.toThrow('Изменять опубликованный тур запрещено');
+  });
+
+  it('blocks deactivation of an existing published tour', async () => {
+    const single = vi.fn().mockResolvedValue({ data: { id: 3, project_id: 2, is_active: true } });
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { is_active: true }, error: null });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ single, maybeSingle }) }) });
+    await expect(Tour360Repository.updateTour(3, { is_active: false })).rejects.toThrow('Изменять опубликованный тур запрещено');
   });
 
   it('rejects path traversal within an otherwise valid draft prefix', async () => {
