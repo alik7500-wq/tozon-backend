@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-vi.mock('../../db/connection.js', () => ({ getDB: vi.fn() }));
+vi.mock('../../db/connection.js', () => ({ getDB: vi.fn(), getServiceDB: vi.fn() }));
 vi.mock('../../modules/users/users.repository.js', () => ({ UsersRepository: { findById: vi.fn() } }));
 vi.mock('jsonwebtoken', () => ({ default: { verify: vi.fn(() => ({ id: 4 })) } }));
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
 import { UsersRepository } from '../../modules/users/users.repository.js';
 import { protect } from '../auth.middleware.js';
 import { resolveCashDeskAccess, requireCashDeskExpense, requireCashDeskIncome, requireCashDeskMutation, requireCashTransferPermission } from '../cashDeskAuth.middleware.js';
@@ -13,7 +13,8 @@ const records = [
 ];
 beforeEach(() => {
   UsersRepository.findById.mockResolvedValue(user);
-  getDB.mockReturnValue({ from: () => ({ select: () => ({ eq: async () => ({ data: records }) }) }) });
+  getDB.mockReturnValue({ from: () => { throw new Error("public client must not read permission table"); } });
+  getServiceDB.mockReturnValue({ from: () => ({ select: () => ({ eq: async () => ({ data: records }) }) }) });
 });
 describe('restricted finance profile', () => {
   it.each([
@@ -75,5 +76,15 @@ describe('matrix permissions take precedence over legacy finance-only section re
     await protect({method,originalUrl,headers:{authorization:'Bearer test'},query:{},body:{}},{},next);
     if(allowed)expect(next).toHaveBeenCalledWith();
     else expect(next.mock.calls[0][0].statusCode).toBe(403);
+  });
+});
+
+
+describe('cash access lookup failures', () => {
+  it('reports database errors instead of claiming no permissions', async () => {
+    getServiceDB.mockReturnValue({ from: () => ({ select: () => ({ eq: async () => ({ data: null, error: new Error('denied') }) }) }) });
+    const next = vi.fn();
+    await resolveCashDeskAccess({user,method:'GET',query:{}}, {}, next);
+    expect(next.mock.calls[0][0].statusCode).toBe(503);
   });
 });

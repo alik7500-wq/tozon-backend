@@ -1,4 +1,4 @@
-import { getDB } from '../db/connection.js';
+import { getDB, getServiceDB } from '../db/connection.js';
 import { hasSection, isMatrixUser } from './sectionAccess.js';
 import { AppError } from '../shared/errors/errorHandler.js';
 
@@ -49,16 +49,17 @@ export const resolveCashDeskAccess = async (req, res, next) => {
     // Загрузка всех прав пользователя из user_cash_desk_access
     let accessRecords = [];
     try {
-      const { data, error } = await db
+      const { data, error } = await getServiceDB()
         .from('user_cash_desk_access')
         .select('*')
         .eq('user_id', user.id);
 
-      if (!error && Array.isArray(data)) {
+      if (error) throw error;
+      if (Array.isArray(data)) {
         accessRecords = data;
       }
     } catch {
-      // Таблица может еще не существовать до применения миграции
+      return next(new AppError('Не удалось загрузить права доступа к кассам. Повторите попытку.', 503));
     }
 
     // Если записей нет или только 1 касса, но это менеджер Дадочон (id: 3, role: SALES_MANAGER),

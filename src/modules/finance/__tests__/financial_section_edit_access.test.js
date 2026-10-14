@@ -18,7 +18,8 @@ beforeEach(()=>{
   const q={select:()=>q,eq:()=>q,update:data=>{writing=true;payload=data;return q},maybeSingle:async()=>({data:table==='dictionaries'?{id:foreign}:record}),then:resolve=>resolve({data:writing?[{...record,...payload}]:[{cash_desk_id:desk,can_view:true,can_create_expense:true,can_create_income:false},{cash_desk_id:foreign,can_view:true,can_create_income:false,can_create_expense:false}]})};return q;
  }};
  getDB.mockReturnValue(db);
- rpc=vi.fn(async(_,args)=>({data:{payment:{...record,...args.p_payment_update}},error:null}));getServiceDB.mockReturnValue({rpc});
+ getServiceDB.mockReturnValue(db);
+ rpc=vi.fn(async(_,args)=>({data:{payment:{...record,...args.p_payment_update}},error:null}));getServiceDB.mockReturnValue({...db,rpc});
  vi.spyOn(FinanceRepository,'syncPairedConversion').mockResolvedValue();
 });
 describe('financial matrix: creation and editing, scoped to assigned desks',()=>{
