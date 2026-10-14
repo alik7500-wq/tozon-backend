@@ -1,6 +1,7 @@
 import express from 'express';
 import { LeadsRepository } from './leads.repository.js';
 import { TasksService } from '../tasks/tasks.service.js';
+import { ManagerPerformanceService } from '../reports/managerPerformance.service.js';
 import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
@@ -42,6 +43,21 @@ router.post('/webhook', async (req, res, next) => {
 });
 
 router.use(protect);
+
+// GET /api/leads/performance - Manager Performance & Sales KPI analytics
+router.get('/performance', async (req, res, next) => {
+  try {
+    const filters = {
+      period: req.query.period,
+      startDate: req.query.startDate,
+      endDate: req.query.endDate,
+      managerId: req.query.managerId,
+      projectId: req.query.projectId
+    };
+    const data = await ManagerPerformanceService.getPerformanceData(filters, req.user);
+    res.status(200).json({ status: 'success', data });
+  } catch (error) { next(error); }
+});
 
 // GET /api/leads/sla-control - SLA & processing control dashboard
 router.get('/sla-control', async (req, res, next) => {
@@ -115,7 +131,13 @@ router.patch('/:id', async (req, res, next) => {
 router.patch('/:id/status', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
-    const lead = await LeadsRepository.updateStatus(cleanId, req.body.status, req.body.lost_reason);
+    const lead = await LeadsRepository.updateStatus(
+      cleanId,
+      req.body.status,
+      req.body.lost_reason,
+      req.body.comment,
+      parseOptionalBigInt(req.user?.id)
+    );
     // Auto-generate task on status change
     await TasksService.onLeadStatusChanged(lead, req.body.status, parseOptionalBigInt(req.user.id) || 1);
     res.status(200).json({ status: 'success', data: { lead } });
