@@ -286,6 +286,7 @@ export class Tour360Repository {
    * Delete tour
    */
   static async deleteTour(tourId) {
+    await this.assertDraftTourEditable(tourId);
     const db = getDB();
     const { error } = await db.from('tours_360').delete().eq('id', tourId);
     if (error) throw error;
@@ -377,6 +378,7 @@ export class Tour360Repository {
    * Update panorama
    */
   static async updatePanorama(panoramaId, data) {
+    await this.assertDraftPanoramaEditable(panoramaId);
     const db = getDB();
     const now = new Date().toISOString();
     const pId = parseInt(panoramaId, 10);
@@ -403,6 +405,7 @@ export class Tour360Repository {
    * Delete panorama
    */
   static async deletePanorama(panoramaId) {
+    await this.assertDraftPanoramaEditable(panoramaId);
     const db = getDB();
     const pId = parseInt(panoramaId, 10);
     const { error } = await db.from('panorama_360').delete().eq('id', pId);
@@ -445,6 +448,7 @@ export class Tour360Repository {
    * Create hotspot on panorama
    */
   static async createHotspot(panoramaId, data) {
+    await this.assertDraftPanoramaEditable(panoramaId);
     const db = getDB();
     const now = new Date().toISOString();
     const pId = parseInt(panoramaId, 10);
@@ -509,6 +513,7 @@ export class Tour360Repository {
    * Update hotspot
    */
   static async updateHotspot(hotspotId, data) {
+    await this.assertDraftHotspotEditable(hotspotId);
     const db = getDB();
     const now = new Date().toISOString();
     const hId = parseInt(hotspotId, 10);
@@ -557,6 +562,7 @@ export class Tour360Repository {
    * Delete hotspot
    */
   static async deleteHotspot(hotspotId) {
+    await this.assertDraftHotspotEditable(hotspotId);
     const db = getDB();
     const hId = parseInt(hotspotId, 10);
     const { error } = await db.from('panorama_hotspots').delete().eq('id', hId);
