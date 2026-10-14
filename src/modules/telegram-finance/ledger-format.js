@@ -1,5 +1,10 @@
 import {expenseAmounts,formatAmounts} from './report.js';
 const number=new Intl.NumberFormat('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
+export const formatNumber = value => number.format(Number(value));
+export function formatDescription(value) {
+ return String(value || '').replace(/(\d+[.,]\d+)(?=\s*(?:TJS|USD|RUB)\b)/g, value => formatNumber(value.replace(',', '.')))
+  .replace(/(по курсу\s+)(\d+(?:[.,]\d+)?)/gi, (_, prefix, value) => prefix + formatNumber(value.replace(',', '.')));
+}
 export function escapeText(value,max=600){return String(value||'').replace(/[\r\n]+/g,' ').slice(0,max).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 export function readableDate(value){const d=String(value||'').slice(0,10);return /^\d{4}-\d{2}-\d{2}$/.test(d)?d.slice(8,10)+'.'+d.slice(5,7)+'.'+d.slice(0,4):escapeText(value,40);}
 export function ledgerMessage(rows,kind,desk,desks,offset){
@@ -21,7 +26,7 @@ export function ledgerMessage(rows,kind,desk,desks,offset){
   const person=income?r.payer_name:r.recipient;
   lines.push(`${income?'От кого':'Кому'}: ${escapeText(person||'Не указан',200)}`);
   if(!income)lines.push('Категория: '+escapeText(r.category||'Прочие расходы',150));
-  const description=((income?r.comment:r.description)||'').replace(/\[Касса:\s*[^\]]*\]\s*/gi,'').trim();
+  const description=formatDescription((income?r.comment:r.description)||'').replace(/\[Касса:\s*[^\]]*\]\s*/gi,'').trim();
   const purpose=description||'Не указано';
   lines.push((income?'Основание: ':'За что: ')+escapeText(purpose.slice(0,500),500));
   for(let start=500;start<purpose.length;start+=500)lines.push(escapeText(purpose.slice(start,start+500),500));
