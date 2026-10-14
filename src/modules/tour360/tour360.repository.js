@@ -615,6 +615,12 @@ export class Tour360Repository {
     if (tourError || !targetTour || Number(targetTour.project_id) !== pId) throw new AppError('Тур не принадлежит проекту', 403);
     if (targetTour.is_active) throw new AppError('Загрузка доступна только в неопубликованный тур', 409);
 
+    if (typeof filename !== 'string' || !/\.(jpe?g|webp)$/i.test(filename)) {
+      throw new AppError('Допустимы только JPG и WEBP панорамы', 400);
+    }
+    if (!Number.isSafeInteger(fileSizeBytes) || fileSizeBytes < 1 || fileSizeBytes > 25 * 1024 * 1024) {
+      throw new AppError('Размер панорамы должен быть от 1 байта до 25 МБ', 400);
+    }
     const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const timestamp = Date.now();
     const tId = tourId || 'new';
