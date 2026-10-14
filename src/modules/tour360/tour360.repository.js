@@ -1,8 +1,8 @@
 import { getDB, getServiceDB } from '../../db/connection.js';
+import { AppError } from '../../shared/errors/errorHandler.js';
 
 const DRAFT_BUCKET = 'panoramas-360-drafts';
 const PUBLISHED_BUCKET = 'panoramas-360';
-import { AppError } from '../../shared/errors/errorHandler.js';
 
 export class Tour360Repository {
   /**
@@ -201,8 +201,12 @@ export class Tour360Repository {
   static async updateTour(tourId, data) {
     const db = getDB();
     const now = new Date().toISOString();
-    const { data: existing } = await db.from('tours_360').select('id, project_id').eq('id', tourId).single();
+    const { data: existing } = await db.from('tours_360').select('id, project_id, is_active').eq('id', tourId).single();
     if (!existing) throw new AppError('360 тур не найден', 404);
+    // Never switch storage buckets implicitly: a published tour must not point at private draft files.
+    if (data.is_active === true && !existing.is_active) {
+      throw new AppError('Публикация черновика недоступна до безопасного переноса панорам в публичное хранилище', 409);
+    }
 
     if (data.entity_type && data.entity_id) {
       await this.validateEntityBelongsToProject(existing.project_id, data.entity_type, data.entity_id);
