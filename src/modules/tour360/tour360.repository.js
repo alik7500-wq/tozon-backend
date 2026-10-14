@@ -1,4 +1,7 @@
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
+
+const DRAFT_BUCKET = 'panoramas-360-drafts';
+const PUBLISHED_BUCKET = 'panoramas-360';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 export class Tour360Repository {
@@ -8,7 +11,7 @@ export class Tour360Repository {
   static async getSignedReadUrl(bucket, storagePath, expiresIn = 86400) {
     if (!storagePath) return null;
     try {
-      const db = getDB();
+      const db = getServiceDB();
       const { data, error } = await db.storage.from(bucket).createSignedUrl(storagePath, expiresIn);
       if (error) {
         console.warn(`[Tour360] Failed to generate signed URL for ${bucket}/${storagePath}:`, error.message);
@@ -113,8 +116,9 @@ export class Tour360Repository {
 
     // Attach signed read URLs for panoramas and thumbnails
     const panoramasWithUrls = await Promise.all((panoramas || []).map(async (p) => {
-      const imageUrl = await this.getSignedReadUrl('panoramas-360', p.storage_path);
-      const thumbUrl = p.thumbnail_path ? await this.getSignedReadUrl('panoramas-360', p.thumbnail_path) : imageUrl;
+      const bucket = tour.is_active ? PUBLISHED_BUCKET : DRAFT_BUCKET;
+      const imageUrl = await this.getSignedReadUrl(bucket, p.storage_path);
+      const thumbUrl = p.thumbnail_path ? await this.getSignedReadUrl(bucket, p.thumbnail_path) : imageUrl;
       
       const hotspots = (p.panorama_hotspots || []).map(h => ({
         id: h.id,
@@ -464,11 +468,16 @@ export class Tour360Repository {
    * Generate secure presigned upload URL for 360 panorama image
    */
   static async generateUploadUrl(projectId, { tourId, filename, fileSizeBytes }) {
-    const db = getDB();
+    const db = getServiceDB();
     const pId = parseInt(projectId, 10);
 
     const { data: project } = await db.from('projects').select('id').eq('id', pId).single();
     if (!project) throw new AppError('Проект не найден', 404);
+
+    if (!tourId) throw new AppError('tourId обязателен для безопасной загрузки', 400);
+    const { data: targetTour, error: tourError } = await db.from('tours_360').select('id, project_id, is_active').eq('id', tourId).maybeSingle();
+    if (tourError || !targetTour || Number(targetTour.project_id) !== pId) throw new AppError('Тур не принадлежит проекту', 403);
+    if (targetTour.is_active) throw new AppError('Загрузка доступна только в неопубликованный тур', 409);
 
     const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const timestamp = Date.now();
@@ -476,10 +485,10 @@ export class Tour360Repository {
     const storagePath = `projects/${pId}/360/${tId}/${timestamp}_${cleanFilename}`;
 
     try {
-      const { data, error } = await db.storage.from('panoramas-360').createSignedUploadUrl(storagePath);
+      const { data, error } = await db.storage.from(DRAFT_BUCKET).createSignedUploadUrl(storagePath);
       if (error) {
         return {
-          bucket: 'panoramas-360',
+          bucket: DRAFT_BUCKET,
           storagePath,
           storage_path: storagePath,
           signedUrl: null,
@@ -489,7 +498,7 @@ export class Tour360Repository {
       }
 
       return {
-        bucket: 'panoramas-360',
+        bucket: DRAFT_BUCKET,
         storagePath,
         storage_path: storagePath,
         signedUrl: data?.signedUrl,
@@ -499,7 +508,7 @@ export class Tour360Repository {
       };
     } catch (e) {
       return {
-        bucket: 'panoramas-360',
+        bucket: DRAFT_BUCKET,
         storagePath,
         storage_path: storagePath,
         signedUrl: null,
