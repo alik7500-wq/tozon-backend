@@ -17,6 +17,8 @@ export async function stagePanoramaCopies(storage, manifest) {
     }
   }
   const copied = [];
+  const operationId = globalThis.crypto?.randomUUID?.();
+  if (!operationId) throw new Error('PUBLISH_OPERATION_ID_REQUIRED');
   const seen = new Set();
   try {
     for (const entry of manifest.files) {
@@ -29,7 +31,10 @@ export async function stagePanoramaCopies(storage, manifest) {
       seen.add(dest);
       const { data: blob, error: downloadError } = await storage.from(manifest.source_bucket).download(src);
       if (downloadError || !blob) throw new Error('PANORAMA_DOWNLOAD_FAILED');
-      const { error: uploadError } = await storage.from(manifest.destination_bucket).upload(dest, blob, { upsert: false, contentType: blob.type || 'image/jpeg' });
+      const { data: existing, error: existingError } = await storage.from(manifest.destination_bucket).list(dest.slice(0, dest.lastIndexOf('/')), { search: dest.slice(dest.lastIndexOf('/') + 1), limit: 100 });
+      if (existingError) throw new Error('DESTINATION_CHECK_FAILED');
+      if ((existing || []).some(item => item.name === dest.slice(dest.lastIndexOf('/') + 1))) throw new Error('DESTINATION_ALREADY_EXISTS');
+      const { error: uploadError } = await storage.from(manifest.destination_bucket).upload(dest, blob, { upsert: false, contentType: blob.type || 'image/jpeg', metadata: { tour360_operation_id: operationId } });
       if (uploadError) throw new Error('PANORAMA_UPLOAD_FAILED');
       copied.push(dest);
     }
