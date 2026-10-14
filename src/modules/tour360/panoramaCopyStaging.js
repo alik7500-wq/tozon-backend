@@ -42,6 +42,15 @@ export async function stagePanoramaCopies(storage, manifest) {
   } catch (error) {
     const rollbackErrors = [];
     for (const dest of [...copied].reverse()) {
+      const folder = dest.slice(0, dest.lastIndexOf('/'));
+      const filename = dest.slice(dest.lastIndexOf('/') + 1);
+      const { data: candidates, error: lookupError } = await storage.from(manifest.destination_bucket).list(folder, { search: filename, limit: 100 });
+      const current = (candidates || []).find(item => item.name === filename);
+      // Never delete an object whose ownership cannot be verified.
+      if (lookupError || current?.metadata?.tour360_operation_id !== operationId) {
+        rollbackErrors.push(dest);
+        continue;
+      }
       const { error: removeError } = await storage.from(manifest.destination_bucket).remove([dest]);
       if (removeError) rollbackErrors.push(dest);
     }
