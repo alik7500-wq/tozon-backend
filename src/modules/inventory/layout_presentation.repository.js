@@ -218,6 +218,7 @@ export class LayoutPresentationRepository {
       'description',
       'description_ru',
       'description_tg',
+      'gallery_images',
       'furnished_plan_path',
       'technical_plan_path',
       'living_area',
@@ -236,6 +237,10 @@ export class LayoutPresentationRepository {
       'is_published',
     ];
 
+    if (payload.gallery_images !== undefined) {
+      if (!Array.isArray(payload.gallery_images) || payload.gallery_images.some(img => !img || typeof img.url !== 'string' || !['http:','https:'].includes((() => { try { return new URL(img.url).protocol; } catch { return ''; } })()) || (img.title != null && typeof img.title !== 'string'))) throw new AppError('Укажите корректные ссылки изображений',400);
+      payload = {...payload,gallery_images:payload.gallery_images.map(img=>({url:img.url,title:(img.title || '').slice(0,300)}))};
+    }
     const updates = { updated_at: now };
     for (const key of allowedFields) {
       if (payload[key] !== undefined) {
