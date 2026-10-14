@@ -394,6 +394,19 @@ export class Tour360Repository {
     return true;
   }
 
+  /** Return owning tour visibility without signing or exposing private images. */
+  static async getPanoramaTourVisibility(panoramaId) {
+    const db = getServiceDB();
+    const { data: panorama, error } = await db.from('panorama_360')
+      .select('tour_id').eq('id', panoramaId).maybeSingle();
+    if (error) throw error;
+    if (!panorama) return null;
+    const { data: tour, error: tourError } = await db.from('tours_360')
+      .select('is_active').eq('id', panorama.tour_id).maybeSingle();
+    if (tourError) throw tourError;
+    return tour;
+  }
+
   /**
    * Get hotspots of a panorama
    */
