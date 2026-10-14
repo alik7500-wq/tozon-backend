@@ -1,11 +1,6 @@
 name: TOZON Sales Automation Detector Scheduler
 
 on:
-  schedule:
-    # 08:00 - 19:30 Asia/Dushanbe (UTC+5) = 03:00 - 14:30 UTC every 30 minutes (24 runs/day)
-    - cron: '*/30 3-14 * * *'
-    # 20:00 Asia/Dushanbe (UTC+5) = 15:00 UTC (1 run/day)
-    - cron: '0 15 * * *'
   workflow_dispatch:
 
 permissions:
