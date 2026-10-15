@@ -7,7 +7,7 @@ export const createTourSchema = z.object({
   }),
   entity_type: z.enum(['BUILDING', 'SECTION', 'FLOOR', 'UNIT', 'POI']).nullable().optional(),
   entity_id: z.number().int().positive().nullable().optional(),
-  is_active: z.boolean().optional().default(true),
+  is_active: z.literal(false).optional().default(false),
 });
 
 export const updateTourSchema = z.object({
