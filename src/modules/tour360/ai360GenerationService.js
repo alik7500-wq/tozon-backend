@@ -18,6 +18,51 @@ export function validateAi360Image(image) {
   throw new Error('AI image MIME type or file signature is invalid');
 }
 
+
+function getWebpDimensions(bytes) {
+  const chunk = bytes.toString('ascii', 12, 16);
+  if (chunk === 'VP8X' && bytes.length >= 30) return {
+    width: 1 + bytes.readUIntLE(24, 3), height: 1 + bytes.readUIntLE(27, 3)
+  };
+  if (chunk === 'VP8 ' && bytes.length >= 30 && bytes[23] === 0x9d && bytes[24] === 0x01 && bytes[25] === 0x2a) return {
+    width: bytes.readUInt16LE(26) & 0x3fff, height: bytes.readUInt16LE(28) & 0x3fff
+  };
+  if (chunk === 'VP8L' && bytes.length >= 25 && bytes[20] === 0x2f) {
+    const packed = bytes.readUInt32LE(21);
+    return { width: (packed & 0x3fff) + 1, height: ((packed >>> 14) & 0x3fff) + 1 };
+  }
+  return null;
+}
+
+function getJpegDimensions(bytes) {
+  let pos = 2;
+  while (pos + 4 < bytes.length) {
+    if (bytes[pos] !== 0xff) return null;
+    while (bytes[pos] === 0xff) pos++;
+    const marker = bytes[pos++];
+    if (marker === 0xd9 || marker === 0xda) return null;
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (pos + 2 > bytes.length) return null;
+    const length = bytes.readUInt16BE(pos);
+    if (length < 2 || pos + length > bytes.length) return null;
+    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+      if (length < 7) return null;
+      return { height: bytes.readUInt16BE(pos + 3), width: bytes.readUInt16BE(pos + 5) };
+    }
+    pos += length;
+  }
+  return null;
+}
+
+export function validatePanoramaDimensions(bytes, mimeType) {
+  const dimensions = mimeType === 'image/webp' ? getWebpDimensions(bytes) : getJpegDimensions(bytes);
+  if (!dimensions || dimensions.width < 2048 || dimensions.height < 1024 ||
+      dimensions.width !== dimensions.height * 2) {
+    throw new Error('AI output must be a valid 2:1 panorama at least 2048x1024');
+  }
+  return dimensions;
+}
+
 /**
  * Controlled pilot generation. Explicit provider and private storage adapters are required.
  * Caller must independently verify real image dimensions and projection before publication.
@@ -38,10 +83,11 @@ export async function generateAi360PilotDraft({ provider, draftStorage, tour, pr
     height: brief.targetHeight,
     projection: brief.projection
   }));
+  const dimensions = validatePanoramaDimensions(image.bytes, image.mimeType);
   const safeRoom = REQUIRED_360_ROOMS.indexOf(room) + 1;
   const randomId = randomUUID();
   const storagePath = `projects/${Number(projectId)}/360/${Number(tour.id)}/ai_${safeRoom}_${randomId}.${image.extension}`;
   const result = await draftStorage.upload({ path: storagePath, bytes: image.bytes, contentType: image.mimeType, upsert: false });
   if (!result || result.ok !== true) throw new Error('Private draft upload failed');
-  return { room, storage_path: storagePath, mimeType: image.mimeType, bytes: image.bytes.length, status: 'DRAFT_UPLOADED_NOT_PUBLISHED', requiresProjectionValidation: true };
+  return { room, storage_path: storagePath, mimeType: image.mimeType, bytes: image.bytes.length, width: dimensions.width, height: dimensions.height, status: 'DRAFT_UPLOADED_NOT_PUBLISHED', requiresProjectionValidation: true };
 }
