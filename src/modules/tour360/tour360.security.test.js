@@ -63,4 +63,13 @@ describe('360 draft publication security', () => {
     expect(serviceFrom).toHaveBeenCalledTimes(2);
   });
 
+  it('limits private draft signed read URLs to five minutes while retaining published URL expiry', async () => {
+    const createSignedUrl = vi.fn().mockResolvedValue({ data: { signedUrl: 'https://example.test/signed' }, error: null });
+    getServiceDB.mockReturnValue({ from, storage: { from: vi.fn().mockReturnValue({ createSignedUrl }) } });
+    await Tour360Repository.getSignedReadUrl('panoramas-360-drafts', 'projects/3/360/1/test.jpg', 86400);
+    expect(createSignedUrl).toHaveBeenLastCalledWith('projects/3/360/1/test.jpg', 300);
+    await Tour360Repository.getSignedReadUrl('panoramas-360', 'projects/3/360/1/test.jpg', 86400);
+    expect(createSignedUrl).toHaveBeenLastCalledWith('projects/3/360/1/test.jpg', 86400);
+  });
+
 });
