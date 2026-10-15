@@ -10,9 +10,11 @@ export class Tour360Repository {
    */
   static async getSignedReadUrl(bucket, storagePath, expiresIn = 86400) {
     if (!storagePath) return null;
+    // Draft URLs must be short-lived even when a caller requests a longer lifetime.
+    const safeExpiry = bucket === DRAFT_BUCKET ? Math.min(300, Math.max(1, Number(expiresIn) || 300)) : expiresIn;
     try {
       const db = getServiceDB();
-      const { data, error } = await db.storage.from(bucket).createSignedUrl(storagePath, expiresIn);
+      const { data, error } = await db.storage.from(bucket).createSignedUrl(storagePath, safeExpiry);
       if (error) {
         console.warn(`[Tour360] Failed to generate signed URL for ${bucket}/${storagePath}:`, error.message);
         return null;
