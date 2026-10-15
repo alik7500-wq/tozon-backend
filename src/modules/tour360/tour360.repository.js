@@ -372,8 +372,17 @@ export class Tour360Repository {
     const { data: uploadedFiles, error: storageError } = await getServiceDB().storage
       .from(DRAFT_BUCKET).list(expectedPrefix.replace(/\/$/, ''), { search: filename, limit: 100 });
     if (storageError) throw new AppError('Не удалось проверить загруженный файл', 503);
-    if (!(uploadedFiles || []).some(file => file.name === filename)) {
+    const uploadedFile = (uploadedFiles || []).find(file => file.name === filename);
+    if (!uploadedFile) {
       throw new AppError('Файл панорамы ещё не загружен в защищённое хранилище', 409);
+    }
+    const storedBytes = Number(uploadedFile.metadata?.size ?? uploadedFile.metadata?.contentLength ?? uploadedFile.metadata?.content_length);
+    if (!Number.isFinite(storedBytes) || storedBytes < 1 || storedBytes > 25 * 1024 * 1024) {
+      throw new AppError('Размер загруженного файла не подтверждён или превышает 25 МБ', 409);
+    }
+    const storedMime = uploadedFile.metadata?.mimetype ?? uploadedFile.metadata?.contentType ?? uploadedFile.metadata?.content_type;
+    if (!['image/jpeg', 'image/webp'].includes(storedMime)) {
+      throw new AppError('Формат загруженного файла не подтверждён: требуется JPG или WEBP', 409);
     }
 
     const roomName = (data.name || data.title || 'Панорама').trim();
