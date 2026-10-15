@@ -94,7 +94,7 @@ export class NotificationsRepository {
 
     if (error) {
       if (error.code === '42P01' || error.message?.includes('does not exist')) {
-        return { total: 0, unread: 0, payments: 0, leads_and_reservations: 0, sms_failed: 0 };
+        return { total: 0, unread: 0, payments: 0, leads_and_reservations: 0, sms_failed: 0, sales_plans: 0 };
       }
       throw error;
     }
@@ -122,7 +122,16 @@ export class NotificationsRepository {
           'MANAGER_TASK_OVERDUE'
         ].includes(type);
       }).length,
-      sms_failed: list.filter(n => (n.event_type || n.type) === 'SMS_FAILED').length
+      sms_failed: list.filter(n => (n.event_type || n.type) === 'SMS_FAILED').length,
+      sales_plans: list.filter(n => {
+        const type = n.event_type || n.type;
+        return [
+          'SALES_PLAN_BEHIND_SCHEDULE',
+          'SALES_PLAN_AT_RISK',
+          'SALES_PLAN_ACHIEVED',
+          'SALES_PLAN_WEEKLY_DIGEST'
+        ].includes(type);
+      }).length
     };
   }
 
@@ -158,6 +167,13 @@ export class NotificationsRepository {
         ]);
       } else if (filters.category === 'sms') {
         query = query.eq('event_type', 'SMS_FAILED');
+      } else if (filters.category === 'sales_plans' || filters.category === 'plans') {
+        query = query.in('event_type', [
+          'SALES_PLAN_BEHIND_SCHEDULE',
+          'SALES_PLAN_AT_RISK',
+          'SALES_PLAN_ACHIEVED',
+          'SALES_PLAN_WEEKLY_DIGEST'
+        ]);
       }
     }
 

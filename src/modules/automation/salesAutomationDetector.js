@@ -1,6 +1,7 @@
 import { getServiceDB } from '../../db/connection.js';
 import { getBusinessDate, getBusinessDateTime, calculateWorkingMinutes } from '../../utils/businessTime.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { SalesPlanAlertsService } from '../sales-plans/salesPlanAlerts.service.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 // Cutoff boundary for historical data exclusion
@@ -51,7 +52,14 @@ export class SalesAutomationDetector {
       firstContactWarningNotified: 0,
       firstContactOverdueNotified: 0,
       stagnantLeadsNotified: 0,
-      controlDigestNotified: 0
+      controlDigestNotified: 0,
+      // V1.4 (Sales Plan Control)
+      salesPlansScanned: 0,
+      salesPlansApproved: 0,
+      behindScheduleNotified: 0,
+      atRiskNotified: 0,
+      achievedNotified: 0,
+      weeklyDigestNotified: 0
     };
 
     try {
@@ -278,6 +286,23 @@ export class SalesAutomationDetector {
             }
           }
         }
+      }
+
+      // --- F. SALES AUTOMATION V1.4: SALES PLAN PERFORMANCE CONTROL ---
+      try {
+        const planAlertStats = await SalesPlanAlertsService.evaluateSalesPlansAlerts({
+          businessDate: effectiveDate,
+          isDryRun
+        });
+
+        stats.salesPlansScanned = planAlertStats.plansScanned || 0;
+        stats.salesPlansApproved = planAlertStats.approvedPlansCount || 0;
+        stats.behindScheduleNotified = planAlertStats.behindScheduleNotified || 0;
+        stats.atRiskNotified = planAlertStats.atRiskNotified || 0;
+        stats.achievedNotified = planAlertStats.achievedNotified || 0;
+        stats.weeklyDigestNotified = planAlertStats.weeklyDigestNotified || 0;
+      } catch (planAlertErr) {
+        console.error('[SalesAutomationDetector] Error evaluating sales plans alerts (V1.4):', planAlertErr.message);
       }
 
       return stats;

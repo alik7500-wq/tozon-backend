@@ -16,6 +16,15 @@ router.get('/audit-logs', SalesPlansController.getAuditLogs);
 // GET /api/sales-plans/deals - Drill-down list of contracts for Gross, Cancellations, Net
 router.get('/deals', SalesPlansController.getDealsBreakdown);
 
+// GET /api/sales-plans/alert-settings - Fetch configurable alert thresholds (ADMIN, DIRECTOR)
+router.get('/alert-settings', SalesPlansController.getAlertSettings);
+
+// PUT /api/sales-plans/alert-settings - Update configurable alert thresholds (ADMIN only)
+router.put('/alert-settings', SalesPlansController.updateAlertSettings);
+
+// GET /api/sales-plans/alerts-history - View alert events history (ADMIN, DIRECTOR, SALES_MANAGER with self-scope)
+router.get('/alerts-history', SalesPlansController.getAlertsHistory);
+
 // GET /api/sales-plans - List of raw sales plans for a period
 router.get('/', SalesPlansController.getSalesPlans);
 

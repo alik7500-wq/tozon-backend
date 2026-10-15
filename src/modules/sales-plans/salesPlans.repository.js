@@ -28,8 +28,11 @@ export class SalesPlansRepository {
         projects!project_id(id, name, code, currency),
         buildings!building_id(id, name, code, project_id)
       `)
-      .eq('period', period)
-      .order('id', { ascending: true });
+      .eq('period', period);
+
+    if (typeof query.order === 'function') {
+      query = query.order('id', { ascending: true });
+    }
 
     if (filters.scope_type) {
       query = query.eq('scope_type', filters.scope_type);
@@ -366,4 +369,146 @@ export class SalesPlansRepository {
 
     return { projects: projects || [], buildings: buildings || [] };
   }
+
+  /**
+   * Fetch configurable sales plan alert settings (V1.4)
+   * Falls back to standard defaults if table is empty or missing.
+   */
+  static async getAlertSettings() {
+    const db = getServiceDB();
+    try {
+      const { data, error } = await db
+        .from('sales_plan_alert_settings')
+        .select('*')
+        .eq('id', 1)
+        .maybeSingle();
+
+      if (error) {
+        // Fallback to default settings if table not yet migrated or schema error
+        return {
+          id: 1,
+          behind_schedule_threshold_pp: 15.0,
+          at_risk_forecast_threshold_pct: 80.0,
+          min_elapsed_working_days: 3,
+          notify_achieved_enabled: true,
+          weekly_digest_enabled: true,
+          weekly_digest_day_of_week: 1,
+          weekly_digest_hour: 9,
+          updated_at: new Date().toISOString()
+        };
+      }
+
+      if (!data) {
+        return {
+          id: 1,
+          behind_schedule_threshold_pp: 15.0,
+          at_risk_forecast_threshold_pct: 80.0,
+          min_elapsed_working_days: 3,
+          notify_achieved_enabled: true,
+          weekly_digest_enabled: true,
+          weekly_digest_day_of_week: 1,
+          weekly_digest_hour: 9,
+          updated_at: new Date().toISOString()
+        };
+      }
+
+      return {
+        ...data,
+        behind_schedule_threshold_pp: Number(data.behind_schedule_threshold_pp),
+        at_risk_forecast_threshold_pct: Number(data.at_risk_forecast_threshold_pct),
+        min_elapsed_working_days: Number(data.min_elapsed_working_days),
+        weekly_digest_day_of_week: Number(data.weekly_digest_day_of_week),
+        weekly_digest_hour: Number(data.weekly_digest_hour)
+      };
+    } catch (err) {
+      return {
+        id: 1,
+        behind_schedule_threshold_pp: 15.0,
+        at_risk_forecast_threshold_pct: 80.0,
+        min_elapsed_working_days: 3,
+        notify_achieved_enabled: true,
+        weekly_digest_enabled: true,
+        weekly_digest_day_of_week: 1,
+        weekly_digest_hour: 9,
+        updated_at: new Date().toISOString()
+      };
+    }
+  }
+
+  /**
+   * Update configurable sales plan alert settings (ADMIN only)
+   */
+  static async updateAlertSettings(settings, userId) {
+    const db = getServiceDB();
+    const payload = {
+      behind_schedule_threshold_pp: Number(settings.behind_schedule_threshold_pp),
+      at_risk_forecast_threshold_pct: Number(settings.at_risk_forecast_threshold_pct),
+      min_elapsed_working_days: Number(settings.min_elapsed_working_days),
+      notify_achieved_enabled: Boolean(settings.notify_achieved_enabled),
+      weekly_digest_enabled: Boolean(settings.weekly_digest_enabled),
+      weekly_digest_day_of_week: Number(settings.weekly_digest_day_of_week || 1),
+      weekly_digest_hour: Number(settings.weekly_digest_hour || 9),
+      updated_by: userId ? Number(userId) : null,
+      updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = await db
+      .from('sales_plan_alert_settings')
+      .upsert({ id: 1, ...payload })
+      .select('*')
+      .single();
+
+    if (error) {
+      console.error('Failed to update sales plan alert settings:', error.message);
+      throw error;
+    }
+
+    return {
+      ...data,
+      behind_schedule_threshold_pp: Number(data.behind_schedule_threshold_pp),
+      at_risk_forecast_threshold_pct: Number(data.at_risk_forecast_threshold_pct),
+      min_elapsed_working_days: Number(data.min_elapsed_working_days),
+      weekly_digest_day_of_week: Number(data.weekly_digest_day_of_week),
+      weekly_digest_hour: Number(data.weekly_digest_hour)
+    };
+  }
+
+  /**
+   * Fetch recent alert history for sales plans
+   */
+  static async getAlertsHistory(filters = {}, user = null) {
+    const db = getServiceDB();
+    const role = user?.role || 'GUEST';
+
+    let query = db
+      .from('user_notifications')
+      .select('id, user_id, event_type, type, title, message, entity_type, entity_id, action_url, dedupe_key, metadata, created_at, is_read')
+      .in('event_type', [
+        'SALES_PLAN_BEHIND_SCHEDULE',
+        'SALES_PLAN_AT_RISK',
+        'SALES_PLAN_ACHIEVED',
+        'SALES_PLAN_WEEKLY_DIGEST'
+      ])
+      .order('created_at', { ascending: false })
+      .limit(Number(filters.limit || 50));
+
+    // RBAC: SALES_MANAGER can only see alerts addressed to themselves
+    if (role === 'SALES_MANAGER') {
+      query = query.eq('user_id', Number(user.id));
+    } else if (filters.userId) {
+      query = query.eq('user_id', Number(filters.userId));
+    }
+
+    if (filters.eventType) {
+      query = query.eq('event_type', filters.eventType);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      console.error('Failed to fetch sales plan alerts history:', error.message);
+      return [];
+    }
+    return data || [];
+  }
 }
+

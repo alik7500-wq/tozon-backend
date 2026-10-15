@@ -75,3 +75,14 @@ export const dealsBreakdownQuerySchema = z.object({
   projectId: z.coerce.number().int().positive().optional(),
   buildingId: z.coerce.number().int().positive().optional(),
 });
+
+export const updateAlertSettingsSchema = z.object({
+  behind_schedule_threshold_pp: z.coerce.number().min(1.0, 'Порог отставания должен быть >= 1.0%').max(90.0, 'Порог отставания должен быть <= 90.0%'),
+  at_risk_forecast_threshold_pct: z.coerce.number().min(10.0, 'Порог риска прогноза должен быть >= 10.0%').max(99.0, 'Порог риска прогноза должен быть <= 99.0%'),
+  min_elapsed_working_days: z.coerce.number().int().min(0, 'Льготный период должен быть >= 0').max(15, 'Льготный период должен быть <= 15 дней'),
+  notify_achieved_enabled: z.boolean().optional().default(true),
+  weekly_digest_enabled: z.boolean().optional().default(true),
+  weekly_digest_day_of_week: z.coerce.number().int().min(1).max(7).optional().default(1),
+  weekly_digest_hour: z.coerce.number().int().min(0).max(23).optional().default(9)
+});
+
