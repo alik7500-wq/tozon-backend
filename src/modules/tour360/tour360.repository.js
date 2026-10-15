@@ -354,7 +354,12 @@ export class Tour360Repository {
     if (typeof data.storage_path !== 'string' || !data.storage_path.startsWith(expectedPrefix) || data.storage_path.includes('..')) throw new AppError('Путь панорамы не принадлежит черновику тура', 400);
 
     const filename = data.storage_path.slice(expectedPrefix.length);
-    if (!filename || filename.includes('/')) throw new AppError('Некорректный путь панорамы', 400);
+    if (!filename || filename.includes('/') || !/^[0-9]+_[A-Za-z0-9._-]+\\.(?:jpe?g|webp)$/i.test(filename)) {
+      throw new AppError('Некорректный путь панорамы: требуется файл из подписанной загрузки', 400);
+    }
+    if (data.thumbnail_path) {
+      throw new AppError('Отдельная миниатюра пока не поддерживается для закрытых черновиков', 400);
+    }
     const { data: uploadedFiles, error: storageError } = await getServiceDB().storage
       .from(DRAFT_BUCKET).list(expectedPrefix.replace(/\/$/, ''), { search: filename, limit: 100 });
     if (storageError) throw new AppError('Не удалось проверить загруженный файл', 503);
