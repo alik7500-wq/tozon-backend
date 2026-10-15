@@ -465,7 +465,7 @@ export class Tour360Repository {
   static async getTourVisibility(tourId) {
     const db = getServiceDB();
     const { data, error } = await db.from('tours_360')
-      .select('is_active').eq('id', tourId).maybeSingle();
+      .select('is_active, project_id').eq('id', tourId).maybeSingle();
     if (error) throw error;
     return data;
   }
