@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { getDB, getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
@@ -354,7 +355,7 @@ export class Tour360Repository {
     if (typeof data.storage_path !== 'string' || !data.storage_path.startsWith(expectedPrefix) || data.storage_path.includes('..')) throw new AppError('Путь панорамы не принадлежит черновику тура', 400);
 
     const filename = data.storage_path.slice(expectedPrefix.length);
-    if (!filename || filename.includes('/') || !/^[0-9]+_[A-Za-z0-9._-]+\.(?:jpe?g|webp)$/i.test(filename)) {
+    if (!filename || filename.includes('/') || !/^(?:[0-9]+|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})_[A-Za-z0-9._-]+\.(?:jpe?g|webp)$/i.test(filename)) {
       throw new AppError('Некорректный путь панорамы: требуется файл из подписанной загрузки', 400);
     }
     if (data.thumbnail_path) {
@@ -646,9 +647,8 @@ export class Tour360Repository {
       throw new AppError('Размер панорамы должен быть от 1 байта до 25 МБ', 400);
     }
     const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const timestamp = Date.now();
-    const tId = tourId || 'new';
-    const storagePath = `projects/${pId}/360/${tId}/${timestamp}_${cleanFilename}`;
+    const uploadNonce = randomUUID();
+    const storagePath = `projects/${pId}/360/${tourId}/${uploadNonce}_${cleanFilename}`;
 
     try {
       const { data, error } = await db.storage.from(DRAFT_BUCKET).createSignedUploadUrl(storagePath);
