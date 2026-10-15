@@ -28,6 +28,8 @@ export function createOpenAi360Provider({ apiKey = process.env.OPENAI_API_KEY, m
       });
       const encoded = response?.data?.[0]?.b64_json;
       if (!encoded) throw new Error('Image provider returned no inline image bytes');
+      // Never pass a perspective reference render into the spherical panorama upload pipeline.
+      // A separate reference-render workflow must explicitly consume this result.
       return { bytes: Buffer.from(encoded, 'base64'), mimeType: 'image/png', projectionVerified: false, renderType: 'PERSPECTIVE_REFERENCE_ONLY' };
     }
   };
