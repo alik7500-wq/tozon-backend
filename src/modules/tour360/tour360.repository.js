@@ -444,6 +444,14 @@ export class Tour360Repository {
   }
 
   /** Return owning tour visibility without signing or exposing private images. */
+  static async getTourVisibility(tourId) {
+    const db = getServiceDB();
+    const { data, error } = await db.from('tours_360')
+      .select('is_active').eq('id', tourId).maybeSingle();
+    if (error) throw error;
+    return data;
+  }
+
   static async getPanoramaTourVisibility(panoramaId) {
     const db = getServiceDB();
     const { data: panorama, error } = await db.from('panorama_360')
