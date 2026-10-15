@@ -1,0 +1,27 @@
+name: 360 Draft Backend Checks
+on:
+  pull_request:
+    paths:
+      - 'src/modules/tour360/**'
+      - '.github/workflows/tour360-draft-checks.yml'
+  workflow_dispatch:
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Parse 360 repository and router
+        run: |
+          node --check src/modules/tour360/tour360.repository.js
+          node --check src/modules/tour360/tour360.router.js
+      - name: 360 draft safety unit tests (mocked database)
+        run: npx vitest run src/modules/tour360/tour360.security.test.js src/modules/tour360/panoramaCopyStaging.test.js src/modules/tour360/tour360PublishJournal.test.js src/modules/tour360/stageDraftWithJournal.test.js src/modules/tour360/inspectInterruptedPublish.test.js src/modules/tour360/verifyStagedPanoramas.test.js src/modules/tour360/verifyPanoramaChecksums.test.js src/modules/tour360/evaluateTour360PublishGate.test.js src/modules/tour360/assertTour360ActivationReady.test.js
+        env:
+          NODE_ENV: development
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_KEY: test-key-not-real
