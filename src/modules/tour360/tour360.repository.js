@@ -376,11 +376,12 @@ export class Tour360Repository {
     if (!uploadedFile) {
       throw new AppError('Файл панорамы ещё не загружен в защищённое хранилище', 409);
     }
-    const storedBytes = Number(uploadedFile.metadata?.size ?? uploadedFile.metadata?.contentLength ?? uploadedFile.metadata?.content_length);
+    const rawStoredBytes = uploadedFile.metadata?.size ?? uploadedFile.metadata?.contentLength ?? uploadedFile.metadata?.content_length;
+    const storedBytes = rawStoredBytes == null ? NaN : Number(rawStoredBytes);
     if (!Number.isFinite(storedBytes) || storedBytes < 1 || storedBytes > 25 * 1024 * 1024) {
       throw new AppError('Размер загруженного файла не подтверждён или превышает 25 МБ', 409);
     }
-    const storedMime = uploadedFile.metadata?.mimetype ?? uploadedFile.metadata?.contentType ?? uploadedFile.metadata?.content_type;
+    const storedMime = (uploadedFile.metadata?.mimetype ?? uploadedFile.metadata?.contentType ?? uploadedFile.metadata?.content_type ?? '').toLowerCase();
     if (!['image/jpeg', 'image/webp'].includes(storedMime)) {
       throw new AppError('Формат загруженного файла не подтверждён: требуется JPG или WEBP', 409);
     }
