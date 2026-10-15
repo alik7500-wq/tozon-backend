@@ -13,7 +13,7 @@ export async function saveCompletedSkyboxDraft({ job, projectId, tour, room, pri
   const sourceUrl = job.file_url || job.fileUrl;
   if (typeof sourceUrl !== 'string') throw new Error('Missing Skybox image URL');
   const parsed = new URL(sourceUrl);
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || !/^(?:[a-z0-9-]+\\.)*blockadelabs\\.com$/i.test(parsed.hostname)) throw new Error('Untrusted Skybox image host');
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port || !(parsed.hostname === 'blockadelabs.com' || parsed.hostname.endsWith('.blockadelabs.com'))) throw new Error('Untrusted Skybox image host');
   // download must enforce redirect blocking, DNS/IP restrictions and a byte cap.
   const payload = await download(sourceUrl, { maxBytes, redirect: 'error' });
   const image = validateAi360Image(payload);
