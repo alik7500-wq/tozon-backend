@@ -46,8 +46,9 @@ router.get('/projects/:projectId/360-tours', async (req, res, next) => {
 // GET /api/360-tours/:tourId
 router.get('/360-tours/:tourId', async (req, res, next) => {
   try {
+    const visibility = await Tour360Repository.getTourVisibility(req.params.tourId);
+    if (!visibility || (!visibility.is_active && !['ADMIN', 'DIRECTOR'].includes(req.user?.role))) throw new AppError('Тур не найден', 404);
     const tour = await Tour360Repository.getTourTree(req.params.tourId);
-    if (!tour.is_active && !['ADMIN', 'DIRECTOR'].includes(req.user?.role)) throw new AppError('Тур не найден', 404);
     res.status(200).json({
       status: 'success',
       data: { tour }
@@ -159,8 +160,9 @@ router.get('/360-panoramas/:panoramaId', async (req, res, next) => {
 // GET /api/360-tours/:tourId/panoramas
 router.get('/360-tours/:tourId/panoramas', async (req, res, next) => {
   try {
+    const visibility = await Tour360Repository.getTourVisibility(req.params.tourId);
+    if (!visibility || (!visibility.is_active && !['ADMIN', 'DIRECTOR'].includes(req.user?.role))) throw new AppError('Тур не найден', 404);
     const tour = await Tour360Repository.getTourTree(req.params.tourId);
-    if (!tour.is_active && !['ADMIN', 'DIRECTOR'].includes(req.user?.role)) throw new AppError('Тур не найден', 404);
     const panoramas = await Tour360Repository.getPanoramas(req.params.tourId);
     res.status(200).json({
       status: 'success',
