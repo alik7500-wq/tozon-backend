@@ -1,3 +1,4 @@
+import { skyboxStatus, getSkyboxClient, startSkyboxRoomGeneration } from './skyboxIntegration.js';
 import express from 'express';
 import { buildPilotAi360Manifest } from './ai360SceneBrief.js';
 import { Tour360Repository } from './tour360.repository.js';
@@ -79,6 +80,38 @@ router.get('/projects/:projectId/360-ai/pilot-manifest', requireDraftEditor, asy
     const manifest = buildPilotAi360Manifest();
     if (Number(req.params.projectId) !== manifest.projectId) throw new AppError('Пилотная планировка не относится к этому проекту', 404);
     res.status(200).json({ status: 'success', data: { manifest } });
+  } catch (error) { next(error); }
+});
+
+
+// Skybox API is server-side only; no key is returned to the browser.
+router.get('/projects/:projectId/360-ai/skybox/status', requireDraftEditor, (req, res) => {
+  res.json({ status: 'success', data: { skybox: skyboxStatus() } });
+});
+router.get('/projects/:projectId/360-ai/skybox/styles', requireDraftEditor, async (req, res, next) => {
+  try {
+    if (Number(req.params.projectId) !== 3) throw new AppError('Unsupported pilot project', 404);
+    const styles = await getSkyboxClient().listStyles(3);
+    res.json({ status: 'success', data: { styles } });
+  } catch (error) { next(error); }
+});
+router.get('/projects/:projectId/360-ai/skybox/jobs/:jobId', requireDraftEditor, async (req, res, next) => {
+  try {
+    if (Number(req.params.projectId) !== 3) throw new AppError('Unsupported pilot project', 404);
+    const jobId = Number(req.params.jobId);
+    if (!Number.isSafeInteger(jobId) || jobId < 1) throw new AppError('Invalid job ID', 400);
+    const job = await getSkyboxClient().getGeneration(jobId);
+    res.json({ status: 'success', data: { job } });
+  } catch (error) { next(error); }
+});
+router.post('/projects/:projectId/360-ai/skybox/generate', requireDraftEditor, async (req, res, next) => {
+  try {
+    const { tourId, room, styleId, approved } = req.body || {};
+    const result = await startSkyboxRoomGeneration({
+      projectId: Number(req.params.projectId), tourId: Number(tourId),
+      room, styleId: Number(styleId), approved
+    });
+    res.status(202).json({ status: 'success', data: { generation: result } });
   } catch (error) { next(error); }
 });
 
