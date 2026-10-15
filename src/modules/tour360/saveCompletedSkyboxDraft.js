@@ -1,4 +1,5 @@
-import { validateAi360Image } from './ai360GenerationService.js';
+import { randomUUID } from 'node:crypto';
+import { validateAi360Image, validatePanoramaDimensions } from './ai360GenerationService.js';
 
 /** Downloads a completed Skybox render without trusting provider-supplied URLs.
  * An explicit private storage adapter must be injected. No publication occurs.
@@ -16,12 +17,13 @@ export async function saveCompletedSkyboxDraft({ job, projectId, tour, room, pri
   // download must enforce redirect blocking, DNS/IP restrictions and a byte cap.
   const payload = await download(sourceUrl, { maxBytes, redirect: 'error' });
   const image = validateAi360Image(payload);
+  const dimensions = validatePanoramaDimensions(image.bytes, image.mimeType);
   if (image.bytes.length > maxBytes) throw new Error('Image exceeds limit');
   const index = ['Гостиная', 'Спальня', 'Кухня', 'Санузел', 'Коридор'].indexOf(room) + 1;
   const id = Number(job.id);
   if (!Number.isSafeInteger(id) || id < 1) throw new Error('Invalid job ID');
-  const path = `projects/${Number(projectId)}/360/${Number(tour.id)}/skybox_${index}_${id}.${image.extension}`;
+  const path = `projects/${Number(projectId)}/360/${Number(tour.id)}/${randomUUID()}_skybox_${index}_${id}.${image.extension}`;
   const saved = await privateStorage.upload({ path, bytes: image.bytes, contentType: image.mimeType, upsert: false });
   if (!saved || saved.ok !== true) throw new Error('Private draft upload failed');
-  return { room, storage_path: path, status: 'DRAFT_UPLOADED_NOT_PUBLISHED', requiresProjectionValidation: true, requiresFloorplanReview: true };
+  return { room, storage_path: path, width: dimensions.width, height: dimensions.height, status: 'DRAFT_UPLOADED_NOT_PUBLISHED', requiresProjectionValidation: true, requiresFloorplanReview: true };
 }
