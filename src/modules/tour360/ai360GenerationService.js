@@ -86,7 +86,7 @@ export async function generateAi360PilotDraft({ provider, draftStorage, tour, pr
   const dimensions = validatePanoramaDimensions(image.bytes, image.mimeType);
   const safeRoom = REQUIRED_360_ROOMS.indexOf(room) + 1;
   const randomId = randomUUID();
-  const storagePath = `projects/${Number(projectId)}/360/${Number(tour.id)}/ai_${safeRoom}_${randomId}.${image.extension}`;
+  const storagePath = `projects/${Number(projectId)}/360/${Number(tour.id)}/${randomId}_ai_${safeRoom}.${image.extension}`;
   const result = await draftStorage.upload({ path: storagePath, bytes: image.bytes, contentType: image.mimeType, upsert: false });
   if (!result || result.ok !== true) throw new Error('Private draft upload failed');
   return { room, storage_path: storagePath, mimeType: image.mimeType, bytes: image.bytes.length, width: dimensions.width, height: dimensions.height, status: 'DRAFT_UPLOADED_NOT_PUBLISHED', requiresProjectionValidation: true };
