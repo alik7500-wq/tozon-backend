@@ -72,9 +72,9 @@ export const uploadUrl360Schema = z.object({
   filename: z.string().trim().min(1, 'filename обязателен')
     .refine(fn => {
       const lower = fn.toLowerCase();
-      return lower.endsWith('.webp') || lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png');
+      return lower.endsWith('.webp') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
     }, {
-      message: 'Разрешены только изображения формата .webp, .jpg, .jpeg или .png'
+      message: 'Разрешены только изображения формата .webp, .jpg, .jpeg '
     }),
-  fileSizeBytes: z.number().int().positive().max(52428800, 'Максимальный размер панорамы — 50 МБ')
+  fileSizeBytes: z.number().int().positive().max(26214400, 'Максимальный размер панорамы — 25 МБ')
 });
