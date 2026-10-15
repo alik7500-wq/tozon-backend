@@ -337,17 +337,53 @@ export class SalesPlansRepository {
 
   /**
    * Fetch active sales managers
+   * Filters strictly for users who are:
+   * 1) Active (is_active = 1 or true)
+   * 2) Flagged as sales reps (is_sales_rep = true) or legacy active SALES_MANAGER (excluding warehouse and admin staff)
+   * 3) Excludes ADMIN, DIRECTOR, FINANCE_MANAGER, WAREHOUSE_MANAGER from being automatically included
    */
   static async getSalesManagers() {
     const db = getServiceDB();
-    const { data, error } = await db
+    try {
+      const { data, error } = await db
+        .from('users')
+        .select('id, name, email, role, is_active, is_sales_rep')
+        .order('id', { ascending: true });
+
+      if (!error && Array.isArray(data)) {
+        return data.filter(u => {
+          const isActive = u.is_active === 1 || u.is_active === true || u.is_active === '1';
+          if (!isActive) return false;
+          // ADMIN is NEVER automatically a sales manager
+          if (['ADMIN', 'DIRECTOR', 'FINANCE_MANAGER', 'WAREHOUSE_MANAGER'].includes(u.role) && !u.is_sales_rep) {
+            return false;
+          }
+          if (u.email === 'zavsklad@tozon.crm') return false;
+          // Explicit flag takes highest priority
+          if (u.is_sales_rep !== undefined && u.is_sales_rep !== null) {
+            return Boolean(u.is_sales_rep === true || u.is_sales_rep === 1 || u.is_sales_rep === 'true');
+          }
+          // Fallback during transition before column migration: only role SALES_MANAGER
+          return u.role === 'SALES_MANAGER';
+        });
+      }
+    } catch {
+      // In case is_sales_rep column is not in select list or causes error, run fallback
+    }
+
+    const { data: fbData, error: fbErr } = await db
       .from('users')
       .select('id, name, email, role, is_active')
-      .in('role', ['SALES_MANAGER', 'ADMIN'])
       .order('id', { ascending: true });
 
-    if (error) throw error;
-    return (data || []).filter(u => u.is_active === 1 || u.is_active === true || u.is_active === '1');
+    if (fbErr) throw fbErr;
+    return (fbData || []).filter(u => {
+      const isActive = u.is_active === 1 || u.is_active === true || u.is_active === '1';
+      if (!isActive) return false;
+      if (['ADMIN', 'DIRECTOR', 'FINANCE_MANAGER', 'WAREHOUSE_MANAGER'].includes(u.role)) return false;
+      if (u.email === 'zavsklad@tozon.crm') return false;
+      return u.role === 'SALES_MANAGER';
+    });
   }
 
   /**

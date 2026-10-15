@@ -124,7 +124,7 @@ router.patch('/units/batch-price', restrictTo('ADMIN'), async (req, res, next) =
   } catch (error) { next(error); }
 });
 
-router.patch('/units/:id/price', restrictTo('ADMIN', 'SALES_MANAGER', 'DIRECTOR', 'FINANCE_MANAGER'), async (req, res, next) => {
+router.patch('/units/:id/price', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
     const { price_per_m2_minor, scope, scopeOptions, unit_ids } = req.body;

@@ -83,6 +83,10 @@ router.get('/', async (req, res, next) => {
       projectId: parseOptionalBigInt(req.query.projectId),
       responsibleUserId: parseOptionalBigInt(req.query.responsibleUserId)
     };
+    // RBAC: SALES_MANAGER is strictly restricted to viewing only their own assigned leads
+    if (req.user?.role === 'SALES_MANAGER') {
+      filters.responsibleUserId = req.user.id;
+    }
     const leads = await LeadsRepository.findAll(filters);
     res.status(200).json({ status: 'success', data: { leads } });
   } catch (error) { next(error); }
@@ -93,13 +97,21 @@ router.get('/:id', async (req, res, next) => {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
     const lead = await LeadsRepository.findById(cleanId);
     if (!lead) return next(new AppError('Лид не найден', 404));
+    // RBAC: SALES_MANAGER can only inspect their own leads
+    if (req.user?.role === 'SALES_MANAGER' && lead.responsible_user_id && Number(lead.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к просмотру лидов других менеджеров', 403));
+    }
     res.status(200).json({ status: 'success', data: { lead } });
   } catch (error) { next(error); }
 });
 
 router.post('/', async (req, res, next) => {
   try {
-    const lead = await LeadsRepository.create(req.body);
+    const payload = { ...req.body };
+    if (req.user?.role === 'SALES_MANAGER' && !payload.responsible_user_id) {
+      payload.responsible_user_id = req.user.id;
+    }
+    const lead = await LeadsRepository.create(payload);
     // Auto-generate task for responsible manager
     await TasksService.onLeadCreated(lead, parseOptionalBigInt(req.user.id) || 1);
     res.status(201).json({ status: 'success', data: { lead } });
@@ -109,6 +121,11 @@ router.post('/', async (req, res, next) => {
 router.put('/:id', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+    if (req.user?.role === 'SALES_MANAGER' && existing.responsible_user_id && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к редактированию лидов других менеджеров', 403));
+    }
     if (req.body.responsible_user_id !== undefined && !['ADMIN', 'DIRECTOR'].includes(req.user.role)) {
       return next(new AppError('Переназначение ответственного менеджера разрешено только руководителю или администратору', 403));
     }
@@ -120,6 +137,11 @@ router.put('/:id', async (req, res, next) => {
 router.patch('/:id', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+    if (req.user?.role === 'SALES_MANAGER' && existing.responsible_user_id && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к редактированию лидов других менеджеров', 403));
+    }
     if (req.body.responsible_user_id !== undefined && !['ADMIN', 'DIRECTOR'].includes(req.user.role)) {
       return next(new AppError('Переназначение ответственного менеджера разрешено только руководителю или администратору', 403));
     }
@@ -131,6 +153,11 @@ router.patch('/:id', async (req, res, next) => {
 router.patch('/:id/status', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+    if (req.user?.role === 'SALES_MANAGER' && existing.responsible_user_id && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к изменению статуса лидов других менеджеров', 403));
+    }
     const lead = await LeadsRepository.updateStatus(
       cleanId,
       req.body.status,
@@ -147,6 +174,11 @@ router.patch('/:id/status', async (req, res, next) => {
 router.post('/:id/notes', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+    if (req.user?.role === 'SALES_MANAGER' && existing.responsible_user_id && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к лидам других менеджеров', 403));
+    }
     const note = await LeadsRepository.addNote(cleanId, parseOptionalBigInt(req.user.id) || 1, req.body.body);
     res.status(201).json({ status: 'success', data: { note } });
   } catch (error) { next(error); }
@@ -155,6 +187,11 @@ router.post('/:id/notes', async (req, res, next) => {
 router.delete('/:id', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+    if (['SALES_MANAGER', 'MANAGER'].includes(req.user?.role) && existing.responsible_user_id && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к удалению лидов других менеджеров', 403));
+    }
     await LeadsRepository.archive(cleanId);
     res.status(204).json({ status: 'success', data: null });
   } catch (error) { next(error); }
