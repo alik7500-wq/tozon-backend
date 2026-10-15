@@ -90,4 +90,21 @@ describe('360 draft publication security', () => {
     })).rejects.toThrow('требуется файл из подписанной загрузки');
   });
 
+  it('uses an unpredictable UUID upload path and only the private draft bucket', async () => {
+    const createSignedUploadUrl = vi.fn().mockResolvedValue({
+      data: { signedUrl: 'https://storage.example.test/signed-upload', token: 'mock-token' }, error: null
+    });
+    const storageFrom = vi.fn().mockReturnValue({ createSignedUploadUrl });
+    const projectSingle = vi.fn().mockResolvedValue({ data: { id: 3 } });
+    const tourSingle = vi.fn().mockResolvedValue({ data: { id: 7, project_id: 3, is_active: false }, error: null });
+    const serviceFrom = vi.fn()
+      .mockReturnValueOnce({ select: () => ({ eq: () => ({ single: projectSingle }) }) })
+      .mockReturnValueOnce({ select: () => ({ eq: () => ({ maybeSingle: tourSingle }) }) });
+    getServiceDB.mockReturnValue({ from: serviceFrom, storage: { from: storageFrom } });
+    const result = await Tour360Repository.generateUploadUrl(3, { tourId: 7, filename: 'room.jpg', fileSizeBytes: 1024 });
+    expect(result.storagePath).toMatch(/^projects\/3\/360\/7\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}_room\.jpg$/i);
+    expect(storageFrom).toHaveBeenCalledWith('panoramas-360-drafts');
+    expect(createSignedUploadUrl).toHaveBeenCalledWith(result.storagePath);
+  });
+
 });
