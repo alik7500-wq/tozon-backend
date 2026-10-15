@@ -239,6 +239,15 @@ describe('TOZON CRM — Sales Launch Phase 1 Roles & Security Suite', () => {
       await expect(authorizeSectionRequest(reqPlans)).rejects.toThrow('Нет права чтения этого раздела');
     });
 
+    it('strictly prohibits warehouse manager from accessing deals', async () => {
+      const reqDeals = {
+        user: warehouseUser,
+        originalUrl: '/api/deals',
+        method: 'GET'
+      };
+      await expect(authorizeSectionRequest(reqDeals)).rejects.toThrow('Нет права чтения этого раздела');
+    });
+
     it('verifies ROLE_PRESET_PERMISSIONS for WAREHOUSE_MANAGER has exact required permissions', () => {
       const preset = ROLE_PRESET_PERMISSIONS.WAREHOUSE_MANAGER;
       expect(preset).toContain('construction.stock');

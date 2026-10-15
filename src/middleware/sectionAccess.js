@@ -59,7 +59,8 @@ export const authorizeSectionRequest = async req => {
   } else if (/^\/api\/deals\/[^/]+\/payments(?:\/|$)/.test(path)) key = 'finance.payments';
   else if (path.startsWith('/api/deals')) {
     key = /\/sign$/.test(path) ? 'contracts.view' : 'deals.view';
-    if (read) allowed = hasSection(user,'deals.view') || hasAny(user, financeReads);
+    if (user.role === 'WAREHOUSE_MANAGER') allowed = false;
+    else if (read) allowed = hasSection(user,'deals.view') || hasAny(user, ['finance.view','finance.payments','finance.debtors','finance.cashflow']);
   } else if (path.startsWith('/api/leads')) key = 'leads.view';
   else if (path.startsWith('/api/sales-plans')) {
     key = 'leads.view';
