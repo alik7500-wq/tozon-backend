@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { buildAi360SceneBrief, REQUIRED_360_ROOMS } from './ai360SceneBrief.js';
 
 /** Provider adapter: generate({prompt, negativePrompt, references, width, height, projection})
@@ -38,7 +39,7 @@ export async function generateAi360PilotDraft({ provider, draftStorage, tour, pr
     projection: brief.projection
   }));
   const safeRoom = REQUIRED_360_ROOMS.indexOf(room) + 1;
-  const randomId = crypto.randomUUID();
+  const randomId = randomUUID();
   const storagePath = `projects/${Number(projectId)}/360/${Number(tour.id)}/ai_${safeRoom}_${randomId}.${image.extension}`;
   const result = await draftStorage.upload({ path: storagePath, bytes: image.bytes, contentType: image.mimeType, upsert: false });
   if (!result || result.ok !== true) throw new Error('Private draft upload failed');
