@@ -1,4 +1,5 @@
 import express from 'express';
+import { buildPilotAi360Manifest } from './ai360SceneBrief.js';
 import { Tour360Repository } from './tour360.repository.js';
 import {
   createTourSchema,
@@ -69,6 +70,15 @@ router.post('/projects/:projectId/360-tours', requireDraftEditor, async (req, re
     }
     next(error);
   }
+});
+
+// GET /api/projects/:projectId/360-ai/pilot-manifest — prompt preview only; no AI costs or writes.
+router.get('/projects/:projectId/360-ai/pilot-manifest', requireDraftEditor, async (req, res, next) => {
+  try {
+    const manifest = buildPilotAi360Manifest();
+    if (Number(req.params.projectId) !== manifest.projectId) throw new AppError('Пилотная планировка не относится к этому проекту', 404);
+    res.status(200).json({ status: 'success', data: { manifest } });
+  } catch (error) { next(error); }
 });
 
 // GET /api/360-tours/:tourId/publish-preflight — read-only, privileged
