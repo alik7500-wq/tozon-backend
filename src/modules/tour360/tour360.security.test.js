@@ -72,4 +72,22 @@ describe('360 draft publication security', () => {
     expect(createSignedUrl).toHaveBeenLastCalledWith('projects/3/360/1/test.jpg', 86400);
   });
 
+  it('rejects unverified thumbnail paths before querying storage', async () => {
+    const single = vi.fn().mockResolvedValue({ data: { id: 3, project_id: 2, is_active: false } });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ single }) }) });
+    await expect(Tour360Repository.createPanorama(3, {
+      name: 'Гостиная',
+      storage_path: 'projects/2/360/3/1720000000000_room.jpg',
+      thumbnail_path: 'projects/999/360/3/foreign.jpg'
+    })).rejects.toThrow('Отдельная миниатюра пока не поддерживается');
+  });
+
+  it('rejects arbitrary filenames that were not issued by signed upload endpoint', async () => {
+    const single = vi.fn().mockResolvedValue({ data: { id: 3, project_id: 2, is_active: false } });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ single }) }) });
+    await expect(Tour360Repository.createPanorama(3, {
+      name: 'Гостиная', storage_path: 'projects/2/360/3/arbitrary.jpg'
+    })).rejects.toThrow('требуется файл из подписанной загрузки');
+  });
+
 });
