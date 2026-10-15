@@ -1,3 +1,4 @@
+import { evaluateTour360Readiness } from './tour360Readiness.js';
 import { randomUUID } from 'node:crypto';
 import { getDB, getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
@@ -252,14 +253,21 @@ export class Tour360Repository {
       const { data, error } = await db.storage.from(DRAFT_BUCKET).list(folder, { search: filename, limit: 100 });
       if (error || !(data || []).some(object => object.name === filename)) missing.push(path);
     }
+    const panoramaIds = (panoramas || []).map(p => p.id);
+    const { data: hotspots, error: hotspotsError } = panoramaIds.length
+      ? await db.from('panorama_hotspots').select('id, panorama_id, hotspot_type, target_panorama_id').in('panorama_id', panoramaIds)
+      : { data: [], error: null };
+    if (hotspotsError) throw hotspotsError;
+    const navigation = evaluateTour360Readiness(panoramas || [], hotspots || []);
     return {
       tour_id: tour.id,
       project_id: tour.project_id,
       panorama_count: (panoramas || []).length,
+      navigation,
       file_count: files.length,
       invalid_paths: invalidPaths,
       missing_or_unreadable: missing,
-      ready_for_publish: files.length > 0 && invalidPaths.length === 0 && missing.length === 0,
+      ready_for_publish: navigation.navigation_ready && files.length > 0 && invalidPaths.length === 0 && missing.length === 0,
       published: false,
       note: 'Только предварительная проверка. Файлы не переносились, тур не опубликован.'
     };
