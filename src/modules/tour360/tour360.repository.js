@@ -1,5 +1,8 @@
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+
+const DRAFT_BUCKET = 'panoramas-360-drafts';
+const PUBLISHED_BUCKET = 'panoramas-360';
 
 export class Tour360Repository {
   /**
@@ -8,7 +11,7 @@ export class Tour360Repository {
   static async getSignedReadUrl(bucket, storagePath, expiresIn = 86400) {
     if (!storagePath) return null;
     try {
-      const db = getDB();
+      const db = getServiceDB();
       const { data, error } = await db.storage.from(bucket).createSignedUrl(storagePath, expiresIn);
       if (error) {
         console.warn(`[Tour360] Failed to generate signed URL for ${bucket}/${storagePath}:`, error.message);
@@ -113,8 +116,9 @@ export class Tour360Repository {
 
     // Attach signed read URLs for panoramas and thumbnails
     const panoramasWithUrls = await Promise.all((panoramas || []).map(async (p) => {
-      const imageUrl = await this.getSignedReadUrl('panoramas-360', p.storage_path);
-      const thumbUrl = p.thumbnail_path ? await this.getSignedReadUrl('panoramas-360', p.thumbnail_path) : imageUrl;
+      const bucket = tour.is_active ? PUBLISHED_BUCKET : DRAFT_BUCKET;
+      const imageUrl = await this.getSignedReadUrl(bucket, p.storage_path);
+      const thumbUrl = p.thumbnail_path ? await this.getSignedReadUrl(bucket, p.thumbnail_path) : imageUrl;
       
       const hotspots = (p.panorama_hotspots || []).map(h => ({
         id: h.id,
@@ -182,7 +186,7 @@ export class Tour360Repository {
       tour_type: data.tour_type,
       entity_type: data.entity_type || null,
       entity_id: data.entity_id || null,
-      is_active: data.is_active !== undefined ? data.is_active : true,
+      is_active: false, // New tours always begin as private drafts; activation requires verified publish.
       created_at: now,
       updated_at: now
     }]).select().single();
@@ -197,8 +201,13 @@ export class Tour360Repository {
   static async updateTour(tourId, data) {
     const db = getDB();
     const now = new Date().toISOString();
-    const { data: existing } = await db.from('tours_360').select('id, project_id').eq('id', tourId).single();
+    const { data: existing } = await db.from('tours_360').select('id, project_id, is_active').eq('id', tourId).single();
     if (!existing) throw new AppError('360 тур не найден', 404);
+    await this.assertDraftTourEditable(tourId);
+    // Never switch storage buckets implicitly: a published tour must not point at private draft files.
+    if (data.is_active !== undefined) {
+      throw new AppError('Публикация черновика недоступна до безопасного переноса панорам в публичное хранилище', 409);
+    }
 
     if (data.entity_type && data.entity_id) {
       await this.validateEntityBelongsToProject(existing.project_id, data.entity_type, data.entity_id);
@@ -215,13 +224,90 @@ export class Tour360Repository {
   }
 
   /**
+   * Read-only publication preflight. Does not copy files or activate a tour.
+   * A separate, transactional publish operation is required before release.
+   */
+  static async getPublishPreflight(tourId) {
+    const db = getServiceDB();
+    const { data: tour, error: tourError } = await db.from('tours_360')
+      .select('id, project_id, is_active').eq('id', tourId).maybeSingle();
+    if (tourError) throw tourError;
+    if (!tour) throw new AppError('360 тур не найден', 404);
+    if (tour.is_active) throw new AppError('Тур уже опубликован', 409);
+
+    const { data: panoramas, error: panoramaError } = await db.from('panorama_360')
+      .select('id, name, storage_path, thumbnail_path').eq('tour_id', tourId).order('id');
+    if (panoramaError) throw panoramaError;
+    const expectedPrefix = `projects/${tour.project_id}/360/${tour.id}/`;
+    const files = (panoramas || []).flatMap(p => [p.storage_path, p.thumbnail_path].filter(Boolean));
+    const invalidPaths = files.filter(path => typeof path !== 'string' || !path.startsWith(expectedPrefix) || path.includes('..'));
+    const missing = [];
+    for (const path of new Set(files.filter(p => typeof p === 'string' && p.startsWith(expectedPrefix)))) {
+      const segments = path.slice(expectedPrefix.length).split('/');
+      const filename = segments.pop();
+      const folder = [expectedPrefix.replace(/\/$/, ''), ...segments].filter(Boolean).join('/');
+      const { data, error } = await db.storage.from(DRAFT_BUCKET).list(folder, { search: filename, limit: 100 });
+      if (error || !(data || []).some(object => object.name === filename)) missing.push(path);
+    }
+    return {
+      tour_id: tour.id,
+      project_id: tour.project_id,
+      panorama_count: (panoramas || []).length,
+      file_count: files.length,
+      invalid_paths: invalidPaths,
+      missing_or_unreadable: missing,
+      ready_for_publish: files.length > 0 && invalidPaths.length === 0 && missing.length === 0,
+      published: false,
+      note: 'Только предварительная проверка. Файлы не переносились, тур не опубликован.'
+    };
+  }
+
+  /**
+   * Prepare a deterministic, read-only publication manifest.
+   * No storage writes, database updates or activation occur here.
+   */
+  static async getPublishManifest(tourId) {
+    const preflight = await this.getPublishPreflight(tourId);
+    const db = getServiceDB();
+    const { data: panoramas, error } = await db.from('panorama_360')
+      .select('id, storage_path, thumbnail_path').eq('tour_id', tourId).order('id');
+    if (error) throw error;
+    const files = [...new Set((panoramas || []).flatMap(p => [p.storage_path, p.thumbnail_path].filter(Boolean)))];
+    return {
+      ...preflight,
+      source_bucket: DRAFT_BUCKET,
+      destination_bucket: PUBLISHED_BUCKET,
+      files: files.map(path => ({ source_path: path, destination_path: path })),
+      can_execute: false,
+      note: 'План только для чтения. Копирование и активация не выполняются.'
+    };
+  }
+
+  /**
    * Delete tour
    */
   static async deleteTour(tourId) {
+    await this.assertDraftTourEditable(tourId);
     const db = getDB();
     const { error } = await db.from('tours_360').delete().eq('id', tourId);
     if (error) throw error;
     return true;
+  }
+
+  /** Load one panorama only after its owning tour is authorized by the router. */
+  static async getPanoramaById(panoramaId) {
+    const db = getServiceDB();
+    const { data: panorama, error } = await db.from('panorama_360')
+      .select('*').eq('id', panoramaId).maybeSingle();
+    if (error) throw error;
+    if (!panorama) throw new AppError('Панорама не найдена', 404);
+    const { data: tour, error: tourError } = await db.from('tours_360')
+      .select('is_active').eq('id', panorama.tour_id).maybeSingle();
+    if (tourError) throw tourError;
+    if (!tour) throw new AppError('Тур не найден', 404);
+    const bucket = tour.is_active ? PUBLISHED_BUCKET : DRAFT_BUCKET;
+    const imageUrl = await this.getSignedReadUrl(bucket, panorama.storage_path);
+    return { ...panorama, is_tour_active: tour.is_active, image_url: imageUrl, panorama_url: imageUrl };
   }
 
   /**
@@ -229,6 +315,9 @@ export class Tour360Repository {
    */
   static async getPanoramas(tourId) {
     const db = getDB();
+    const { data: tour } = await db.from('tours_360').select('id, is_active').eq('id', tourId).maybeSingle();
+    if (!tour) throw new AppError('360 тур не найден', 404);
+    const bucket = tour.is_active ? PUBLISHED_BUCKET : DRAFT_BUCKET;
     const { data: panoramas, error } = await db.from('panorama_360')
       .select('*, panorama_hotspots:panorama_hotspots!panorama_hotspots_panorama_id_fkey(*)')
       .eq('tour_id', tourId)
@@ -237,7 +326,7 @@ export class Tour360Repository {
     if (error) throw error;
 
     return Promise.all((panoramas || []).map(async (p) => {
-      const imageUrl = await this.getSignedReadUrl('panoramas-360', p.storage_path);
+      const imageUrl = await this.getSignedReadUrl(bucket, p.storage_path);
       return {
         ...p,
         image_url: imageUrl,
@@ -256,8 +345,28 @@ export class Tour360Repository {
     const db = getDB();
     const now = new Date().toISOString();
     const tId = parseInt(tourId, 10);
-    const { data: tour } = await db.from('tours_360').select('id, project_id').eq('id', tId).single();
+    const { data: tour } = await db.from('tours_360').select('id, project_id, is_active').eq('id', tId).single();
     if (!tour) throw new AppError('360 тур не найден', 404);
+    if (tour.is_active) throw new AppError('Изменять опубликованный тур запрещено', 409);
+    const expectedPrefix = `projects/${tour.project_id}/360/${tId}/`;
+    if (typeof data.storage_path !== 'string' || !data.storage_path.startsWith(expectedPrefix) || data.storage_path.includes('..')) throw new AppError('Путь панорамы не принадлежит черновику тура', 400);
+
+    const filename = data.storage_path.slice(expectedPrefix.length);
+    if (!filename || filename.includes('/')) throw new AppError('Некорректный путь панорамы', 400);
+    const { data: uploadedFiles, error: storageError } = await getServiceDB().storage
+      .from(DRAFT_BUCKET).list(expectedPrefix.replace(/\/$/, ''), { search: filename, limit: 100 });
+    if (storageError) throw new AppError('Не удалось проверить загруженный файл', 503);
+    if (!(uploadedFiles || []).some(file => file.name === filename)) {
+      throw new AppError('Файл панорамы ещё не загружен в защищённое хранилище', 409);
+    }
+
+    const roomName = (data.name || data.title || 'Панорама').trim();
+    const { data: duplicates, error: duplicateError } = await db.from('panorama_360')
+      .select('id, name, storage_path').eq('tour_id', tId);
+    if (duplicateError) throw duplicateError;
+    if ((duplicates || []).some(p => p.name === roomName || p.storage_path === data.storage_path)) {
+      throw new AppError('Это помещение или файл уже добавлены в черновик тура', 409);
+    }
 
     if (data.entity_type && data.entity_id) {
       await this.validateEntityBelongsToProject(tour.project_id, data.entity_type, data.entity_id);
@@ -265,7 +374,7 @@ export class Tour360Repository {
 
     const { data: newPano, error } = await db.from('panorama_360').insert([{
       tour_id: tId,
-      name: (data.name || data.title || 'Панорама').trim(),
+      name: roomName,
       storage_path: data.storage_path.trim(),
       thumbnail_path: data.thumbnail_path ? data.thumbnail_path.trim() : null,
       entity_type: data.entity_type || null,
@@ -279,7 +388,7 @@ export class Tour360Repository {
     }]).select().single();
 
     if (error) throw error;
-    const imageUrl = await this.getSignedReadUrl('panoramas-360', newPano.storage_path);
+    const imageUrl = await this.getSignedReadUrl(DRAFT_BUCKET, newPano.storage_path);
     return { ...newPano, image_url: imageUrl, panorama_url: imageUrl, title: newPano.name, hotspots: [] };
   }
 
@@ -287,11 +396,16 @@ export class Tour360Repository {
    * Update panorama
    */
   static async updatePanorama(panoramaId, data) {
+    await this.assertDraftPanoramaEditable(panoramaId);
     const db = getDB();
     const now = new Date().toISOString();
     const pId = parseInt(panoramaId, 10);
     const { data: existing } = await db.from('panorama_360').select('*, tours_360(project_id)').eq('id', pId).maybeSingle();
     if (!existing) throw new AppError('Панорама не найдена', 404);
+
+    if (data.storage_path !== undefined || data.thumbnail_path !== undefined || data.tour_id !== undefined || data.id !== undefined) {
+      throw new AppError('Пути файлов и принадлежность панорамы нельзя менять через обычное редактирование', 409);
+    }
 
     if (data.entity_type && data.entity_id) {
       await this.validateEntityBelongsToProject(existing.tours_360?.project_id, data.entity_type, data.entity_id);
@@ -304,7 +418,8 @@ export class Tour360Repository {
       .single();
 
     if (error) throw error;
-    const imageUrl = await this.getSignedReadUrl('panoramas-360', updated.storage_path);
+    const { data: owningTour } = await db.from('tours_360').select('is_active').eq('id', updated.tour_id).maybeSingle();
+    const imageUrl = await this.getSignedReadUrl(owningTour?.is_active ? PUBLISHED_BUCKET : DRAFT_BUCKET, updated.storage_path);
     return { ...updated, image_url: imageUrl, panorama_url: imageUrl, title: updated.name };
   }
 
@@ -312,11 +427,50 @@ export class Tour360Repository {
    * Delete panorama
    */
   static async deletePanorama(panoramaId) {
+    await this.assertDraftPanoramaEditable(panoramaId);
     const db = getDB();
     const pId = parseInt(panoramaId, 10);
     const { error } = await db.from('panorama_360').delete().eq('id', pId);
     if (error) throw error;
     return true;
+  }
+
+  /** Return owning tour visibility without signing or exposing private images. */
+  static async getPanoramaTourVisibility(panoramaId) {
+    const db = getServiceDB();
+    const { data: panorama, error } = await db.from('panorama_360')
+      .select('tour_id').eq('id', panoramaId).maybeSingle();
+    if (error) throw error;
+    if (!panorama) return null;
+    const { data: tour, error: tourError } = await db.from('tours_360')
+      .select('is_active').eq('id', panorama.tour_id).maybeSingle();
+    if (tourError) throw tourError;
+    return tour;
+  }
+
+  /** Only draft tours can be edited via regular CRUD routes. */
+  static async assertDraftTourEditable(tourId) {
+    const db = getServiceDB();
+    const { data: tour, error } = await db.from('tours_360').select('is_active').eq('id', tourId).maybeSingle();
+    if (error) throw error;
+    if (!tour) throw new AppError('Тур не найден', 404);
+    if (tour.is_active !== false) throw new AppError('Изменять опубликованный тур запрещено', 409);
+  }
+
+  static async assertDraftPanoramaEditable(panoramaId) {
+    const db = getServiceDB();
+    const { data: panorama, error } = await db.from('panorama_360').select('tour_id').eq('id', panoramaId).maybeSingle();
+    if (error) throw error;
+    if (!panorama) throw new AppError('Панорама не найдена', 404);
+    await this.assertDraftTourEditable(panorama.tour_id);
+  }
+
+  static async assertDraftHotspotEditable(hotspotId) {
+    const db = getServiceDB();
+    const { data: hotspot, error } = await db.from('panorama_hotspots').select('panorama_id').eq('id', hotspotId).maybeSingle();
+    if (error) throw error;
+    if (!hotspot) throw new AppError('Хотспот не найден', 404);
+    await this.assertDraftPanoramaEditable(hotspot.panorama_id);
   }
 
   /**
@@ -341,6 +495,7 @@ export class Tour360Repository {
    * Create hotspot on panorama
    */
   static async createHotspot(panoramaId, data) {
+    await this.assertDraftPanoramaEditable(panoramaId);
     const db = getDB();
     const now = new Date().toISOString();
     const pId = parseInt(panoramaId, 10);
@@ -405,6 +560,7 @@ export class Tour360Repository {
    * Update hotspot
    */
   static async updateHotspot(hotspotId, data) {
+    await this.assertDraftHotspotEditable(hotspotId);
     const db = getDB();
     const now = new Date().toISOString();
     const hId = parseInt(hotspotId, 10);
@@ -453,6 +609,7 @@ export class Tour360Repository {
    * Delete hotspot
    */
   static async deleteHotspot(hotspotId) {
+    await this.assertDraftHotspotEditable(hotspotId);
     const db = getDB();
     const hId = parseInt(hotspotId, 10);
     const { error } = await db.from('panorama_hotspots').delete().eq('id', hId);
@@ -464,48 +621,47 @@ export class Tour360Repository {
    * Generate secure presigned upload URL for 360 panorama image
    */
   static async generateUploadUrl(projectId, { tourId, filename, fileSizeBytes }) {
-    const db = getDB();
+    const db = getServiceDB();
     const pId = parseInt(projectId, 10);
 
     const { data: project } = await db.from('projects').select('id').eq('id', pId).single();
     if (!project) throw new AppError('Проект не найден', 404);
 
+    if (!tourId) throw new AppError('tourId обязателен для безопасной загрузки', 400);
+    const { data: targetTour, error: tourError } = await db.from('tours_360').select('id, project_id, is_active').eq('id', tourId).maybeSingle();
+    if (tourError || !targetTour || Number(targetTour.project_id) !== pId) throw new AppError('Тур не принадлежит проекту', 403);
+    if (targetTour.is_active) throw new AppError('Загрузка доступна только в неопубликованный тур', 409);
+
+    if (typeof filename !== 'string' || !/\.(jpe?g|webp)$/i.test(filename)) {
+      throw new AppError('Допустимы только JPG и WEBP панорамы', 400);
+    }
+    if (!Number.isSafeInteger(fileSizeBytes) || fileSizeBytes < 1 || fileSizeBytes > 25 * 1024 * 1024) {
+      throw new AppError('Размер панорамы должен быть от 1 байта до 25 МБ', 400);
+    }
     const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const timestamp = Date.now();
     const tId = tourId || 'new';
     const storagePath = `projects/${pId}/360/${tId}/${timestamp}_${cleanFilename}`;
 
     try {
-      const { data, error } = await db.storage.from('panoramas-360').createSignedUploadUrl(storagePath);
-      if (error) {
-        return {
-          bucket: 'panoramas-360',
-          storagePath,
-          storage_path: storagePath,
-          signedUrl: null,
-          signedUploadUrl: null,
-          uploadUrl: null
-        };
+      const { data, error } = await db.storage.from(DRAFT_BUCKET).createSignedUploadUrl(storagePath);
+      if (error || !data?.signedUrl) {
+        console.error('[Tour360] Draft storage unavailable:', error?.message || 'signed URL missing');
+        throw new AppError('Защищённое хранилище панорам недоступно. Загрузка отменена.', 503);
       }
-
       return {
-        bucket: 'panoramas-360',
+        bucket: DRAFT_BUCKET,
         storagePath,
         storage_path: storagePath,
-        signedUrl: data?.signedUrl,
-        signedUploadUrl: data?.signedUrl,
-        uploadUrl: data?.signedUrl,
-        token: data?.token
+        signedUrl: data.signedUrl,
+        signedUploadUrl: data.signedUrl,
+        uploadUrl: data.signedUrl,
+        token: data.token
       };
-    } catch (e) {
-      return {
-        bucket: 'panoramas-360',
-        storagePath,
-        storage_path: storagePath,
-        signedUrl: null,
-        signedUploadUrl: null,
-        uploadUrl: null
-      };
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      console.error('[Tour360] Failed to issue draft upload URL:', error?.message);
+      throw new AppError('Защищённое хранилище панорам недоступно. Загрузка отменена.', 503);
     }
   }
 }
