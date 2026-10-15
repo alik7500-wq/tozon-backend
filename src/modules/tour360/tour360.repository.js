@@ -354,7 +354,7 @@ export class Tour360Repository {
     if (typeof data.storage_path !== 'string' || !data.storage_path.startsWith(expectedPrefix) || data.storage_path.includes('..')) throw new AppError('Путь панорамы не принадлежит черновику тура', 400);
 
     const filename = data.storage_path.slice(expectedPrefix.length);
-    if (!filename || filename.includes('/') || !/^[0-9]+_[A-Za-z0-9._-]+\\.(?:jpe?g|webp)$/i.test(filename)) {
+    if (!filename || filename.includes('/') || !/^[0-9]+_[A-Za-z0-9._-]+\.(?:jpe?g|webp)$/i.test(filename)) {
       throw new AppError('Некорректный путь панорамы: требуется файл из подписанной загрузки', 400);
     }
     if (data.thumbnail_path) {
