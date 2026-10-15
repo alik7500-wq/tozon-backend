@@ -61,6 +61,10 @@ export const authorizeSectionRequest = async req => {
     key = /\/sign$/.test(path) ? 'contracts.view' : 'deals.view';
     if (read) allowed = hasSection(user,'deals.view') || hasAny(user, financeReads);
   } else if (path.startsWith('/api/leads')) key = 'leads.view';
+  else if (path.startsWith('/api/sales-plans')) {
+    key = 'leads.view';
+    if (user.role === 'FINANCE_MANAGER') allowed = false;
+  }
   else if (path.startsWith('/api/tasks')) key = 'tasks.view';
   else if (path.startsWith('/api/users')) {
     key = 'users.view';
