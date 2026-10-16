@@ -156,7 +156,40 @@ export function calculateSalesSlaDeadline(startInput, workingMinutesToAdd = SLA_
 export function evaluateLeadSla(lead, nowInput = null) {
   const now = nowInput ? new Date(nowInput) : new Date();
   const createdAt = lead.created_at ? new Date(lead.created_at) : now;
-  const isUnassigned = !lead.responsible_user_id;
+  const isClosed = ['WON', 'LOST'].includes(lead.status);
+  const isUnassigned = !lead.responsible_user_id && !isClosed;
+  const hasResponsible = Boolean(lead.responsible_user_id);
+
+  // Completed / Closed deals have zero active SLA breaches
+  if (isClosed) {
+    const isWon = lead.status === 'WON';
+    return {
+      is_unassigned: false,
+      pool_sla: {
+        status: 'CLOSED',
+        working_minutes_elapsed: 0,
+        deadline_at: null,
+        is_overdue: false,
+        overdue_minutes: 0,
+        remaining_minutes: 0
+      },
+      manager_sla: {
+        applies: hasResponsible,
+        status: 'CLOSED',
+        contact_made: true,
+        first_contact_at: lead.first_contact_at || null,
+        working_minutes_elapsed: 0,
+        deadline_at: null,
+        is_overdue: false,
+        overdue_minutes: 0,
+        remaining_minutes: 0
+      },
+      overall_status: isWon ? 'WON' : 'LOST',
+      badge: isWon
+        ? { label: 'Сделка заключена', color: 'emerald', level: 'NORMAL' }
+        : { label: 'Отказ / Архив', color: 'slate', level: 'NORMAL' }
+    };
+  }
 
   // 1. POOL SLA: Time from created_at to assigned_at (or now if unassigned)
   const poolEnd = lead.assigned_at ? new Date(lead.assigned_at) : (isUnassigned ? now : createdAt);
@@ -175,7 +208,6 @@ export function evaluateLeadSla(lead, nowInput = null) {
   }
 
   // 2. MANAGER SLA: Time from assigned_at to first_contact_at
-  const hasResponsible = !isUnassigned;
   const assignmentStart = lead.assigned_at ? new Date(lead.assigned_at) : createdAt;
   const managerDeadline = hasResponsible ? calculateSalesSlaDeadline(assignmentStart, SLA_FIRST_CONTACT_MINUTES) : null;
 

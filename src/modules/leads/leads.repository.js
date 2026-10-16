@@ -27,14 +27,14 @@ export class LeadsRepository {
     // Status filtering
     if (filters.status && filters.status !== 'ALL') {
       if (filters.status === 'UNASSIGNED') {
-        query = query.is('responsible_user_id', null);
+        query = query.is('responsible_user_id', null).in('status', ['NEW', 'IN_PROGRESS', 'NEGOTIATION']);
       } else {
         query = query.eq('status', filters.status);
       }
     }
 
     if (filters.unassigned === true || filters.unassigned === 'true') {
-      query = query.is('responsible_user_id', null);
+      query = query.is('responsible_user_id', null).in('status', ['NEW', 'IN_PROGRESS', 'NEGOTIATION']);
     }
 
     // Quick filters from 7 dashboard cards
@@ -42,7 +42,7 @@ export class LeadsRepository {
       if (filters.quickFilter === 'NEW') {
         query = query.eq('status', 'NEW');
       } else if (filters.quickFilter === 'UNASSIGNED') {
-        query = query.is('responsible_user_id', null);
+        query = query.is('responsible_user_id', null).in('status', ['NEW', 'IN_PROGRESS', 'NEGOTIATION']);
       } else if (filters.quickFilter === 'IN_PROGRESS') {
         query = query.in('status', ['IN_PROGRESS', 'NEGOTIATION']);
       } else if (filters.quickFilter === 'CLOSED') {
@@ -75,7 +75,7 @@ export class LeadsRepository {
       const sla_info = evaluateLeadSla(l);
       return {
         ...l,
-        responsible_user_name: l.users?.name || (l.responsible_user_id ? 'Менеджер' : 'Не назначен (В пуле)'),
+        responsible_user_name: l.users?.name || (l.responsible_user_id ? 'Менеджер' : (['WON', 'LOST'].includes(l.status) ? '—' : 'Не назначен (В пуле)')),
         interested_project_name: l.projects?.name,
         notes_count: l.lead_notes?.length || 0,
         deals_count: l.deals?.length || 0,
@@ -92,7 +92,8 @@ export class LeadsRepository {
       mappedLeads = mappedLeads.filter(l => l.status === 'NEW' && !l.first_contact_at);
     } else if (filters.quickFilter === 'OVERDUE') {
       mappedLeads = mappedLeads.filter(l => 
-        l.sla_info?.manager_sla?.is_overdue || l.sla_info?.pool_sla?.is_overdue
+        !['WON', 'LOST'].includes(l.status) &&
+        (l.sla_info?.manager_sla?.is_overdue || l.sla_info?.pool_sla?.is_overdue)
       );
     }
 
@@ -519,10 +520,11 @@ export class LeadsRepository {
     let closed = 0;
 
     leads.forEach(l => {
+      const isClosedLead = ['WON', 'LOST'].includes(l.status);
+      const isUnassignedLead = !l.responsible_user_id && !isClosedLead;
       const sla = evaluateLeadSla(l);
-      const isUnassignedLead = !l.responsible_user_id;
 
-      if (isUnassignedLead && !['WON', 'LOST'].includes(l.status)) {
+      if (isUnassignedLead) {
         unassigned++;
       }
       if (l.status === 'NEW') {
@@ -534,10 +536,10 @@ export class LeadsRepository {
       if (['IN_PROGRESS', 'NEGOTIATION'].includes(l.status)) {
         inProgress++;
       }
-      if (['WON', 'LOST'].includes(l.status)) {
+      if (isClosedLead) {
         closed++;
       }
-      if (sla.manager_sla.is_overdue || (isUnassignedLead && sla.pool_sla.is_overdue)) {
+      if (!isClosedLead && (sla.manager_sla.is_overdue || (isUnassignedLead && sla.pool_sla.is_overdue))) {
         overdueCount++;
       }
     });
