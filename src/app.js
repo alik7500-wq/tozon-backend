@@ -55,7 +55,14 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 app.use(pino({
-  redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-telegram-bot-api-secret-token"]'],
+  redact: [
+    'req.headers.authorization',
+    'req.headers.cookie',
+    'req.headers["x-telegram-bot-api-secret-token"]',
+    'req.headers["x-webhook-secret"]',
+    'req.body.secret',
+    'req.body.token'
+  ],
   autoLogging: {
     ignore: (req) => req.url === '/api/health',
   }
@@ -74,6 +81,10 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     commit_sha: process.env.RENDER_GIT_COMMIT || null,
     finance_bot: financeBotHealth(),
+    integrations: {
+      webhook_secret_configured: Boolean(process.env.WEBHOOK_SECRET?.trim()),
+      leads_round_robin_enabled: process.env.LEADS_ROUND_ROBIN_ENABLED === 'true'
+    },
     timestamp: new Date().toISOString()
   });
 });

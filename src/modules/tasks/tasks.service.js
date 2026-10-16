@@ -5,15 +5,17 @@ export class TasksService {
    * Called when a new lead is created
    */
   static async onLeadCreated(lead, creatorId) {
+    // If lead has no responsible user, it stays in the unassigned pool; no personal call task is generated yet.
+    if (!lead || !lead.responsible_user_id) return;
     try {
       const today = new Date().toISOString().split('T')[0];
       await TasksRepository.create({
         lead_id: lead.id,
-        assigned_user_id: lead.responsible_user_id || creatorId,
-        created_by: creatorId,
+        assigned_user_id: lead.responsible_user_id,
+        created_by: creatorId || lead.responsible_user_id,
         type: 'CALL',
         priority: 'HIGH',
-        title: `Первичный звонок: Лид ${lead.full_name}`,
+        title: `Первичный контакт (15 мин SLA): ${lead.full_name}`,
         description: `Связаться с новым потенциальным клиентом в течение 15 минут. Источник: ${lead.source || 'Прямой контакт'}.`,
         client_name: lead.full_name,
         phone: lead.phone,
@@ -22,6 +24,73 @@ export class TasksService {
       });
     } catch (err) {
       console.error('Error generating task on lead created:', err);
+    }
+  }
+
+  /**
+   * Called when an unassigned lead is assigned to a manager
+   */
+  static async onLeadAssigned(lead, managerId, assignedById) {
+    if (!lead || !managerId) return;
+    try {
+      // Reassign any existing open tasks for this lead to the new manager
+      await TasksRepository.reassignOpenTasks(lead.id, managerId);
+
+      // Only generate 15-min SLA call task if primary contact has NOT yet been established
+      if (!lead.first_contact_at) {
+        const today = new Date().toISOString().split('T')[0];
+        await TasksRepository.create({
+          lead_id: lead.id,
+          assigned_user_id: managerId,
+          created_by: assignedById || managerId,
+          type: 'CALL',
+          priority: 'HIGH',
+          title: `Первичный контакт (15 мин SLA): ${lead.full_name}`,
+          description: `Связаться с назначенным клиентом в течение 15 минут. Источник: ${lead.source || 'Прямой контакт'}.`,
+          client_name: lead.full_name,
+          phone: lead.phone,
+          due_date: today,
+          status: 'OPEN',
+        });
+      }
+    } catch (err) {
+      console.error('Error generating task on lead assigned:', err);
+    }
+  }
+
+  /**
+   * Called when an existing client submits a repeated inquiry
+   */
+  static async onRepeatInquiry(lead, managerId, source) {
+    if (!lead || !managerId) return;
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      await TasksRepository.create({
+        lead_id: lead.id,
+        assigned_user_id: managerId,
+        created_by: managerId,
+        type: 'CALL',
+        priority: 'HIGH',
+        title: `Повторное обращение клиента: ${lead.full_name}`,
+        description: `Клиент повторно оставил заявку из источника: ${source || 'Онлайн'}. Срочно связаться и уточнить детали.`,
+        client_name: lead.full_name,
+        phone: lead.phone,
+        due_date: today,
+        status: 'OPEN',
+      });
+    } catch (err) {
+      console.error('Error generating task on repeat inquiry:', err);
+    }
+  }
+
+  /**
+   * Called when first contact is recorded for a lead
+   */
+  static async onFirstContactRecorded(leadId) {
+    try {
+      await TasksRepository.completeFirstContactTasks(leadId);
+    } catch (err) {
+      console.error('Error completing first contact task:', err);
     }
   }
 
