@@ -220,7 +220,7 @@ router.get('/', async (req, res, next) => {
       filters.responsibleUserId = req.user.id;
       filters.unassigned = false;
       // Cannot inspect unassigned pool
-      if (filters.quickFilter === 'UNASSIGNED') {
+      if (req.query.unassigned === 'true' || filters.quickFilter === 'UNASSIGNED') {
         return res.status(200).json({ status: 'success', data: { leads: [] } });
       }
     }
