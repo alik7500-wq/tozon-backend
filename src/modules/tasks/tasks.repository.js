@@ -161,6 +161,27 @@ export class TasksRepository {
       .eq('status', 'OPEN');
   }
 
+  static async reassignOpenTasks(leadId, newManagerId) {
+    const db = getDB();
+    const now = new Date().toISOString();
+    await db
+      .from('tasks')
+      .update({ assigned_user_id: newManagerId, updated_at: now })
+      .eq('lead_id', leadId)
+      .eq('status', 'OPEN');
+  }
+
+  static async completeFirstContactTasks(leadId) {
+    const db = getDB();
+    const now = new Date().toISOString();
+    await db
+      .from('tasks')
+      .update({ status: 'COMPLETED', completed_at: now, updated_at: now })
+      .eq('lead_id', leadId)
+      .eq('type', 'CALL')
+      .eq('status', 'OPEN');
+  }
+
   static async delete(id) {
     const db = getDB();
     const { error } = await db.from('tasks').delete().eq('id', id);

@@ -53,6 +53,24 @@ export class NotificationsService {
     }
   }
 
+  // 1b. LEAD_ASSIGNED Event Notification
+  static async notifyLeadAssigned(lead, managerId, assignedById) {
+    if (!lead || !lead.id || !managerId) return;
+    const leadName = lead.full_name || lead.name || 'Клиент';
+    const phoneStr = lead.phone ? ` (${lead.phone})` : '';
+
+    await NotificationsRepository.createNotification({
+      user_id: Number(managerId),
+      type: 'LEAD_ASSIGNED',
+      title: 'Вам назначена новая заявка',
+      message: `Клиент: ${leadName}${phoneStr}. Регламент первого контакта: 15 минут.`,
+      entity_type: 'LEAD',
+      entity_id: lead.id,
+      dedupe_key: `LEAD_ASSIGNED:${lead.id}:${managerId}`,
+      metadata: { lead_id: lead.id, assigned_by_user_id: assignedById }
+    });
+  }
+
   // 2. RESERVATION_CREATED Event Notification
   static async notifyReservationCreated(deal) {
     if (!deal || !deal.id) return;

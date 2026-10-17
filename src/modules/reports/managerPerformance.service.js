@@ -150,15 +150,40 @@ export class ManagerPerformanceService {
     const db = getDB();
 
     // 1. Fetch Users / Managers
-    const { data: rawUsers, error: usersErr } = await db
-      .from('users')
-      .select('id, name, email, role, is_active')
-      .order('id', { ascending: true });
-    if (usersErr) throw usersErr;
+    let rawUsers = null;
+    try {
+      const { data, error } = await db
+        .from('users')
+        .select('id, name, email, role, is_active, is_sales_rep')
+        .order('id', { ascending: true });
+      if (!error && data) rawUsers = data;
+    } catch {
+      // Fallback if is_sales_rep column not yet present
+    }
+
+    if (!rawUsers) {
+      const { data: fbUsers, error: fbErr } = await db
+        .from('users')
+        .select('id, name, email, role, is_active')
+        .order('id', { ascending: true });
+      if (fbErr) throw fbErr;
+      rawUsers = fbUsers || [];
+    }
 
     const allUsers = rawUsers || [];
-    // Only sales managers and admins who act as managers
-    const salesManagers = allUsers.filter(u => ['SALES_MANAGER', 'ADMIN', 'DIRECTOR'].includes(u.role));
+    // Only active sales representatives (exclude admins, directors, accountants, warehouse staff)
+    const salesManagers = allUsers.filter(u => {
+      const isActive = u.is_active === 1 || u.is_active === true || u.is_active === '1';
+      if (!isActive) return false;
+      if (['ADMIN', 'DIRECTOR', 'FINANCE_MANAGER', 'WAREHOUSE_MANAGER'].includes(u.role) && !u.is_sales_rep) {
+        return false;
+      }
+      if (u.email === 'zavsklad@tozon.crm') return false;
+      if (u.is_sales_rep !== undefined && u.is_sales_rep !== null) {
+        return Boolean(u.is_sales_rep === true || u.is_sales_rep === 1 || u.is_sales_rep === 'true');
+      }
+      return u.role === 'SALES_MANAGER';
+    });
 
     // 2. Fetch Leads with related signals
     const { data: rawLeads, error: leadsErr } = await db

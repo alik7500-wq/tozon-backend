@@ -57,16 +57,24 @@ export const ROLE_PRESET_PERMISSIONS = {
     'leads.view', 'leads.manage',
     'deals.view', 'deals.manage',
     'contracts.view',
-    'finance.view',
     'tasks.manage',
     'sms.send', 'sms.history'
+  ],
+  WAREHOUSE_MANAGER: [
+    'access.v2',
+    'construction.stock',
+    'construction.stock.write',
+    'construction.advance',
+    'construction.advance.write',
+    'construction.settlements',
+    'finance.expenses',
+    'finance.expenses.write'
   ],
   MANAGER: [
     'inventory.view',
     'leads.view', 'leads.manage',
     'deals.view', 'deals.manage',
     'contracts.view',
-    'finance.view',
     'tasks.manage',
     'sms.send', 'sms.history'
   ],
@@ -83,7 +91,7 @@ export const ROLE_PRESET_PERMISSIONS = {
 // POST /api/users - Create new user (ADMIN or DIRECTOR)
 router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
   try {
-    const { name, email, password, role, permissions } = req.body;
+    const { name, email, password, role, permissions, is_sales_rep } = req.body;
 
     if (!name || !email || !password) {
       return next(new AppError('Имя, Email и Пароль обязательны для заполнения', 400));
@@ -95,12 +103,16 @@ router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
       return next(new AppError('Пользователь с таким Email уже существует', 400));
     }
 
-    const validRoles = ['ADMIN', 'DIRECTOR', 'SALES_MANAGER', 'FINANCE_MANAGER', 'MANAGER'];
+    const validRoles = ['ADMIN', 'DIRECTOR', 'SALES_MANAGER', 'FINANCE_MANAGER', 'MANAGER', 'WAREHOUSE_MANAGER'];
     const userRole = validRoles.includes(role) ? role : 'SALES_MANAGER';
 
     const userPermissions = Array.isArray(permissions) && permissions.length > 0
       ? permissions
       : (ROLE_PRESET_PERMISSIONS[userRole] || []);
+
+    const isSalesRep = is_sales_rep !== undefined
+      ? Boolean(is_sales_rep)
+      : (userRole === 'SALES_MANAGER');
 
     const password_hash = await bcrypt.hash(password, 10);
     const newUser = await UsersRepository.create({
@@ -109,6 +121,7 @@ router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
       password_hash,
       role: userRole,
       permissions: userPermissions,
+      is_sales_rep: isSalesRep,
       is_active: 1
     });
 
@@ -125,13 +138,14 @@ router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
 // PATCH /api/users/:id - Update user
 router.patch('/:id', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
   try {
-    const { name, email, password, role, permissions, is_active } = req.body;
+    const { name, email, password, role, permissions, is_active, is_sales_rep } = req.body;
     const updates = {};
     if (name) updates.name = name.trim();
     if (email) updates.email = email.trim().toLowerCase();
     if (role) updates.role = role;
     if (Array.isArray(permissions)) updates.permissions = permissions;
     if (typeof is_active !== 'undefined') updates.is_active = is_active ? 1 : 0;
+    if (typeof is_sales_rep !== 'undefined') updates.is_sales_rep = Boolean(is_sales_rep);
     if (password) {
       updates.password_hash = await bcrypt.hash(password, 10);
     }

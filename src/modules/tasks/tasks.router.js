@@ -19,6 +19,10 @@ router.get('/', async (req, res, next) => {
       assignedUserId: parseOptionalBigInt(req.query.assignedUserId),
       dateFilter: req.query.dateFilter,
     };
+    // RBAC: SALES_MANAGER is strictly restricted to viewing only their own assigned tasks
+    if (req.user?.role === 'SALES_MANAGER') {
+      filters.assignedUserId = req.user.id;
+    }
     const tasks = await TasksRepository.findAll(filters);
     res.status(200).json({ status: 'success', data: { tasks } });
   } catch (error) {
@@ -32,6 +36,10 @@ router.get('/:id', async (req, res, next) => {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
     const task = await TasksRepository.findById(cleanId);
     if (!task) return next(new AppError('Задача не найдена', 404));
+    // RBAC: SALES_MANAGER can only inspect their own tasks
+    if (req.user?.role === 'SALES_MANAGER' && task.assigned_user_id && Number(task.assigned_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к задачам других менеджеров', 403));
+    }
     res.status(200).json({ status: 'success', data: { task } });
   } catch (error) {
     next(error);
@@ -58,6 +66,11 @@ router.post('/', async (req, res, next) => {
 router.put('/:id', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await TasksRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Задача не найдена', 404));
+    if (req.user?.role === 'SALES_MANAGER' && existing.assigned_user_id && Number(existing.assigned_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к редактированию задач других менеджеров', 403));
+    }
     const task = await TasksRepository.update(cleanId, {
       ...req.body,
       lead_id: parseOptionalBigInt(req.body.lead_id),
@@ -74,6 +87,11 @@ router.put('/:id', async (req, res, next) => {
 router.patch('/:id/status', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await TasksRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Задача не найдена', 404));
+    if (req.user?.role === 'SALES_MANAGER' && existing.assigned_user_id && Number(existing.assigned_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к редактированию задач других менеджеров', 403));
+    }
     const { status } = req.body;
     if (!status) return next(new AppError('Статус обязателен', 400));
     const task = await TasksRepository.updateStatus(cleanId, status);
@@ -87,6 +105,11 @@ router.patch('/:id/status', async (req, res, next) => {
 router.delete('/:id', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await TasksRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Задача не найдена', 404));
+    if (['SALES_MANAGER', 'MANAGER'].includes(req.user?.role) && existing.assigned_user_id && Number(existing.assigned_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к удалению задач других менеджеров', 403));
+    }
     await TasksRepository.delete(cleanId);
     res.status(200).json({ status: 'success', message: 'Задача удалена' });
   } catch (error) {

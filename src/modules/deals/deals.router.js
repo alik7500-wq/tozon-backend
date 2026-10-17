@@ -38,7 +38,11 @@ router.get('/', async (req, res, next) => {
       paymentType: req.query.paymentType,
     };
     const deals = await DealsRepository.findAll(filters);
-    res.status(200).json({ status: 'success', data: { deals } });
+    // RBAC: SALES_MANAGER is strictly restricted to viewing only their own assigned deals
+    const effectiveDeals = req.user?.role === 'SALES_MANAGER'
+      ? deals.filter(d => Number(d.responsible_user_id) === Number(req.user.id))
+      : deals;
+    res.status(200).json({ status: 'success', data: { deals: effectiveDeals } });
   } catch (error) {
     next(error);
   }
@@ -50,6 +54,10 @@ router.get('/:id', async (req, res, next) => {
     const deal = await DealsRepository.getDealById(cleanId);
     if (!deal) {
       return next(new AppError('Сделка не найдена', 404));
+    }
+    // RBAC: SALES_MANAGER can only inspect their own deals
+    if (req.user?.role === 'SALES_MANAGER' && Number(deal.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к сделкам других менеджеров', 403));
     }
     res.status(200).json({ status: 'success', data: { deal } });
   } catch (error) {
@@ -122,9 +130,14 @@ router.post('/:id/sign', async (req, res, next) => {
   }
 });
 
-router.post('/:id/cancel', restrictTo('ADMIN', 'MANAGER'), async (req, res, next) => {
+router.post('/:id/cancel', restrictTo('ADMIN', 'SALES_MANAGER', 'MANAGER'), async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existingDeal = await DealsRepository.getDealById(cleanId);
+    if (!existingDeal) return next(new AppError('Сделка не найдена', 404));
+    if (req.user?.role === 'SALES_MANAGER' && Number(existingDeal.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к отмене сделок других менеджеров', 403));
+    }
     const { reason } = req.body;
     const deal = await DealsRepository.cancelDeal(cleanId, reason, req.user.id, req.user.role);
     res.status(200).json({ status: 'success', data: { deal } });
@@ -146,6 +159,11 @@ router.post('/:id/terminate', restrictTo('ADMIN'), resolveCashDeskAccess, async 
 router.post('/:id/extend-reservation', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existingDeal = await DealsRepository.getDealById(cleanId);
+    if (!existingDeal) return next(new AppError('Сделка не найдена', 404));
+    if (req.user?.role === 'SALES_MANAGER' && Number(existingDeal.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к сделкам других менеджеров', 403));
+    }
     const { reservation_expires_at } = req.body;
     if (!reservation_expires_at) {
       return next(new AppError('Укажите новую дату окончания брони', 400));
