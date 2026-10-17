@@ -1,4 +1,6 @@
+import { skyboxStatus, getSkyboxClient, startSkyboxRoomGeneration } from './skyboxIntegration.js';
 import express from 'express';
+import { buildPilotAi360Manifest } from './ai360SceneBrief.js';
 import { Tour360Repository } from './tour360.repository.js';
 import {
   createTourSchema,
@@ -19,6 +21,9 @@ function formatZodError(error) {
   return issues.map(i => i.message).join(', ') || error.message;
 }
 
+// Draft operations require explicit roles even when section-matrix access is enabled.
+const requireDraftEditor = (req, res, next) => ['ADMIN', 'DIRECTOR'].includes(req.user?.role) ? next() : next(new AppError('Недостаточно прав для черновиков 360°', 403));
+
 // All 360 tour routes require authentication
 router.use(protect);
 
@@ -29,7 +34,8 @@ router.use(protect);
 // GET /api/projects/:projectId/360-tours
 router.get('/projects/:projectId/360-tours', async (req, res, next) => {
   try {
-    const tours = await Tour360Repository.findToursByProjectId(req.params.projectId, req.query);
+    const canSeeDrafts = ['ADMIN', 'DIRECTOR'].includes(req.user?.role);
+    const tours = await Tour360Repository.findToursByProjectId(req.params.projectId, canSeeDrafts ? req.query : { ...req.query, is_active: true });
     res.status(200).json({
       status: 'success',
       results: tours.length,
@@ -41,6 +47,8 @@ router.get('/projects/:projectId/360-tours', async (req, res, next) => {
 // GET /api/360-tours/:tourId
 router.get('/360-tours/:tourId', async (req, res, next) => {
   try {
+    const visibility = await Tour360Repository.getTourVisibility(req.params.tourId);
+    if (!visibility || (!visibility.is_active && !['ADMIN', 'DIRECTOR'].includes(req.user?.role))) throw new AppError('Тур не найден', 404);
     const tour = await Tour360Repository.getTourTree(req.params.tourId);
     res.status(200).json({
       status: 'success',
@@ -50,7 +58,7 @@ router.get('/360-tours/:tourId', async (req, res, next) => {
 });
 
 // POST /api/projects/:projectId/360-tours
-router.post('/projects/:projectId/360-tours', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.post('/projects/:projectId/360-tours', requireDraftEditor, async (req, res, next) => {
   try {
     const validated = createTourSchema.parse(req.body);
     const tour = await Tour360Repository.createTour(req.params.projectId, validated);
@@ -66,8 +74,65 @@ router.post('/projects/:projectId/360-tours', restrictTo('ADMIN', 'DIRECTOR'), a
   }
 });
 
+// GET /api/projects/:projectId/360-ai/pilot-manifest — prompt preview only; no AI costs or writes.
+router.get('/projects/:projectId/360-ai/pilot-manifest', requireDraftEditor, async (req, res, next) => {
+  try {
+    const manifest = buildPilotAi360Manifest();
+    if (Number(req.params.projectId) !== manifest.projectId) throw new AppError('Пилотная планировка не относится к этому проекту', 404);
+    res.status(200).json({ status: 'success', data: { manifest } });
+  } catch (error) { next(error); }
+});
+
+
+// Skybox API is server-side only; no key is returned to the browser.
+router.get('/projects/:projectId/360-ai/skybox/status', requireDraftEditor, (req, res) => {
+  res.json({ status: 'success', data: { skybox: skyboxStatus() } });
+});
+router.get('/projects/:projectId/360-ai/skybox/styles', requireDraftEditor, async (req, res, next) => {
+  try {
+    if (Number(req.params.projectId) !== 3) throw new AppError('Unsupported pilot project', 404);
+    const styles = await getSkyboxClient().listStyles(3);
+    res.json({ status: 'success', data: { styles } });
+  } catch (error) { next(error); }
+});
+router.get('/projects/:projectId/360-ai/skybox/jobs/:jobId', requireDraftEditor, async (req, res, next) => {
+  try {
+    if (Number(req.params.projectId) !== 3) throw new AppError('Unsupported pilot project', 404);
+    const jobId = Number(req.params.jobId);
+    if (!Number.isSafeInteger(jobId) || jobId < 1) throw new AppError('Invalid job ID', 400);
+    const job = await getSkyboxClient().getGeneration(jobId);
+    res.json({ status: 'success', data: { job } });
+  } catch (error) { next(error); }
+});
+router.post('/projects/:projectId/360-ai/skybox/generate', requireDraftEditor, async (req, res, next) => {
+  try {
+    const { tourId, room, styleId, approved } = req.body || {};
+    const result = await startSkyboxRoomGeneration({
+      projectId: Number(req.params.projectId), tourId: Number(tourId),
+      room, styleId: Number(styleId), approved
+    });
+    res.status(202).json({ status: 'success', data: { generation: result } });
+  } catch (error) { next(error); }
+});
+
+// GET /api/360-tours/:tourId/publish-preflight — read-only, privileged
+router.get('/360-tours/:tourId/publish-preflight', requireDraftEditor, async (req, res, next) => {
+  try {
+    const preflight = await Tour360Repository.getPublishPreflight(req.params.tourId);
+    res.status(200).json({ status: 'success', data: { preflight } });
+  } catch (error) { next(error); }
+});
+
+// GET /api/360-tours/:tourId/publish-manifest — admin-only, no writes
+router.get('/360-tours/:tourId/publish-manifest', requireDraftEditor, async (req, res, next) => {
+  try {
+    const manifest = await Tour360Repository.getPublishManifest(req.params.tourId);
+    res.status(200).json({ status: 'success', data: { manifest } });
+  } catch (error) { next(error); }
+});
+
 // PATCH /api/360-tours/:tourId
-router.patch('/360-tours/:tourId', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.patch('/360-tours/:tourId', requireDraftEditor, async (req, res, next) => {
   try {
     const validated = updateTourSchema.parse(req.body);
     const tour = await Tour360Repository.updateTour(req.params.tourId, validated);
@@ -84,7 +149,7 @@ router.patch('/360-tours/:tourId', restrictTo('ADMIN', 'DIRECTOR'), async (req, 
 });
 
 // DELETE /api/360-tours/:tourId
-router.delete('/360-tours/:tourId', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.delete('/360-tours/:tourId', requireDraftEditor, async (req, res, next) => {
   try {
     await Tour360Repository.deleteTour(req.params.tourId);
     res.status(204).json({
@@ -95,7 +160,7 @@ router.delete('/360-tours/:tourId', restrictTo('ADMIN', 'DIRECTOR'), async (req,
 });
 
 // POST /api/360-tours/upload-url and /api/360-panoramas/upload-url
-router.post(['/360-tours/upload-url', '/360-panoramas/upload-url'], restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.post(['/360-tours/upload-url', '/360-panoramas/upload-url'], requireDraftEditor, async (req, res, next) => {
   try {
     const validated = uploadUrl360Schema.parse(req.body);
     const uploadData = await Tour360Repository.generateUploadUrl(validated.projectId, validated);
@@ -115,9 +180,21 @@ router.post(['/360-tours/upload-url', '/360-panoramas/upload-url'], restrictTo('
 // PANORAMAS
 // -------------------------------------------------------------
 
+// GET /api/360-panoramas/:panoramaId — consistent with frontend API contract
+router.get('/360-panoramas/:panoramaId', async (req, res, next) => {
+  try {
+    const visibility = await Tour360Repository.getPanoramaTourVisibility(req.params.panoramaId);
+    if (!visibility || (!visibility.is_active && !['ADMIN', 'DIRECTOR'].includes(req.user?.role))) throw new AppError('Панорама не найдена', 404);
+    const panorama = await Tour360Repository.getPanoramaById(req.params.panoramaId);
+    res.status(200).json({ status: 'success', data: { panorama } });
+  } catch (error) { next(error); }
+});
+
 // GET /api/360-tours/:tourId/panoramas
 router.get('/360-tours/:tourId/panoramas', async (req, res, next) => {
   try {
+    const visibility = await Tour360Repository.getTourVisibility(req.params.tourId);
+    if (!visibility || (!visibility.is_active && !['ADMIN', 'DIRECTOR'].includes(req.user?.role))) throw new AppError('Тур не найден', 404);
     const panoramas = await Tour360Repository.getPanoramas(req.params.tourId);
     res.status(200).json({
       status: 'success',
@@ -128,7 +205,7 @@ router.get('/360-tours/:tourId/panoramas', async (req, res, next) => {
 });
 
 // POST /api/360-tours/:tourId/panoramas
-router.post('/360-tours/:tourId/panoramas', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.post('/360-tours/:tourId/panoramas', requireDraftEditor, async (req, res, next) => {
   try {
     const validated = createPanoramaSchema.parse(req.body);
     const panorama = await Tour360Repository.createPanorama(req.params.tourId, validated);
@@ -145,7 +222,7 @@ router.post('/360-tours/:tourId/panoramas', restrictTo('ADMIN', 'DIRECTOR'), asy
 });
 
 // PATCH /api/360-panoramas/:panoramaId
-router.patch('/360-panoramas/:panoramaId', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.patch('/360-panoramas/:panoramaId', requireDraftEditor, async (req, res, next) => {
   try {
     const validated = updatePanoramaSchema.parse(req.body);
     const panorama = await Tour360Repository.updatePanorama(req.params.panoramaId, validated);
@@ -162,7 +239,7 @@ router.patch('/360-panoramas/:panoramaId', restrictTo('ADMIN', 'DIRECTOR'), asyn
 });
 
 // DELETE /api/360-panoramas/:panoramaId
-router.delete('/360-panoramas/:panoramaId', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.delete('/360-panoramas/:panoramaId', requireDraftEditor, async (req, res, next) => {
   try {
     await Tour360Repository.deletePanorama(req.params.panoramaId);
     res.status(204).json({
@@ -179,6 +256,8 @@ router.delete('/360-panoramas/:panoramaId', restrictTo('ADMIN', 'DIRECTOR'), asy
 // GET /api/360-panoramas/:panoramaId/hotspots
 router.get('/360-panoramas/:panoramaId/hotspots', async (req, res, next) => {
   try {
+    const visibility = await Tour360Repository.getPanoramaTourVisibility(req.params.panoramaId);
+    if (!visibility || (!visibility.is_active && !['ADMIN', 'DIRECTOR'].includes(req.user?.role))) throw new AppError('Панорама не найдена', 404);
     const hotspots = await Tour360Repository.getHotspots(req.params.panoramaId);
     res.status(200).json({
       status: 'success',
@@ -189,7 +268,7 @@ router.get('/360-panoramas/:panoramaId/hotspots', async (req, res, next) => {
 });
 
 // POST /api/360-panoramas/:panoramaId/hotspots
-router.post('/360-panoramas/:panoramaId/hotspots', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.post('/360-panoramas/:panoramaId/hotspots', requireDraftEditor, async (req, res, next) => {
   try {
     const validated = createHotspotSchema.parse(req.body);
     const hotspot = await Tour360Repository.createHotspot(req.params.panoramaId, validated);
@@ -206,7 +285,7 @@ router.post('/360-panoramas/:panoramaId/hotspots', restrictTo('ADMIN', 'DIRECTOR
 });
 
 // PATCH /api/360-hotspots/:hotspotId
-router.patch('/360-hotspots/:hotspotId', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.patch('/360-hotspots/:hotspotId', requireDraftEditor, async (req, res, next) => {
   try {
     const validated = updateHotspotSchema.parse(req.body);
     const hotspot = await Tour360Repository.updateHotspot(req.params.hotspotId, validated);
@@ -223,7 +302,7 @@ router.patch('/360-hotspots/:hotspotId', restrictTo('ADMIN', 'DIRECTOR'), async 
 });
 
 // DELETE /api/360-hotspots/:hotspotId
-router.delete('/360-hotspots/:hotspotId', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.delete('/360-hotspots/:hotspotId', requireDraftEditor, async (req, res, next) => {
   try {
     await Tour360Repository.deleteHotspot(req.params.hotspotId);
     res.status(204).json({
