@@ -1,3 +1,4 @@
+import { selectUnitTour } from './selectUnitTour.js';
 import { getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
@@ -128,11 +129,7 @@ export class LayoutPresentationRepository {
         .eq('is_active', true);
 
       if (tours && tours.length > 0) {
-        tour360 = tours.find(
-          (t) => (t.entity_type === 'UNIT' && String(t.entity_id) === String(unitId))
-        ) || tours.find(
-          (t) => (t.entity_type === 'BUILDING' && String(t.entity_id) === String(buildingId))
-        ) || tours[0];
+        tour360 = selectUnitTour(tours, unitId);
       }
     }
 
