@@ -1,4 +1,14 @@
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
+
+const getSecureDB = () => {
+  try {
+    if (typeof getServiceDB === 'function') {
+      const sdb = getServiceDB();
+      if (sdb) return sdb;
+    }
+  } catch {}
+  return getDB();
+};
 
 export class ReportsRepository {
   /**
@@ -461,7 +471,7 @@ export class ReportsRepository {
    * Сводные отчеты и KPI Менеджеров
    */
   static async getSummaryReports() {
-    const db = getDB();
+    const db = getSecureDB();
 
     // 1. Units summary
     const { data: units } = await db.from('units').select('status');

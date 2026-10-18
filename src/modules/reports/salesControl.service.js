@@ -5,6 +5,16 @@ import { SalesPlansRepository } from '../sales-plans/salesPlans.repository.js';
 import { DistributionSettingsService } from '../leads/distributionSettings.service.js';
 import { calculateSalesWorkingMinutes, SLA_FIRST_CONTACT_MINUTES } from '../leads/leadSla.service.js';
 
+const getSecureDB = () => {
+  try {
+    if (typeof getServiceDB === 'function') {
+      const sdb = getServiceDB();
+      if (sdb) return sdb;
+    }
+  } catch {}
+  return getDB();
+};
+
 export class SalesControlService {
   /**
    * Evaluates sales supervisor control metrics and drill-down datasets
@@ -23,7 +33,7 @@ export class SalesControlService {
     const today = getBusinessDate();
     const now = new Date();
 
-    const db = getDB();
+    const db = getSecureDB();
 
     // 1. Fetch leads
     let leadsQuery = db

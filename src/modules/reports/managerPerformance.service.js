@@ -1,7 +1,17 @@
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
 import { parseOptionalBigInt } from '../../utils/idNormalizer.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { calculateWorkingMinutes, formatWorkingDuration, getBusinessDate, BUSINESS_TIMEZONE } from '../../utils/businessTime.js';
+
+const getSecureDB = () => {
+  try {
+    if (typeof getServiceDB === 'function') {
+      const sdb = getServiceDB();
+      if (sdb) return sdb;
+    }
+  } catch {}
+  return getDB();
+};
 
 export const LOST_REASON_LABELS = {
   PRICE: 'Высокая цена / бюджет',
@@ -147,7 +157,7 @@ export class ManagerPerformanceService {
     const dateRange = resolveDateRange(filters.period || 'all', filters.startDate, filters.endDate);
     const today = getBusinessDate();
 
-    const db = getDB();
+    const db = getSecureDB();
 
     // 1. Fetch Users / Managers
     let rawUsers = null;
