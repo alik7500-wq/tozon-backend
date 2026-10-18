@@ -67,8 +67,11 @@ export class RoundRobinService {
   /**
    * Check if automated distribution is currently enabled via persistent settings or env.
    */
-  static isEnabled() {
-    const settings = DistributionSettingsService.getSettings();
+  static async isEnabled() {
+    const settings = await DistributionSettingsService.getSettings();
+    if (settings.state === 'SETTINGS_UNAVAILABLE' || settings.isAvailable === false) {
+      return false; // Fail-safe closed: do not distribute when settings cannot be loaded
+    }
     if (typeof settings.enabled === 'boolean') {
       return settings.enabled;
     }
@@ -111,7 +114,7 @@ export class RoundRobinService {
    * 4. Under their concurrent open leads capacity limit (`maxOpenLeadsPerRep`), accounting for live DB count + in-flight reservations.
    */
   static async getEligibleReps() {
-    const settings = DistributionSettingsService.getSettings();
+    const settings = await DistributionSettingsService.getSettings();
     const maxCapacity = settings.maxOpenLeadsPerRep || 25;
     const excludedIds = new Set((settings.excludedUserIds || []).map(Number));
 
@@ -183,7 +186,7 @@ export class RoundRobinService {
     const eligible = await this.getEligibleReps();
     if (eligible.length === 0) return null;
 
-    const settings = DistributionSettingsService.getSettings();
+    const settings = await DistributionSettingsService.getSettings();
     const algorithm = settings.algorithm || 'LEAST_LOADED';
 
     if (algorithm === 'ROUND_ROBIN') {
@@ -235,8 +238,18 @@ export class RoundRobinService {
         };
       }
 
-      // 3. Automated distribution enabled check
-      if (!this.isEnabled()) {
+      // 3. Automated distribution enabled check & fail-safe guard (strictly fresh from PostgreSQL)
+      const settings = await DistributionSettingsService.getSettings({ forceFresh: true });
+      if (settings.state === 'SETTINGS_UNAVAILABLE' || settings.isAvailable === false) {
+        return {
+          responsible_user_id: null,
+          assigned_at: null,
+          assignment_type: 'POOL',
+          reason: 'Настройки распределения временно недоступны (SETTINGS_UNAVAILABLE); заявка направлена в общий пул для ручной обработки'
+        };
+      }
+
+      if (!settings.enabled) {
         return {
           responsible_user_id: null,
           assigned_at: null,
@@ -246,7 +259,6 @@ export class RoundRobinService {
       }
 
       // 4. Working hours check (if enabled in settings)
-      const settings = DistributionSettingsService.getSettings();
       if (settings.workingHoursOnly && !isWithinWorkingHours()) {
         return {
           responsible_user_id: null,

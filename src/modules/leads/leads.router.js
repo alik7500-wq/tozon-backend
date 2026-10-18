@@ -218,7 +218,7 @@ router.get('/distribution/settings', async (req, res, next) => {
     if (req.user?.role === 'FINANCE_MANAGER') {
       return next(new AppError('Доступ запрещен', 403));
     }
-    const settings = DistributionSettingsService.getSettings();
+    const settings = await DistributionSettingsService.getSettings();
     const eligibleReps = await RoundRobinService.getEligibleReps();
     res.status(200).json({ status: 'success', data: { settings, eligibleReps } });
   } catch (error) { next(error); }
@@ -230,7 +230,7 @@ router.post('/distribution/settings', async (req, res, next) => {
     if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
       return next(new AppError('Управление авто-распределением доступно только руководителю или администратору', 403));
     }
-    const updated = DistributionSettingsService.updateSettings(req.body, req.user);
+    const updated = await DistributionSettingsService.updateSettings(req.body, req.user);
     res.status(200).json({ status: 'success', data: { settings: updated } });
   } catch (error) { next(error); }
 });

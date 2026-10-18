@@ -249,7 +249,7 @@ export class SalesControlService {
     // 9. Metric F: Manager Workload & Capacity Analysis
     let managerWorkloads = [];
     if (isSupervisor) {
-      const distributionSettings = DistributionSettingsService.getSettings();
+      const distributionSettings = await DistributionSettingsService.getSettings();
       const maxLimit = distributionSettings.maxOpenLeadsPerRep || 25;
       const excludedSet = new Set((distributionSettings.excludedUserIds || []).map(Number));
 

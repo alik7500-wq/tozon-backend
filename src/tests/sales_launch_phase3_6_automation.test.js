@@ -52,8 +52,8 @@ describe('TOZON CRM — Sales Launch Phase 3.6: Sales Automation & Follow-up Tes
     vi.restoreAllMocks();
   });
 
-  afterAll(() => {
-    DistributionSettingsService.updateSettings({
+  afterAll(async () => {
+    await DistributionSettingsService.updateSettings({
       enabled: false,
       algorithm: 'LEAST_LOADED',
       maxOpenLeadsPerRep: 25,
@@ -67,8 +67,8 @@ describe('TOZON CRM — Sales Launch Phase 3.6: Sales Automation & Follow-up Tes
   // SECTION 1 & 2: AUTOMATED LEAD DISTRIBUTION & SETTINGS
   // =========================================================================
   describe('Раздел 2: Автоматическое распределение лидов и управление правилами', () => {
-    it('по умолчанию автоматическое распределение выключено (enabled = false)', () => {
-      const settings = DistributionSettingsService.getSettings();
+    it('по умолчанию автоматическое распределение выключено (enabled = false)', async () => {
+      const settings = await DistributionSettingsService.getSettings();
       // Owner requirement: "По умолчанию автоматическое распределение выключено до настройки руководителем."
       expect(settings).toBeDefined();
       expect(typeof settings.enabled).toBe('boolean');
