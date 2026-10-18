@@ -20,6 +20,7 @@ import usersRouter from './modules/users/users.router.js';
 import tasksRouter from './modules/tasks/tasks.router.js';
 import contractsRouter from './modules/contracts/contracts.router.js';
 import financeRouter from './modules/finance/finance.router.js';
+import costsRouter from './modules/costs/costs.router.js';
 import reportsRouter from './modules/reports/reports.router.js';
 import notificationsRouter from './modules/notifications/notifications.router.js';
 import smsRouter from './modules/sms/sms.router.js';
@@ -94,6 +95,7 @@ app.get('/api/health', (req, res) => {
 // The bot router has its own secret verification and CRM administrator checks.
 app.use('/api/telegram-finance', telegramFinanceRouter);
 app.use('/api/construction', constructionRouter);
+app.use('/api/costs', costsRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/calls', callsRouter);
 app.use('/api/projects', projectsRouter);

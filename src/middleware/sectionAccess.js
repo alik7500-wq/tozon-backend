@@ -33,7 +33,9 @@ export const authorizeSectionRequest = async req => {
   let allowed;
   if (path.startsWith('/api/auth/')) return;
   if (path.startsWith('/api/notifications')) return; // personal notifications, existing ownership checks apply
-  if (path.startsWith('/api/construction')) {
+  if (path.startsWith('/api/costs')) {
+    key = 'finance.costs';
+  } else if (path.startsWith('/api/construction')) {
     if (read) allowed = hasAny(user, constructionReads);
     else if (/\/masters\/|\/settings$/.test(path)) key = 'construction.settings';
     else if (/\/documents(?:\/|$)/.test(path)) {
