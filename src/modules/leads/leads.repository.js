@@ -959,7 +959,7 @@ export class LeadsRepository {
     }
 
     const isManagerOnly = currentUser.role === 'SALES_MANAGER';
-    const db = getDB();
+    const db = getSecureDB();
     const today = getBusinessDate();
     const now = new Date();
 
@@ -1000,8 +1000,34 @@ export class LeadsRepository {
       if (parsedProjectId) query = query.eq('interested_project_id', parsedProjectId);
     }
 
-    const { data: rawLeads, error } = await query;
-    if (error) throw error;
+    let rawLeads = [];
+    try {
+      const { data, error } = await query;
+      if (error) {
+        console.error('[LeadsRepository.getSlaControlData] DB error:', error.code, error.message);
+        throw error;
+      }
+      rawLeads = data || [];
+    } catch (err) {
+      console.error('[LeadsRepository.getSlaControlData] Query failed:', err.message);
+      return {
+        state: 'DATA_UNAVAILABLE',
+        isAvailable: false,
+        message: 'Данные контроля обработки лидов временно недоступны',
+        summary: {
+          totalActive: 0,
+          unassignedCount: 0,
+          contactWarningCount: 0,
+          contactOverdueCount: 0,
+          stagnantCount: 0,
+          overdueTasksCount: 0,
+          onTrackCount: 0,
+          attentionRequiredCount: 0
+        },
+        leads: [],
+        pagination: { total: 0, page: 1, limit: 50, totalPages: 1 }
+      };
+    }
 
     let leads = rawLeads || [];
 
@@ -1118,6 +1144,8 @@ export class LeadsRepository {
     const paginatedLeads = filteredLeads.slice(offset, offset + limit);
 
     return {
+      state: 'SUCCESS',
+      isAvailable: true,
       summary,
       leads: paginatedLeads,
       pagination: { total, page, limit, totalPages }
