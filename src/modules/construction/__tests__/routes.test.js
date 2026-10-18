@@ -16,3 +16,21 @@ describe('Construction API access boundaries',()=>{
  it('mass-assignment of POSTED status is refused before database access',async()=>{expect((await request(app).post('/construction/documents').send({...doc,status:'POSTED'})).status).toBe(400);expect(state.db.from).not.toHaveBeenCalled();});
  it('employee cannot approve their own report even with advance permissions',async()=>{state.db.from.mockImplementation(table=>({select:()=>({eq:()=>({single:async()=>({data:table==='construction_settings'?{approver_user_id:1}:{...doc,status:'SUBMITTED'}})})})}));expect((await request(app).post(`/construction/documents/${doc.id}/post`)).status).toBe(403);expect(state.db.rpc).not.toHaveBeenCalled();});
 });
+describe('Receipt correction API',()=>{
+ const payload={id:'404b6ef1-83f5-4dfe-bf49-f2c42d81e108',expected_version:0,reason:'Ошибка цены',values:[2000]};
+ it('denies price changes to stock-only users',async()=>{
+  expect((await request(app).post(`/construction/documents/${doc.id}/price-corrections`).send(payload)).status).toBe(403);
+  expect(state.db.rpc).not.toHaveBeenCalled();
+ });
+ it('passes validated correction and server actor to transactional RPC',async()=>{
+  state.user={id:1,role:'ADMIN',permissions:[]};state.db.rpc.mockResolvedValue({data:{version:1}});
+  const r=await request(app).post(`/construction/documents/${doc.id}/price-corrections`).send(payload);
+  expect(r.status).toBe(200);expect(state.db.rpc).toHaveBeenCalledWith('construction_correct_receipt_price',expect.objectContaining({p_actor:1,p_values:[2000],p_receipt:doc.id,p_expected:0}));
+ });
+ it('rejects extra fields and maps stale versions to conflict',async()=>{
+  state.user={id:1,role:'ADMIN',permissions:[]};
+  expect((await request(app).post(`/construction/documents/${doc.id}/price-corrections`).send({...payload,quantity:12})).status).toBe(400);
+  expect(state.db.rpc).not.toHaveBeenCalled();state.db.rpc.mockResolvedValue({error:{code:'40001',message:'VERSION_CONFLICT'}});
+  expect((await request(app).post(`/construction/documents/${doc.id}/price-corrections`).send(payload)).status).toBe(409);
+ });
+});

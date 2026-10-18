@@ -25,6 +25,9 @@ beforeEach(async()=>{
  destination=(await query("INSERT INTO construction_warehouses(name) VALUES('Second') RETURNING id"))[0].id;
  material=(await query("INSERT INTO construction_materials(name,unit) VALUES('Cement','kg') RETURNING id"))[0].id;
  await db.exec('UPDATE construction_settings SET approver_user_id=1');
+ await db.exec('CREATE TABLE buildings(id integer PRIMARY KEY); INSERT INTO buildings VALUES(1)');
+ await db.exec(readFileSync(new URL('../../../../supabase/migrations/20261018100726_material_cost_tables.sql',import.meta.url),'utf8'));
+ await db.exec(readFileSync(new URL('../../../../supabase/migrations/20261018184855_receipt_price_corrections.sql',import.meta.url),'utf8'));
 });
 afterEach(async()=>{await db.close();});
 describe('Construction accounting transactional ledger',()=>{
@@ -105,6 +108,79 @@ describe('Construction accounting transactional ledger',()=>{
    expect(rows.every(r=>r.rowsecurity)).toBe(true);
    for(const r of rows){for(const op of ['SELECT','INSERT','UPDATE','DELETE'])expect((await query('SELECT has_table_privilege($1,$2,$3) allowed',[role,r.tablename,op]))[0].allowed).toBe(false);}
    expect((await query("SELECT has_function_privilege($1,'construction_post(uuid,integer)','EXECUTE') allowed",[role]))[0].allowed).toBe(false);
+  }
+ });
+});
+
+const correct=async(id,values,version=0,actor=1,requestId='404b6ef1-83f5-4dfe-bf49-f2c42d81e108')=>query('select construction_correct_receipt_price($1,$2,$3,$4,$5,$6)',[requestId,id,JSON.stringify(values),version,'Исправление цены накладной',actor]);
+describe('Posted receipt price corrections',()=>{
+ it('revalues fully consumed receipt, debt and cost snapshot; preserves source and cash',async()=>{
+  const id=await document();await post(id);
+  const out=await document({kind:'WRITE_OFF',project_id:1,work_type:'Concrete',lines:[{material_id:material,quantity:100}]});await post(out);
+  await db.query(`insert into cost_material_usages(id,stock_entry_id,building_id,material_kind,usage_date,quantity,unit,amount,currency,exchange_rate,reason,updated_by) select gen_random_uuid(),id,1,'CONCRETE','2026-10-02',100,'kg',1000,'TJS',10,'Test usage',1 from construction_stock_entries where document_id=$1`,[out]);
+  await correct(id,[2000]);
+  expect(await sum('construction_stock_entries','value')).toBe(0);
+  expect(await sum('construction_settlement_entries','amount')).toBe(2000);
+  expect(await sum('cost_material_usages','amount')).toBe(2000);
+  expect((await query('select version from cost_material_usages'))[0].version).toBe(2);
+  expect((await query('select lines from construction_documents where id=$1',[id]))[0].lines[0].value).toBe(1000);
+  expect((await query('select * from cost_material_audit')).length).toBe(1);
+  expect((await query('select * from expenses')).length).toBe(0);
+ });
+ it('replays averages through transfer and mixed receipts, including repeated corrections',async()=>{
+  const id=await document();await post(id);
+  await post(await document({lines:[{material_id:material,quantity:100,value:3000}]}));
+  await post(await document({kind:'TRANSFER',destination_id:destination,lines:[{material_id:material,quantity:40}]}));
+  await post(await document({kind:'ISSUE',warehouse_id:destination,project_id:1,work_type:'Work',lines:[{material_id:material,quantity:30}]}));
+  await correct(id,[2000]);
+  expect(await sum('construction_stock_entries','value',`warehouse_id='${warehouse}'`)).toBe(4000);
+  expect(await sum('construction_stock_entries','value',`warehouse_id='${destination}'`)).toBe(250);
+  await correct(id,[0],1,1,'404b6ef1-83f5-4dfe-bf49-f2c42d81e109');
+  expect(await sum('construction_stock_entries','value',`warehouse_id='${warehouse}'`)).toBe(2400);
+  expect(await sum('construction_stock_entries','value',`warehouse_id='${destination}'`)).toBe(150);
+ });
+ it('supports duplicate materials and cent rounding; never leaves value with zero stock',async()=>{
+  const id=await document({lines:[{material_id:material,quantity:3,value:1},{material_id:material,quantity:1,value:2}]});await post(id);
+  await post(await document({kind:'WRITE_OFF',project_id:1,work_type:'Work',lines:[{material_id:material,quantity:1},{material_id:material,quantity:3}]}));
+  await correct(id,[1.01,2.02]);
+  expect(await sum('construction_stock_entries','value')).toBe(0);
+  expect(await sum('construction_settlement_entries','amount')).toBe(3.03);
+ });
+ it('rejects unauthorized, inactive, stale, malformed and unchanged requests atomically',async()=>{
+  const id=await document();await post(id);
+  await expect(correct(id,[2000],0,2)).rejects.toThrow('прав');
+  await expect(correct(id,[],0)).rejects.toThrow('строк');
+  await expect(correct(id,[-1])).rejects.toThrow('Стоимость');
+  await expect(correct(id,[1.001])).rejects.toThrow('Стоимость');
+  await expect(correct(id,[1000])).rejects.toThrow('не изменена');
+  await correct(id,[2000]);
+  await expect(correct(id,[3000],0,1,'404b6ef1-83f5-4dfe-bf49-f2c42d81e109')).rejects.toThrow('VERSION_CONFLICT');
+  expect(await sum('construction_stock_entries','value')).toBe(2000);
+  await db.exec('update users set is_active=false where id=1');
+  await expect(correct(id,[3000],1)).rejects.toThrow('прав');
+ });
+ it('deduplicates retries and refuses reuse with another payload',async()=>{
+  const id=await document();await post(id);await correct(id,[2000]);await correct(id,[2000]);
+  expect((await query('select * from construction_price_corrections')).length).toBe(1);
+  await expect(correct(id,[3000])).rejects.toThrow('уже использован');
+ });
+ it('rolls back all changes when a downstream cost has active payment links',async()=>{
+  const id=await document();await post(id);
+  const out=await document({kind:'WRITE_OFF',project_id:1,work_type:'Work',lines:[{material_id:material,quantity:100}]});await post(out);
+  await db.query(`insert into cost_material_usages(id,stock_entry_id,building_id,material_kind,usage_date,quantity,unit,amount,currency,exchange_rate,reason,updated_by) select gen_random_uuid(),id,1,'CONCRETE','2026-10-02',100,'kg',1000,'TJS',10,'Test usage',1 from construction_stock_entries where document_id=$1`,[out]);
+  await db.exec("insert into expenses(id,amount_minor,currency,expense_date) values(10,10000,'TJS','2026-10-02'); insert into cost_material_payment_links(id,usage_id,expense_id,paid_amount,cash_usd_minor,reason,updated_by) select gen_random_uuid(),id,10,100,1000,'Test payment',1 from cost_material_usages");
+  await expect(correct(id,[2000])).rejects.toThrow('привязки оплат');
+  expect(await sum('construction_settlement_entries','amount')).toBe(1000);
+  expect(await sum('construction_stock_entries','value',`document_id='${id}'`)).toBe(1000);
+  expect((await query('select * from construction_price_corrections')).length).toBe(0);
+ });
+ it('protects approved employee reports and restricts RPC and audit table',async()=>{
+  const id=await document({party_id:employee});await post(id);
+  await post(await document({kind:'ADVANCE_REPORT',party_id:employee,status:'SUBMITTED',lines:[{amount:1000,basis:'Materials',proof:'Invoice',receipt_id:id}]}));
+  await expect(correct(id,[2000])).rejects.toThrow('утверждённый');
+  for(const role of ['anon','authenticated']){
+   expect((await query("select has_function_privilege($1,'construction_correct_receipt_price(uuid,uuid,jsonb,integer,text,integer)','EXECUTE') allowed",[role]))[0].allowed).toBe(false);
+   expect((await query("select has_table_privilege($1,'construction_price_corrections','SELECT') allowed",[role]))[0].allowed).toBe(false);
   }
  });
 });
