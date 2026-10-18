@@ -1,3 +1,4 @@
+import { settlementCashDocuments,settlementCashEntries } from '../finance/expenseSettlement.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { getServiceDB } from '../../db/connection.js';
@@ -24,7 +25,8 @@ const all = async (db,table) => {
 };
 router.get('/state',wrap(async(req,res)=>{
  const db=getServiceDB(); const user=req.user;
- const [settings,parties,warehouses,materials,documents,stock,settlements,projects,corrections] = await Promise.all(['construction_settings','construction_parties','construction_warehouses','construction_materials','construction_documents','construction_stock_entries','construction_settlement_entries','projects','construction_price_corrections'].map(t=>all(db,t)));
+ const [settings,parties,warehouses,materials,documents,stock,settlements,projects,corrections,cashSettlements] = await Promise.all(['construction_settings','construction_parties','construction_warehouses','construction_materials','construction_documents','construction_stock_entries','construction_settlement_entries','projects','construction_price_corrections','construction_expense_settlements'].map(t=>all(db,t)));
+ if(can(user,'construction.settlements')){documents.push(...settlementCashDocuments(cashSettlements));settlements.push(...settlementCashEntries(cashSettlements));}
  const own=parties.filter(p=>p.user_id===user.id).map(p=>p.id);
  const finance=can(user,'construction.settlements');
  const cfg=settings[0];

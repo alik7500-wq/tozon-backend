@@ -1,3 +1,4 @@
+import { getServiceDB } from '../../db/connection.js';
 import { Router } from 'express';
 import { 
   getIncome, 
@@ -62,6 +63,15 @@ router.put('/income/:id', requireCashDeskMutation, updateIncome);
 router.patch('/income/:id', requireCashDeskMutation, updateIncome);
 router.delete('/income/:id', requireCashDeskMutation, deleteIncome);
 
+router.get('/settlement-parties', async(req,res,next)=>{
+ try{
+  const access=req.cashDeskAccess;
+  if(!access?.isAdmin&&!access?.canCreateExpense&&!access?.canEditExpense){res.status(403).json({message:'Нет права оформления РКО'});return;}
+  const {data,error}=await getServiceDB().from('construction_parties').select('id,name,kind,active').neq('kind','EMPLOYEE').order('name');
+  if(error)throw error;
+  res.json({status:'success',data:{parties:data}});
+ }catch(e){next(e);}
+});
 router.get('/expenses', getExpenses);
 router.get('/expenses/:id', getExpenseById);
 router.post('/expenses', requireCashDeskExpense, addExpense);

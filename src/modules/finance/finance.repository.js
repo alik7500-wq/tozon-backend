@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { expenseSettlement } from './expenseSettlement.js';
 import { getDB, getServiceDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
@@ -1115,7 +1116,7 @@ export class FinanceRepository {
 
     const { data: expensesData, error } = await db.from('expenses').select(`
       id, amount_minor, currency, expense_date, category, method, reference, recipient, description, created_at,
-      exchange_rate, amount_usd, conversion_expense_id,
+      exchange_rate, amount_usd, conversion_expense_id, conversion_id, settlement_party_id, settlement_account,
       status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type,
       users:created_by_user_id ( id, name )
     `).order('expense_date', { ascending: false });
@@ -1146,6 +1147,9 @@ export class FinanceRepository {
           method: e.method || 'CASH',
           reference: e.reference || `РКО-${e.id}`,
           document_number: e.document_number || null,
+          settlement_party_id:e.settlement_party_id||null,
+          settlement_account:e.settlement_account||null,
+          conversion_id:e.conversion_id||null,
           recipient: e.recipient || 'Контрагент',
           description: cleanDesc,
           exchange_rate: e.exchange_rate ? Number(e.exchange_rate) : null,
@@ -1364,6 +1368,22 @@ export class FinanceRepository {
         err.statusCode = 400;
         err.code = 'CASH_DESK_REQUIRED';
         throw err;
+      }
+
+      const settlement=expenseSettlement(data);
+      if(settlement?.settlement_party_id){
+        if(!key)throw new AppError('idempotency_key обязателен',400);
+        if(data.auto_convert && userAccess && !userAccess.isAdmin)throw new AppError('Автоконвертация доступна администратору кассы',403);
+        const amount=Number(data.amount);
+        if(!Number.isFinite(amount)||amount<=0||Math.abs(amount*100-Math.round(amount*100))>0.0001)throw new AppError('Укажите положительную сумму до двух знаков после запятой',400);
+        const {data:result,error}=await getServiceDB().rpc('create_expense_with_settlement',{p_actor:parseOptionalBigInt(userId),p_data:{
+          ...settlement,amount,currency:(data.currency||'USD').toUpperCase(),expense_date:data.date||data.expense_date||new Date().toISOString().slice(0,10),
+          cash_desk_id:targetCashDeskId,idempotency_key:key,recipient:data.recipient||'Контрагент',category:data.category||'Прочее',
+          description:data.description||'',reference:data.reference||'',method:data.method||'CASH',exchange_rate:data.exchange_rate?Number(data.exchange_rate):null,
+          auto_convert:Boolean(data.auto_convert),source_currency:data.source_currency||'USD',settlement_method:settlementMethod,is_transfer:Boolean(data.is_transfer)
+        }});
+        if(error)throw new AppError(error.message,error.code==='23505'?409:400);
+        return result;
       }
 
       // 1. Проверка в БД: если операция уже существует (между процессами)
@@ -1666,7 +1686,10 @@ export class FinanceRepository {
       }
     }
 
-    const updatePayload = {};
+    const settlement=expenseSettlement(data,originalRecord);
+    const updatePayload = settlement?{...settlement}:{};
+    if(settlement||originalRecord.settlement_party_id)updatePayload.settlement_updated_by=userAccess?.userId||originalRecord.created_by_user_id;
+
     if (data.amount !== undefined && !isConversion) {
       updatePayload.amount_minor = Math.round(Number(data.amount) * 100);
     }
@@ -1700,11 +1723,20 @@ export class FinanceRepository {
       const error = new Error('Перенос ордера в эту кассу запрещён'); error.statusCode = 403; throw error;
     }
 
+    if((settlement?.settlement_party_id||originalRecord.settlement_party_id) && (updatePayload.amount_minor!==undefined||updatePayload.currency)){
+      const cur=updatePayload.currency||originalRecord.currency;
+      const amount=(updatePayload.amount_minor??originalRecord.amount_minor)/100;
+      const rate=Number(originalRecord.exchange_rate);
+      if(cur==='TJS'&&!(rate>0))throw new AppError('У РКО отсутствует исторический курс',400);
+      updatePayload.amount_usd=cur==='USD'?amount:Number((amount/rate).toFixed(2));
+      updatePayload.amount_tjs=cur==='TJS'?amount:null;
+    }
+
     if (Object.keys(updatePayload).length === 0) {
       return originalRecord;
     }
 
-    const { data: updatedRows, error } = await db.from('expenses').update(updatePayload).eq('id', id).select();
+    const { data: updatedRows, error } = await (settlement||originalRecord.settlement_party_id?getServiceDB():db).from('expenses').update(updatePayload).eq('id', id).select();
     if (error) {
       console.error('Error updating expense in DB:', error);
       throw error;
@@ -1728,7 +1760,7 @@ export class FinanceRepository {
     }
     const db = getDB();
     const { data: originalRecord } = await db.from('expenses').select('*').eq('id', id).maybeSingle();
-    const { error } = await db.from('expenses').delete().eq('id', id);
+    const { error } = await (originalRecord?.settlement_party_id?getServiceDB():db).from('expenses').delete().eq('id', id);
     if (error) {
       console.error('Error deleting expense in DB:', error);
       throw error;
