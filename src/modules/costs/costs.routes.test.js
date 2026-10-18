@@ -34,4 +34,17 @@ describe('Cost API permissions and validation', () => {
   it('rejects invalid dates instead of widening the report', async () => {
     expect((await request(app).get('/api/costs/state?as_of=invalid')).status).toBe(400); expect(mocks.from).not.toHaveBeenCalled();
   });
+  it('uses session actor for material usage and rejects arbitrary fields', async () => {
+    const url='/api/costs/material-usages/00000000-0000-4000-8000-000000000001';
+    const body={building_id:3,material_kind:'CONCRETE',stock_entry_id:4,reason:'Confirmed slab',expected_version:0};
+    expect((await request(app).put(url).send({...body,p_actor:99})).status).toBe(400);
+    mocks.rpc.mockResolvedValue({data:{id:'u1'}});
+    expect((await request(app).put(url).send(body)).status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith('cost_save_material_usage',expect.objectContaining({p_actor:1,p_data:expect.objectContaining({building_id:3,material_kind:'CONCRETE'})}));
+  });
+  it('denies material mutations for read-only cost users', async () => {
+    mocks.user={id:2,permissions:['finance.costs']};
+    expect((await request(app).put('/api/costs/material-payments/00000000-0000-4000-8000-000000000001').send({})).status).toBe(403);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
 });
