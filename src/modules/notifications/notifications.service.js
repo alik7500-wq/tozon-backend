@@ -77,14 +77,15 @@ export class NotificationsService {
     const recipientIds = await this.resolveRecipients(deal.responsible_user_id);
 
     const contractStr = deal.contract_number ? `№${deal.contract_number}` : `№${deal.id}`;
-    const unitStr = deal.unit_number ? `квартиру №${deal.unit_number}` : 'объект';
+    const unitName = deal.unit_kind === 'PARKING' ? 'машино-место' : deal.unit_kind === 'COMMERCIAL' ? 'коммерческое помещение' : 'квартира';
+    const unitStr = deal.unit_number ? `${unitName} №${deal.unit_number}` : 'объект';
 
     for (const userId of recipientIds) {
       await NotificationsRepository.createNotification({
         user_id: userId,
         type: 'RESERVATION_CREATED',
         title: 'Успешно оформлена новая бронь',
-        message: `Забронирована ${unitStr} по договору ${contractStr}.`,
+        message: `Новая бронь: ${unitStr} по договору ${contractStr}.`,
         entity_type: 'DEAL',
         entity_id: deal.id,
         dedupe_key: `RESERVATION_CREATED:${deal.id}:${userId}`,
