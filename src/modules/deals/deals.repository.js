@@ -15,7 +15,7 @@ export class DealsRepository {
       *,
       leads ( full_name, phone, passport_series, passport_number, inn ),
       units ( 
-        unit_number, rooms, area_m2_x100, price_per_m2_minor,
+        unit_number, unit_kind, rooms, area_m2_x100, price_per_m2_minor,
         floors ( floor_number, name, sections ( name, buildings ( name, projects ( id, name, developer_name, currency ) ) ) )
       ),
       users!responsible_user_id ( name ),
@@ -102,6 +102,7 @@ export class DealsRepository {
         passport_number: deal.leads?.passport_number,
         inn: deal.leads?.inn,
         unit_number: deal.units?.unit_number,
+        unit_kind: deal.units?.unit_kind || 'APARTMENT',
         unit_rooms: deal.units?.rooms,
         area_m2_x100: deal.units?.area_m2_x100,
         deal_price_per_m2_minor: computedDealPricePerM2,
@@ -185,7 +186,7 @@ export class DealsRepository {
       *,
       leads ( full_name, phone, secondary_phone, passport_series, passport_number, passport_issued_by, passport_issue_date, birth_date, registration_address, inn ),
       units ( 
-        unit_number, rooms, area_m2_x100, price_per_m2_minor, status,
+        unit_number, unit_kind, rooms, area_m2_x100, price_per_m2_minor, status,
         layout_types ( name, image_path ),
         floors ( floor_number, name, sections ( name, buildings ( name, projects ( id, name, developer_name, address, currency ) ) ) )
       ),
@@ -236,6 +237,7 @@ export class DealsRepository {
       registration_address: deal.leads?.registration_address,
       inn: deal.leads?.inn,
       unit_number: deal.units?.unit_number,
+      unit_kind: deal.units?.unit_kind || 'APARTMENT',
       unit_rooms: deal.units?.rooms,
       area_m2_x100: deal.units?.area_m2_x100,
       deal_price_per_m2_minor: computedDealPricePerM2,
@@ -278,8 +280,12 @@ export class DealsRepository {
 
     // 1. Verify Unit
     const { data: unit, error: unitErr } = await db.from('units').select('*, floors(sections(buildings(projects(code, currency))))').eq('id', data.unit_id).single();
-    if (unitErr) throw new AppError('Квартира не найдена', 404);
-    if (unit.status !== 'AVAILABLE') throw new AppError('Квартира недоступна для оформления', 409);
+    if (unitErr || !unit) throw new AppError('Объект не найден', 404);
+    if (unit.status !== 'AVAILABLE') throw new AppError('Объект недоступен для оформления', 409);
+
+    if (['PARKING', 'COMMERCIAL'].includes(unit.unit_kind) && (!Number.isSafeInteger(Number(data.final_price_minor)) || Number(data.final_price_minor) <= 0)) {
+      throw new AppError('Укажите положительную стоимость объекта', 400);
+    }
 
     // 2. Contract Number
     const { count, error: countErr } = await db.from('deals').select('*', { count: 'exact', head: true });
@@ -381,6 +387,7 @@ export class DealsRepository {
         id: newDeal.id,
         contract_number: contractNumber,
         unit_number: unit.unit_number,
+        unit_kind: unit.unit_kind || 'APARTMENT',
         responsible_user_id: responsibleUserId
       }).catch(err => {
         console.warn('Failed to dispatch RESERVATION_CREATED notification:', err);
@@ -839,7 +846,7 @@ export class DealsRepository {
   static async getAvailableUnits(projectId) {
     const db = getDB();
     let query = db.from('units').select(`
-      id, unit_number, rooms, area_m2_x100, price_per_m2_minor, manual_total_price_minor, status,
+      id, unit_number, unit_kind, rooms, area_m2_x100, price_per_m2_minor, manual_total_price_minor, status,
       floors ( floor_number, name, sections ( name, buildings ( name, projects ( id, name, currency ) ) ) ),
       layout_types ( name, image_path )
     `).eq('status', 'AVAILABLE').is('archived_at', null);
@@ -857,6 +864,7 @@ export class DealsRepository {
       return {
         id: u.id,
         unit_number: u.unit_number,
+        unit_kind: u.unit_kind || 'APARTMENT',
         rooms: u.rooms,
         area_m2_x100: u.area_m2_x100,
         price_per_m2_minor: u.price_per_m2_minor,
