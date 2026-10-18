@@ -139,7 +139,7 @@ BEGIN
             );
         END IF;
 
-        IF v_target_user.is_active != 1 AND v_target_user.is_active IS NOT TRUE THEN
+        IF COALESCE(v_target_user.is_active, 0) <> 1 THEN
             RETURN jsonb_build_object(
                 'success', false,
                 'error_code', 'USER_INACTIVE',
@@ -147,7 +147,7 @@ BEGIN
             );
         END IF;
 
-        IF v_target_user.is_sales_rep != 1 AND v_target_user.is_sales_rep IS NOT TRUE THEN
+        IF COALESCE(v_target_user.is_sales_rep, false) IS NOT TRUE THEN
             RETURN jsonb_build_object(
                 'success', false,
                 'error_code', 'USER_NOT_SALES_REP',
@@ -188,7 +188,7 @@ BEGIN
     SET responsible_user_id = p_target_user_id,
         assigned_at = v_assigned_at,
         reassignment_reason = p_reason,
-        updated_at = NOW()
+        updated_at = NOW()::text
     WHERE id = p_lead_id;
 
     -- 5. Atomically record the assignment transition in audit history
