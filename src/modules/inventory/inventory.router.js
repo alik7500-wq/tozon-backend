@@ -1,5 +1,6 @@
 import express from 'express';
 import { InventoryRepository } from './inventory.repository.js';
+import { AlternativeUnitsService } from './alternativeUnits.service.js';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
@@ -103,6 +104,15 @@ router.get('/units/:id', async (req, res, next) => {
     const unit = await InventoryRepository.getUnitById(cleanId);
     if (!unit) return next(new AppError('Квартира не найдена', 404));
     res.status(200).json({ status: 'success', data: { unit } });
+  } catch (error) { next(error); }
+});
+
+router.get('/units/:id/alternatives', async (req, res, next) => {
+  try {
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 5;
+    const alternatives = await AlternativeUnitsService.getAlternativesForUnit(cleanId, { limit });
+    res.status(200).json({ status: 'success', data: { alternatives } });
   } catch (error) { next(error); }
 });
 

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { ReportsRepository } from './reports.repository.js';
 import { ManagerPerformanceService } from './managerPerformance.service.js';
 import { SalesAnalyticsService } from './salesAnalytics.service.js';
+import { SalesControlService } from './salesControl.service.js';
 import { protect } from '../../middleware/auth.middleware.js';
 
 const router = Router();
@@ -117,6 +118,16 @@ router.get('/sales-analytics-export', async (req, res, next) => {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="tozon_sales_analytics_${exportType}.csv"`);
     res.status(200).send(csvContent);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Phase 3.6: Sales Supervisor Control Dashboard
+router.get('/sales-control', async (req, res, next) => {
+  try {
+    const data = await SalesControlService.getControlDashboardData(req.user);
+    res.status(200).json({ status: 'success', data });
   } catch (error) {
     next(error);
   }

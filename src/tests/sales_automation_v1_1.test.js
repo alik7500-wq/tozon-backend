@@ -205,8 +205,8 @@ describe('Sales Automation V1.1 — Lead SLA & Processing Control Suite', () => 
   // =========================================================================
   describe('4. Multi-signal first contact detection', () => {
     it('does NOT treat absence of phone call record as lack of contact if other signals exist', async () => {
-      // 24 hours ago guaranteed > 2 working hours elapsed
-      const leadCreated = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+      // 72 hours ago guaranteed > 2 working hours elapsed regardless of weekend (Sunday)
+      const leadCreated = new Date(Date.now() - 72 * 3600 * 1000).toISOString();
 
       // Signal 1: Status progressed beyond NEW
       const leadWithStatusProgression = {

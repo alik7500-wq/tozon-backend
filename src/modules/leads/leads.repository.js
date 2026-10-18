@@ -25,6 +25,8 @@ const getSecureDB = () => {
   }
 };
 
+const activeLeadAssignmentLocks = new Set();
+
 export class LeadsRepository {
   static async findAll(filters = {}) {
     const db = getDB();
@@ -284,82 +286,129 @@ export class LeadsRepository {
   /**
    * Assign or reassign lead to a manager or return to pool.
    * Validates target user is an active sales representative (is_sales_rep = true).
+   * Concurrency-guarded to prevent parallel overwrites of the same lead.
    */
-  static async assignManager(leadId, targetUserId, reason = null, actorUserId = null) {
+  static async assignManager(leadId, targetUserId, reason = null, actorUserId = null, isManual = true) {
     const cleanId = parseRequiredBigInt(leadId, 'leadId');
-    const db = getDB();
-    const now = new Date().toISOString();
-
-    const currentLead = await this.findById(cleanId);
-    if (!currentLead) throw new AppError('Лид не найден', 404);
-
-    const fromUserId = currentLead.responsible_user_id || null;
-    const cleanTargetId = targetUserId !== null && targetUserId !== undefined ? parseRequiredBigInt(targetUserId, 'targetUserId') : null;
-
-    if (cleanTargetId !== null) {
-      // Validate target user eligibility
-      const { data: targetUser, error: userErr } = await db
-        .from('users')
-        .select('id, name, role, is_active, is_sales_rep')
-        .eq('id', cleanTargetId)
-        .maybeSingle();
-
-      if (userErr || !targetUser) {
-        throw new AppError('Указанный менеджер не найден', 404);
-      }
-
-      const isActive = targetUser.is_active === 1 || targetUser.is_active === true || targetUser.is_active === '1';
-      if (!isActive) {
-        throw new AppError('Назначение невозможно: учетная запись сотрудника деактивирована', 422);
-      }
-
-      const isRep = targetUser.is_sales_rep === true || targetUser.is_sales_rep === 1 || targetUser.is_sales_rep === 'true';
-      if (!isRep) {
-        throw new AppError('Назначение разрешено только действующему сотруднику отдела продаж (is_sales_rep = true)', 422);
-      }
+    const lockKey = String(cleanId);
+    if (activeLeadAssignmentLocks.has(lockKey)) {
+      throw new AppError('Операция назначения для данного лида уже выполняется параллельным запросом', 409);
     }
+    activeLeadAssignmentLocks.add(lockKey);
 
-    // Update lead record
-    const updatePayload = {
-      responsible_user_id: cleanTargetId,
-      assigned_at: cleanTargetId ? now : null,
-      reassignment_reason: reason || null,
-      updated_at: now
-    };
-
-    const { error: updateErr } = await db.from('leads').update(updatePayload).eq('id', cleanId);
-    if (updateErr) throw updateErr;
-
-    // Log assignment transition into assignment history table (best effort, graceful fallback)
     try {
-      const historyDb = getHistoryDB();
-      await historyDb.from('lead_assignment_history').insert([{
-        lead_id: cleanId,
-        from_user_id: fromUserId,
-        to_user_id: cleanTargetId,
-        assigned_by_user_id: actorUserId || null,
-        assignment_type: cleanTargetId ? 'MANUAL' : 'POOL_RETURN',
-        reason: reason || null,
-        created_at: now
-      }]);
-    } catch (logErr) {
-      console.warn('[LeadsRepository] Assignment history logging skipped/failed:', logErr?.message || logErr);
+      const cleanTargetId = targetUserId !== null && targetUserId !== undefined ? parseRequiredBigInt(targetUserId, 'targetUserId') : null;
+
+      // Cross-instance safety: attempt PostgreSQL atomic RPC if migration 052 has been applied
+      try {
+        const secureDb = getSecureDB();
+        const { data: rpcResult, error: rpcErr } = await secureDb.rpc('fn_assign_lead_atomic', {
+          p_lead_id: cleanId,
+          p_target_user_id: cleanTargetId,
+          p_actor_user_id: actorUserId ? Number(actorUserId) : null,
+          p_reason: reason || null,
+          p_max_capacity: 25,
+          p_is_manual: isManual !== false
+        });
+
+        if (!rpcErr && rpcResult && rpcResult.success) {
+          const updatedLead = await this.findById(cleanId);
+          if (cleanTargetId) {
+            TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
+              console.warn('Failed to generate call task on lead assigned:', err);
+            });
+            NotificationsService.notifyLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
+              console.warn('Failed to dispatch LEAD_ASSIGNED notification:', err);
+            });
+          }
+          return updatedLead;
+        } else if (!rpcErr && rpcResult && !rpcResult.success) {
+          throw new AppError(rpcResult.message || 'Ошибка назначения лида', 422);
+        }
+      } catch (atomicErr) {
+        if (atomicErr instanceof AppError) throw atomicErr;
+        // RPC not defined yet on DB; seamlessly continue to transactional fallback below
+      }
+
+      const db = getDB();
+      const now = new Date().toISOString();
+
+      const currentLead = await this.findById(cleanId);
+      if (!currentLead) throw new AppError('Лид не найден', 404);
+
+      const fromUserId = currentLead.responsible_user_id || null;
+
+      if (cleanTargetId !== null) {
+        // Validate target user eligibility
+        const { data: targetUser, error: userErr } = await db
+          .from('users')
+          .select('id, name, role, is_active, is_sales_rep')
+          .eq('id', cleanTargetId)
+          .maybeSingle();
+
+        if (userErr || !targetUser) {
+          throw new AppError('Указанный менеджер не найден', 404);
+        }
+
+        const isActive = targetUser.is_active === 1 || targetUser.is_active === true || targetUser.is_active === '1';
+        if (!isActive) {
+          throw new AppError('Назначение невозможно: учетная запись сотрудника деактивирована', 422);
+        }
+
+        const isRep = targetUser.is_sales_rep === true || targetUser.is_sales_rep === 1 || targetUser.is_sales_rep === 'true';
+        if (!isRep) {
+          throw new AppError('Назначение разрешено только действующему сотруднику отдела продаж (is_sales_rep = true)', 422);
+        }
+      }
+
+      // Update lead record
+      const updatePayload = {
+        responsible_user_id: cleanTargetId,
+        assigned_at: cleanTargetId ? now : null,
+        reassignment_reason: reason || null,
+        updated_at: now
+      };
+
+      const { error: updateErr } = await db.from('leads').update(updatePayload).eq('id', cleanId);
+      if (updateErr) throw updateErr;
+
+      // Log assignment transition into assignment history table (best effort, graceful fallback)
+      try {
+        const historyDb = getHistoryDB();
+        await historyDb.from('lead_assignment_history').insert([{
+          lead_id: cleanId,
+          from_user_id: fromUserId,
+          to_user_id: cleanTargetId,
+          assigned_by_user_id: actorUserId || null,
+          assignment_type: cleanTargetId ? 'MANUAL' : 'POOL_RETURN',
+          reason: reason || null,
+          created_at: now
+        }]);
+      } catch (logErr) {
+        console.warn('[LeadsRepository] Assignment history logging skipped/failed:', logErr?.message || logErr);
+      }
+
+      const updatedLead = await this.findById(cleanId);
+
+      // If assigned to a manager, trigger call task and in-app notification
+      if (cleanTargetId) {
+        TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
+          console.warn('Failed to generate call task on lead assigned:', err);
+        });
+
+        NotificationsService.notifyLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
+          console.warn('Failed to dispatch LEAD_ASSIGNED notification:', err);
+        });
+      }
+
+      return updatedLead;
+    } finally {
+      activeLeadAssignmentLocks.delete(lockKey);
     }
+  }
 
-    const updatedLead = await this.findById(cleanId);
-
-    // If assigned to a manager, trigger call task and in-app notification
-    if (cleanTargetId) {
-      TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
-        console.warn('Failed to generate call task on lead assigned:', err);
-      });
-
-      NotificationsService.notifyLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
-        console.warn('Failed to dispatch LEAD_ASSIGNED notification:', err);
-      });
-    }
-
-    return updatedLead;
+  static _clearAssignmentLocks() {
+    activeLeadAssignmentLocks.clear();
   }
 
   /**

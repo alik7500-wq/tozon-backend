@@ -1,8 +1,16 @@
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
+
+const getSecureDB = () => {
+  try {
+    return getServiceDB();
+  } catch {
+    return getDB();
+  }
+};
 
 export class TasksRepository {
   static async findAll(filters = {}) {
-    const db = getDB();
+    const db = getSecureDB();
 
     let query = db
       .from('tasks')
@@ -66,7 +74,7 @@ export class TasksRepository {
   }
 
   static async findById(id) {
-    const db = getDB();
+    const db = getSecureDB();
     const { data, error } = await db
       .from('tasks')
       .select(`
@@ -83,7 +91,7 @@ export class TasksRepository {
   }
 
   static async create(taskData) {
-    const db = getDB();
+    const db = getSecureDB();
     const now = new Date().toISOString();
 
     const insertPayload = {
@@ -101,22 +109,50 @@ export class TasksRepository {
       due_date: taskData.due_date || now.split('T')[0],
       priority: taskData.priority || 'NORMAL',
       status: taskData.status || 'OPEN',
+      idempotency_key: taskData.idempotency_key || null,
       created_at: now,
       updated_at: now,
     };
 
-    const { data, error } = await db
-      .from('tasks')
-      .insert([insertPayload])
-      .select()
-      .single();
+    try {
+      const { data, error } = await db
+        .from('tasks')
+        .insert([insertPayload])
+        .select()
+        .single();
 
-    if (error) throw error;
-    return data;
+      if (error) {
+        // Concurrency guard: if partial unique index blocked duplicate open task (code 23505)
+        if (error.code === '23505') {
+          if (insertPayload.lead_id) {
+            const existing = await TasksRepository.findOpenTask(insertPayload.lead_id, insertPayload.type);
+            if (existing) return existing;
+          }
+          if (insertPayload.deal_id) {
+            const dealTasks = await TasksRepository.findOpenTasksByDeal(insertPayload.deal_id, insertPayload.type);
+            if (dealTasks && dealTasks.length > 0) return dealTasks[0];
+          }
+        }
+        throw error;
+      }
+      return data;
+    } catch (err) {
+      if (err.code === '23505') {
+        if (insertPayload.lead_id) {
+          const existing = await TasksRepository.findOpenTask(insertPayload.lead_id, insertPayload.type);
+          if (existing) return existing;
+        }
+        if (insertPayload.deal_id) {
+          const dealTasks = await TasksRepository.findOpenTasksByDeal(insertPayload.deal_id, insertPayload.type);
+          if (dealTasks && dealTasks.length > 0) return dealTasks[0];
+        }
+      }
+      throw err;
+    }
   }
 
   static async update(id, updateData) {
-    const db = getDB();
+    const db = getSecureDB();
     const now = new Date().toISOString();
 
     const { data, error } = await db
@@ -131,7 +167,7 @@ export class TasksRepository {
   }
 
   static async updateStatus(id, newStatus) {
-    const db = getDB();
+    const db = getSecureDB();
     const now = new Date().toISOString();
 
     const payload = {
@@ -152,17 +188,21 @@ export class TasksRepository {
   }
 
   static async cancelOpenTasksForLead(leadId) {
-    const db = getDB();
+    const db = getSecureDB();
     const now = new Date().toISOString();
+    // Safety rule: strictly cancel ONLY automated contact/follow-up tasks (CALL, MEETING).
+    // Financial (PAYMENT_CONTROL), contractual (DOCUMENT), and deal tasks (deal_id != null) are NEVER cancelled.
     await db
       .from('tasks')
       .update({ status: 'CANCELLED', updated_at: now })
       .eq('lead_id', leadId)
-      .eq('status', 'OPEN');
+      .eq('status', 'OPEN')
+      .is('deal_id', null)
+      .in('type', ['CALL', 'MEETING']);
   }
 
   static async reassignOpenTasks(leadId, newManagerId) {
-    const db = getDB();
+    const db = getSecureDB();
     const now = new Date().toISOString();
     await db
       .from('tasks')
@@ -172,7 +212,7 @@ export class TasksRepository {
   }
 
   static async completeFirstContactTasks(leadId) {
-    const db = getDB();
+    const db = getSecureDB();
     const now = new Date().toISOString();
     await db
       .from('tasks')
@@ -182,8 +222,40 @@ export class TasksRepository {
       .eq('status', 'OPEN');
   }
 
+  static async findOpenTask(leadId, type = null, titlePrefix = null) {
+    const db = getSecureDB();
+    let query = db
+      .from('tasks')
+      .select('*')
+      .eq('lead_id', leadId)
+      .eq('status', 'OPEN');
+
+    if (type) query = query.eq('type', type);
+    const { data, error } = await query;
+    if (error || !data) return null;
+
+    if (titlePrefix) {
+      return data.find(t => t.title && t.title.startsWith(titlePrefix)) || null;
+    }
+    return data[0] || null;
+  }
+
+  static async findOpenTasksByDeal(dealId, type = null) {
+    const db = getSecureDB();
+    let query = db
+      .from('tasks')
+      .select('*')
+      .eq('deal_id', dealId)
+      .eq('status', 'OPEN');
+
+    if (type) query = query.eq('type', type);
+    const { data, error } = await query;
+    if (error || !data) return [];
+    return data;
+  }
+
   static async delete(id) {
-    const db = getDB();
+    const db = getSecureDB();
     const { error } = await db.from('tasks').delete().eq('id', id);
     if (error) throw error;
     return true;

@@ -66,6 +66,7 @@ export const authorizeSectionRequest = async req => {
   } else if (path.startsWith('/api/leads')) {
     key = 'leads.view';
     if (user.role === 'WAREHOUSE_MANAGER') allowed = false;
+    if (user.role === 'FINANCE_MANAGER' && /\/distribution|\/winback/.test(path)) allowed = false;
   }
   else if (path.startsWith('/api/sales-plans')) {
     key = 'leads.view';

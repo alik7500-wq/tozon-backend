@@ -4,6 +4,8 @@ import { LeadsRepository } from './leads.repository.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { ManagerPerformanceService } from '../reports/managerPerformance.service.js';
 import { RoundRobinService } from './roundRobin.service.js';
+import { DistributionSettingsService } from './distributionSettings.service.js';
+import { AlternativeUnitsService } from '../inventory/alternativeUnits.service.js';
 import { protect, protectOptional } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
@@ -116,19 +118,26 @@ router.post('/webhook', protectOptional, async (req, res, next) => {
     // 5. Distribution engine resolution (Round-robin if enabled; pool by default)
     const distribution = await RoundRobinService.resolveAssignment();
 
-    const leadPayload = {
-      full_name,
-      phone,
-      secondary_phone: secondary_phone || null,
-      source: source || 'WEBSITE',
-      status: 'NEW',
-      notes: notes || `Заявка с онлайн-источника (${source || 'Сайт'}).`,
-      responsible_user_id: distribution.responsible_user_id || null,
-      assigned_at: distribution.assigned_at || null,
-      idempotency_key: idempotencyKey || null
-    };
+    let lead;
+    try {
+      const leadPayload = {
+        full_name,
+        phone,
+        secondary_phone: secondary_phone || null,
+        source: source || 'WEBSITE',
+        status: 'NEW',
+        notes: notes || `Заявка с онлайн-источника (${source || 'Сайт'}).`,
+        responsible_user_id: distribution.responsible_user_id || null,
+        assigned_at: distribution.assigned_at || null,
+        idempotency_key: idempotencyKey || null
+      };
 
-    const lead = await LeadsRepository.create(leadPayload);
+      lead = await LeadsRepository.create(leadPayload);
+    } finally {
+      if (typeof distribution?.releaseSlot === 'function') {
+        distribution.releaseSlot();
+      }
+    }
 
     // If distributed to an active manager, trigger manager call task
     if (lead.responsible_user_id) {
@@ -203,6 +212,37 @@ router.get('/stats', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// GET /api/leads/distribution/settings - Get automated distribution configuration
+router.get('/distribution/settings', async (req, res, next) => {
+  try {
+    if (req.user?.role === 'FINANCE_MANAGER') {
+      return next(new AppError('Доступ запрещен', 403));
+    }
+    const settings = DistributionSettingsService.getSettings();
+    const eligibleReps = await RoundRobinService.getEligibleReps();
+    res.status(200).json({ status: 'success', data: { settings, eligibleReps } });
+  } catch (error) { next(error); }
+});
+
+// POST /api/leads/distribution/settings - Update automated distribution configuration (ADMIN & DIRECTOR only)
+router.post('/distribution/settings', async (req, res, next) => {
+  try {
+    if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+      return next(new AppError('Управление авто-распределением доступно только руководителю или администратору', 403));
+    }
+    const updated = DistributionSettingsService.updateSettings(req.body, req.user);
+    res.status(200).json({ status: 'success', data: { settings: updated } });
+  } catch (error) { next(error); }
+});
+
+// GET /api/leads/winback/opportunities - Leads whose interested units became SOLD/RESERVED with available alternatives
+router.get('/winback/opportunities', async (req, res, next) => {
+  try {
+    const opportunities = await AlternativeUnitsService.getWinBackOpportunities(req.user);
+    res.status(200).json({ status: 'success', data: { opportunities } });
+  } catch (error) { next(error); }
+});
+
 // GET /api/leads - Lead listing with RBAC, quick filters, and SLA indicators
 router.get('/', async (req, res, next) => {
   try {
@@ -258,7 +298,8 @@ router.post('/', async (req, res, next) => {
     }
 
     const payload = { ...req.body };
-    if (req.user?.role === 'SALES_MANAGER' && !payload.responsible_user_id) {
+    // RBAC IDOR protection: SALES_MANAGER can ONLY create leads assigned to themselves
+    if (req.user?.role === 'SALES_MANAGER') {
       payload.responsible_user_id = req.user.id;
     }
 
@@ -310,7 +351,28 @@ router.post('/:id/first-contact', async (req, res, next) => {
     }
 
     const lead = await LeadsRepository.recordFirstContact(cleanId, req.user.id, req.body);
+    await TasksService.onFirstContactOutcome(lead, req.body?.outcome, req.body, req.user.id);
     res.status(200).json({ status: 'success', data: { lead } });
+  } catch (error) { next(error); }
+});
+
+// GET /api/leads/:id/alternative-units - Alternative apartment recommendations for unavailable interested units
+router.get('/:id/alternative-units', async (req, res, next) => {
+  try {
+    if (req.user?.role === 'FINANCE_MANAGER') {
+      return next(new AppError('Доступ запрещен', 403));
+    }
+
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+
+    if (req.user?.role === 'SALES_MANAGER' && existing.responsible_user_id && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к лидам других менеджеров', 403));
+    }
+
+    const data = await AlternativeUnitsService.getAlternativeUnitsForLead(cleanId);
+    res.status(200).json({ status: 'success', data });
   } catch (error) { next(error); }
 });
 
