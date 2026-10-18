@@ -178,7 +178,7 @@ export class InventoryRepository {
 
   static async getUnitById(id) {
     const db = getDB();
-    const { data: unit, error } = await db.from('units').select('*, floors(floor_number, name, sections(name, code, buildings(name, code, projects(id, name, currency, developer_name)))), layout_types(name, code, image_path)').eq('id', id).single();
+    const { data: unit, error } = await db.from('units').select('*, floors(floor_number, name, sections(name, code, buildings(name, code, projects(id, name, currency, developer_name)))), layout_types(*)').eq('id', id).single();
     if (error || !unit) return null;
 
     try {

@@ -3,11 +3,21 @@ import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormaliz
 import { matchSearchQuery } from '../../utils/searchUtils.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { TasksService } from '../tasks/tasks.service.js';
+import { TasksRepository } from '../tasks/tasks.repository.js';
+import { InventoryRepository } from '../inventory/inventory.repository.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { evaluateLeadSla } from './leadSla.service.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
 
 const getHistoryDB = () => {
+  try {
+    return getServiceDB();
+  } catch {
+    return getDB();
+  }
+};
+
+const getSecureDB = () => {
   try {
     return getServiceDB();
   } catch {
@@ -113,11 +123,13 @@ export class LeadsRepository {
     if (error) throw error;
     if (!lead) return null;
 
-    const notes_list = (lead.lead_notes || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const raw_notes_list = (lead.lead_notes || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const notes_list = raw_notes_list.filter(n => !n.body?.startsWith('[UNIT_INTEREST'));
     const deals_list = (lead.deals || []).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const status_history = await this.getStatusHistory(cleanId);
     const assignment_history = await this.getAssignmentHistory(cleanId);
     const sla_info = evaluateLeadSla(lead);
+    const interested_units = await this.getInterestedUnits(cleanId);
 
     return {
       ...lead,
@@ -128,6 +140,8 @@ export class LeadsRepository {
       status_history,
       assignment_history,
       sla_info,
+      interested_units,
+      interested_units_count: interested_units.length,
       users: undefined,
       projects: undefined,
       lead_notes: undefined,
@@ -584,6 +598,302 @@ export class LeadsRepository {
       .select('*, users!author_user_id(name)')
       .single();
     return { ...note, author_name: note.users?.name, users: undefined };
+  }
+
+  /**
+   * Returns list of interested units for a lead with enriched live inventory details
+   */
+  static async getInterestedUnits(leadId) {
+    const cleanId = parseRequiredBigInt(leadId, 'leadId');
+
+    // 1. Try formal table lead_interested_units
+    try {
+      const db = getSecureDB();
+      const { data: rows, error } = await db
+        .from('lead_interested_units')
+        .select('*')
+        .eq('lead_id', cleanId)
+        .order('created_at', { ascending: false });
+
+      if (!error && rows) {
+        const enriched = await Promise.all(
+          rows.map(async (row) => {
+            const unit = await InventoryRepository.getUnitById(row.unit_id);
+            const areaM2 = unit?.area_m2_x100 ? unit.area_m2_x100 / 100 : 0;
+            const pricePerM2 = unit?.price_per_m2_minor ? Math.round(unit.price_per_m2_minor / 100) : 0;
+            const totalPrice = unit?.manual_total_price_minor
+              ? Math.round(unit.manual_total_price_minor / 100)
+              : Math.round(areaM2 * pricePerM2);
+
+            return {
+              id: row.id,
+              lead_id: cleanId,
+              unit_id: row.unit_id,
+              priority: row.priority || 'MEDIUM',
+              comment: row.comment || '',
+              next_contact_date: row.next_contact_date || null,
+              created_at: row.created_at,
+              unit: unit ? {
+                id: unit.id,
+                unit_number: unit.unit_number,
+                status: unit.status,
+                rooms: unit.rooms,
+                areaM2,
+                pricePerM2,
+                totalPrice,
+                floor_number: unit.floors?.floor_number,
+                building_name: unit.floors?.sections?.buildings?.name || 'Блок Б',
+                project_name: unit.floors?.sections?.buildings?.projects?.name || 'TOZON PLAZA',
+                plan_image_url: unit.layout_types?.image_path || null,
+                layout_name: unit.layout_types?.name || null
+              } : null
+            };
+          })
+        );
+        return enriched.filter(e => e.unit !== null);
+      }
+    } catch {
+      // Table doesn't exist, proceed to resilient fallback
+    }
+
+    // 2. Resilient fallback using lead_notes and tasks
+    try {
+      const db = getDB();
+      const { data: notes, error } = await db
+        .from('lead_notes')
+        .select('*')
+        .eq('lead_id', cleanId)
+        .order('created_at', { ascending: true });
+
+      if (error || !notes) return [];
+
+      const activeMap = new Map();
+
+      for (const note of notes) {
+        const body = String(note.body || '').trim();
+        if (body.startsWith('[UNIT_INTEREST]')) {
+          try {
+            const jsonPart = body.substring('[UNIT_INTEREST]'.length).trim();
+            const data = JSON.parse(jsonPart);
+            if (data.unit_id) {
+              activeMap.set(String(data.unit_id), {
+                id: note.id,
+                lead_id: cleanId,
+                unit_id: data.unit_id,
+                priority: data.priority || 'MEDIUM',
+                comment: data.comment || '',
+                next_contact_date: data.next_contact_date || null,
+                created_at: note.created_at,
+                created_by_user_id: note.author_user_id
+              });
+            }
+          } catch (pe) {
+            console.warn('Error parsing unit interest note:', pe.message);
+          }
+        } else if (body.startsWith('[UNIT_INTEREST_DELETED]')) {
+          try {
+            const jsonPart = body.substring('[UNIT_INTEREST_DELETED]'.length).trim();
+            const data = JSON.parse(jsonPart);
+            if (data.unit_id) {
+              activeMap.delete(String(data.unit_id));
+            }
+          } catch (pe) {
+            console.warn('Error parsing deleted unit interest note:', pe.message);
+          }
+        }
+      }
+
+      const items = Array.from(activeMap.values());
+      const enriched = await Promise.all(
+        items.map(async (item) => {
+          const unit = await InventoryRepository.getUnitById(item.unit_id);
+          const areaM2 = unit?.area_m2_x100 ? unit.area_m2_x100 / 100 : 0;
+          const pricePerM2 = unit?.price_per_m2_minor ? Math.round(unit.price_per_m2_minor / 100) : 0;
+          const totalPrice = unit?.manual_total_price_minor
+            ? Math.round(unit.manual_total_price_minor / 100)
+            : Math.round(areaM2 * pricePerM2);
+
+          return {
+            ...item,
+            unit: unit ? {
+              id: unit.id,
+              unit_number: unit.unit_number,
+              status: unit.status,
+              rooms: unit.rooms,
+              areaM2,
+              pricePerM2,
+              totalPrice,
+              floor_number: unit.floors?.floor_number,
+              building_name: unit.floors?.sections?.buildings?.name || 'Блок Б',
+              project_name: unit.floors?.sections?.buildings?.projects?.name || 'TOZON PLAZA',
+              plan_image_url: unit.layout_types?.image_path || null,
+              layout_name: unit.layout_types?.name || null
+            } : null
+          };
+        })
+      );
+
+      return enriched.filter(e => e.unit !== null).reverse();
+    } catch (e) {
+      console.warn('Error fetching interested units fallback:', e.message);
+      return [];
+    }
+  }
+
+  /**
+   * Adds or updates interest for a specific unit
+   */
+  static async addInterestedUnit(leadId, data, actorUser) {
+    const cleanId = parseRequiredBigInt(leadId, 'leadId');
+    const cleanUnitId = parseRequiredBigInt(data.unit_id, 'unit_id');
+    const priority = ['HIGH', 'MEDIUM', 'LOW'].includes(data.priority) ? data.priority : 'MEDIUM';
+    const comment = data.comment ? String(data.comment).trim() : '';
+    const next_contact_date = data.next_contact_date || null;
+
+    const unit = await InventoryRepository.getUnitById(cleanUnitId);
+    if (!unit) throw new AppError('Квартира не найдена', 404);
+
+    // Fetch lead details
+    const lead = await this.findById(cleanId);
+    if (!lead) throw new AppError('Лид не найден', 404);
+
+    const now = new Date().toISOString();
+    let interestRecord = null;
+
+    // 1. Try formal table
+    try {
+      const db = getSecureDB();
+      const { data: existingRow } = await db
+        .from('lead_interested_units')
+        .select('*')
+        .eq('lead_id', cleanId)
+        .eq('unit_id', cleanUnitId)
+        .maybeSingle();
+
+      if (existingRow) {
+        const { data: updated } = await db
+          .from('lead_interested_units')
+          .update({
+            priority,
+            comment,
+            next_contact_date,
+            updated_at: now
+          })
+          .eq('id', existingRow.id)
+          .select()
+          .single();
+        interestRecord = updated;
+      } else {
+        const { data: created } = await db
+          .from('lead_interested_units')
+          .insert([{
+            lead_id: cleanId,
+            unit_id: cleanUnitId,
+            priority,
+            comment,
+            next_contact_date,
+            created_by_user_id: actorUser?.id || null,
+            created_at: now,
+            updated_at: now
+          }])
+          .select()
+          .single();
+        interestRecord = created;
+      }
+    } catch {
+      // Table doesn't exist, proceed to resilient fallback
+    }
+
+    // 2. Resilient fallback recording
+    if (!interestRecord) {
+      const payload = {
+        unit_id: cleanUnitId,
+        priority,
+        comment,
+        next_contact_date,
+        created_at: now,
+        created_by_user_id: actorUser?.id || null
+      };
+      await this.addNote(cleanId, actorUser?.id || 1, `[UNIT_INTEREST] ${JSON.stringify(payload)}`);
+      interestRecord = {
+        id: Date.now(),
+        lead_id: cleanId,
+        ...payload
+      };
+    }
+
+    // 3. Create scheduled follow-up task if next_contact_date is provided
+    let createdTask = null;
+    if (next_contact_date) {
+      try {
+        createdTask = await TasksRepository.create({
+          lead_id: cleanId,
+          assigned_user_id: lead.responsible_user_id || actorUser?.id || 1,
+          created_by: actorUser?.id || 1,
+          type: 'CALL',
+          priority: priority === 'HIGH' ? 'HIGH' : priority === 'LOW' ? 'LOW' : 'NORMAL',
+          title: `Подбор: Контакт по кв. №${unit.unit_number}`,
+          description: comment ? `Интерес: ${comment}` : `Клиент заинтересован в кв. №${unit.unit_number} (${unit.rooms}-комн., ${unit.area_m2_x100 / 100} м²)`,
+          client_name: lead.full_name,
+          phone: lead.phone,
+          project_name: unit.floors?.sections?.buildings?.projects?.name || 'TOZON PLAZA',
+          unit_number: String(unit.unit_number),
+          due_date: next_contact_date,
+          status: 'OPEN'
+        });
+      } catch (taskErr) {
+        console.warn('Failed to auto-create contact task for unit interest:', taskErr.message);
+      }
+    }
+
+    const areaM2 = unit.area_m2_x100 ? unit.area_m2_x100 / 100 : 0;
+    const pricePerM2 = unit.price_per_m2_minor ? Math.round(unit.price_per_m2_minor / 100) : 0;
+    const totalPrice = unit.manual_total_price_minor
+      ? Math.round(unit.manual_total_price_minor / 100)
+      : Math.round(areaM2 * pricePerM2);
+
+    return {
+      interest: {
+        ...interestRecord,
+        unit: {
+          id: unit.id,
+          unit_number: unit.unit_number,
+          status: unit.status,
+          rooms: unit.rooms,
+          areaM2,
+          pricePerM2,
+          totalPrice,
+          floor_number: unit.floors?.floor_number,
+          building_name: unit.floors?.sections?.buildings?.name || 'Блок Б',
+          project_name: unit.floors?.sections?.buildings?.projects?.name || 'TOZON PLAZA',
+          plan_image_url: unit.layout_types?.image_path || null,
+          layout_name: unit.layout_types?.name || null
+        }
+      },
+      task: createdTask
+    };
+  }
+
+  /**
+   * Removes unit interest
+   */
+  static async removeInterestedUnit(leadId, unitId, actorUser) {
+    const cleanId = parseRequiredBigInt(leadId, 'leadId');
+    const cleanUnitId = parseRequiredBigInt(unitId, 'unitId');
+    const db = getSecureDB();
+
+    try {
+      await db
+        .from('lead_interested_units')
+        .delete()
+        .eq('lead_id', cleanId)
+        .eq('unit_id', cleanUnitId);
+    } catch {
+      // Fallback
+    }
+
+    await this.addNote(cleanId, actorUser?.id || 1, `[UNIT_INTEREST_DELETED] ${JSON.stringify({ unit_id: cleanUnitId, deleted_at: new Date().toISOString() })}`);
+    return true;
   }
 
   static async archive(id) {

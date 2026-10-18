@@ -446,4 +446,66 @@ router.delete('/:id', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// GET /api/leads/:id/interested-units - List shortlisted apartments for a lead
+router.get('/:id/interested-units', async (req, res, next) => {
+  try {
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+
+    if (['SALES_MANAGER', 'MANAGER'].includes(req.user?.role) && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к просмотру лидов других менеджеров', 403));
+    }
+
+    const interests = await LeadsRepository.getInterestedUnits(cleanId);
+    res.status(200).json({ status: 'success', data: { interests } });
+  } catch (error) { next(error); }
+});
+
+// POST /api/leads/:id/interested-units - Save interested apartment for a lead
+router.post('/:id/interested-units', async (req, res, next) => {
+  try {
+    if (req.user?.role === 'FINANCE_MANAGER') {
+      return next(new AppError('Доступ к редактированию интересов лида запрещен для данной роли', 403));
+    }
+
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+
+    if (['SALES_MANAGER', 'MANAGER'].includes(req.user?.role) && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к сохранению интересов по лидам других менеджеров', 403));
+    }
+
+    const { unit_id, priority, comment, next_contact_date } = req.body;
+    if (!unit_id) {
+      return next(new AppError('Поле unit_id обязательно для сохранения интереса к квартире', 400));
+    }
+
+    const result = await LeadsRepository.addInterestedUnit(cleanId, { unit_id, priority, comment, next_contact_date }, req.user);
+    res.status(201).json({ status: 'success', data: result });
+  } catch (error) { next(error); }
+});
+
+// DELETE /api/leads/:id/interested-units/:unitId - Remove interested apartment from a lead
+router.delete('/:id/interested-units/:unitId', async (req, res, next) => {
+  try {
+    if (req.user?.role === 'FINANCE_MANAGER') {
+      return next(new AppError('Доступ запрещен для данной роли', 403));
+    }
+
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const cleanUnitId = parseRequiredBigInt(req.params.unitId, 'unitId');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+
+    if (['SALES_MANAGER', 'MANAGER'].includes(req.user?.role) && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к редактированию интересов по лидам других менеджеров', 403));
+    }
+
+    await LeadsRepository.removeInterestedUnit(cleanId, cleanUnitId, req.user);
+    res.status(200).json({ status: 'success', message: 'Квартира удалена из интересов клиента' });
+  } catch (error) { next(error); }
+});
+
 export default router;
