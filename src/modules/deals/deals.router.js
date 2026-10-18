@@ -31,15 +31,19 @@ router.get('/available-units', async (req, res, next) => {
 
 router.get('/', async (req, res, next) => {
   try {
+    const isSalesManager = req.user?.role === 'SALES_MANAGER';
     const filters = {
       search: req.query.search,
       status: req.query.status,
       projectId: parseOptionalBigInt(req.query.projectId),
+      buildingId: parseOptionalBigInt(req.query.buildingId),
+      managerId: isSalesManager ? req.user.id : parseOptionalBigInt(req.query.managerId || req.query.responsibleUserId),
       paymentType: req.query.paymentType,
+      period: req.query.period,
     };
     const deals = await DealsRepository.findAll(filters);
     // RBAC: SALES_MANAGER is strictly restricted to viewing only their own assigned deals
-    const effectiveDeals = req.user?.role === 'SALES_MANAGER'
+    const effectiveDeals = isSalesManager
       ? deals.filter(d => Number(d.responsible_user_id) === Number(req.user.id))
       : deals;
     res.status(200).json({ status: 'success', data: { deals: effectiveDeals } });

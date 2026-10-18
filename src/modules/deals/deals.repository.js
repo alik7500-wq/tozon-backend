@@ -16,7 +16,7 @@ export class DealsRepository {
       leads ( full_name, phone, passport_series, passport_number, inn ),
       units ( 
         unit_number, rooms, area_m2_x100, price_per_m2_minor,
-        floors ( floor_number, name, sections ( name, buildings ( name, projects ( id, name, developer_name, currency ) ) ) )
+        floors ( floor_number, name, sections ( id, name, buildings ( id, name, projects ( id, name, developer_name, currency ) ) ) )
       ),
       users!responsible_user_id ( name ),
       payments ( amount_minor, status ),
@@ -29,15 +29,31 @@ export class DealsRepository {
     if (filters.paymentType && filters.paymentType !== 'ALL') {
       query = query.eq('payment_type', filters.paymentType);
     }
+    if (filters.managerId && filters.managerId !== 'ALL') {
+      query = query.eq('responsible_user_id', filters.managerId);
+    }
     
     const { data, error } = await query;
     if (error) throw error;
 
     let deals = data;
 
-    // We have to filter by project_id and search term manually since they are nested deeply
+    // Filter by project_id
     if (filters.projectId && filters.projectId !== 'ALL') {
-      deals = deals.filter(d => d.units?.floors?.sections?.buildings?.projects?.id == filters.projectId);
+      deals = deals.filter(d => Number(d.units?.floors?.sections?.buildings?.projects?.id) === Number(filters.projectId));
+    }
+
+    // Filter by building_id
+    if (filters.buildingId && filters.buildingId !== 'ALL') {
+      deals = deals.filter(d => Number(d.units?.floors?.sections?.buildings?.id) === Number(filters.buildingId));
+    }
+
+    // Filter by period (YYYY-MM)
+    if (filters.period && filters.period !== 'ALL') {
+      deals = deals.filter(d => {
+        const signingDate = d.signed_at || d.deal_date;
+        return signingDate && String(signingDate).startsWith(filters.period);
+      });
     }
 
     if (filters.search) {

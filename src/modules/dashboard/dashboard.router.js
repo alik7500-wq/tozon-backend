@@ -9,20 +9,32 @@ router.get('/stats', async (req, res, next) => {
   try {
     const db = getDB();
 
-    // 1. Units Stats
-    const { data: units } = await db.from('units').select('status').is('archived_at', null);
-    const unitStats = { total_units: 0, available_units: 0, reserved_units: 0, sold_units: 0, blocked_units: 0 };
+    // 1. Units Stats with breakdown by property category (Apartments, Parking, Commercial)
+    const { data: units } = await db.from('units').select('status, unit_kind').is('archived_at', null);
+    const unitStats = {
+      total_units: 0, available_units: 0, reserved_units: 0, sold_units: 0, blocked_units: 0,
+      apartments: { total: 0, available: 0, reserved: 0, sold: 0, blocked: 0 },
+      parking: { total: 0, available: 0, reserved: 0, sold: 0, blocked: 0 },
+      commercial: { total: 0, available: 0, reserved: 0, sold: 0, blocked: 0 }
+    };
     (units || []).forEach(u => {
       unitStats.total_units++;
       if (u.status === 'AVAILABLE') unitStats.available_units++;
       else if (u.status === 'RESERVED') unitStats.reserved_units++;
       else if (u.status === 'SOLD') unitStats.sold_units++;
       else if (u.status === 'BLOCKED') unitStats.blocked_units++;
+
+      const kindKey = u.unit_kind === 'PARKING' ? 'parking' : u.unit_kind === 'COMMERCIAL' ? 'commercial' : 'apartments';
+      unitStats[kindKey].total++;
+      if (u.status === 'AVAILABLE') unitStats[kindKey].available++;
+      else if (u.status === 'RESERVED') unitStats[kindKey].reserved++;
+      else if (u.status === 'SOLD') unitStats[kindKey].sold++;
+      else if (u.status === 'BLOCKED') unitStats[kindKey].blocked++;
     });
 
     // 2. Leads Stats
     const { data: leads } = await db.from('leads').select('status').is('archived_at', null);
-    const leadStats = { total_leads: 0, new_leads: 0, in_progress_leads: 0, negotiation_leads: 0, won_leads: 0, lost_leads: 0 };
+    const leadStats = { total_leads: 0, new_leads: 0, in_progress_leads: 0, negotiation_leads: 0, won_leads: 0, lost_leads: 0, active_leads: 0 };
     (leads || []).forEach(l => {
       leadStats.total_leads++;
       if (l.status === 'NEW') leadStats.new_leads++;
@@ -31,6 +43,7 @@ router.get('/stats', async (req, res, next) => {
       else if (l.status === 'WON') leadStats.won_leads++;
       else if (l.status === 'LOST') leadStats.lost_leads++;
     });
+    leadStats.active_leads = leadStats.new_leads + leadStats.in_progress_leads + leadStats.negotiation_leads;
 
     // 3. Projects Count
     const { count: projectCount } = await db.from('projects').select('*', { count: 'exact', head: true }).is('archived_at', null);
