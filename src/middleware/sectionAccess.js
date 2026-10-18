@@ -84,8 +84,17 @@ export const authorizeSectionRequest = async req => {
   else if (path.startsWith('/api/sms') || path.startsWith('/api/automation')) {
     key = 'automation.view';
     if (req.method === 'POST' && /\/preview$|\/template-availability$|\/events\/[^/]+\/preview$/.test(path)) allowed = hasSection(user,key);
-  } else if (path.startsWith('/api/reports')) key = /\/analytics-[123]$/.test(path) ? 'analytics.view' : 'analytics.reports';
-  else if (path.startsWith('/api/dashboard')) key = 'analytics.view';
+  } else if (path.startsWith('/api/reports')) {
+    if (/\/sales-|\/apartment-demand/.test(path)) {
+      if (user.role === 'FINANCE_MANAGER') allowed = false;
+      else if (read) allowed = hasAny(user, ['analytics.view', 'analytics.reports', 'leads.view', 'deals.view']);
+    } else {
+      key = /\/analytics-[123]$/.test(path) ? 'analytics.view' : 'analytics.reports';
+    }
+  } else if (path.startsWith('/api/dashboard')) {
+    key = 'analytics.view';
+    if (read) allowed = hasAny(user, ['analytics.view', 'leads.view', 'deals.view', 'inventory.view']);
+  }
   else if (path.startsWith('/api/dictionaries')) {
     key = 'settings.view';
     if (read) allowed = hasAny(user, ['settings.view','inventory.view','leads.view','deals.view',...financeReads,...constructionReads]);

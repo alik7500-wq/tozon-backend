@@ -5,7 +5,7 @@ import { protect } from '../../middleware/auth.middleware.js';
 const router = express.Router();
 router.use(protect);
 
-router.get('/stats', async (req, res, next) => {
+const handleStats = async (req, res, next) => {
   try {
     const db = getDB();
 
@@ -131,6 +131,9 @@ router.get('/stats', async (req, res, next) => {
       },
     });
   } catch (error) { next(error); }
-});
+};
+
+router.get('/stats', handleStats);
+router.get('/', handleStats);
 
 export default router;

@@ -14,6 +14,7 @@ export class DealsRepository {
     let query = db.from('deals').select(`
       *,
       leads ( full_name, phone, passport_series, passport_number, inn ),
+      units ( 
         unit_number, unit_kind, rooms, area_m2_x100, price_per_m2_minor,
         floors ( floor_number, name, sections ( id, name, buildings ( id, name, projects ( id, name, developer_name, currency ) ) ) )
       ),

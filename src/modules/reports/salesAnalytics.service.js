@@ -887,7 +887,9 @@ export class SalesAnalyticsService {
   static async exportSalesAnalyticsCsv(type = 'plan_fact', query = {}, user) {
     this.checkAccess(user);
 
-    if (type === 'plan_fact') {
+    const normalizedType = String(type || 'plan_fact').replace(/-/g, '_');
+
+    if (normalizedType === 'plan_fact') {
       const data = await this.getPlanFactAnalytics(query, user);
       let csv = '\uFEFFПериод;План (кв);Факт (кв);Выполнение (кв %);Отклонение (кв);План (USD);Факт (USD);Выполнение (USD %);Отклонение (USD);Брони (USD);Расторжения (USD)\r\n';
       data.monthlyComparison.forEach(m => {
