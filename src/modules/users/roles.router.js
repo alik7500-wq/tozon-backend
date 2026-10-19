@@ -1,9 +1,16 @@
 import express from 'express';
 import { getServiceDB } from '../../db/connection.js';
+import { hasSection, isMatrixUser } from '../../middleware/sectionAccess.js';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 const router = express.Router();
+const manageUsers = (req, res, next) => {
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return next(new AppError('Управление сотрудниками разрешено только руководству', 403));
+  if (isMatrixUser(req.user) && !hasSection(req.user, 'users.view', true)) return next(new AppError('Нет права изменения сотрудников и ролей', 403));
+  return next();
+};
+
 router.use(protect);
 const codeOf = v => String(v || '').trim().toUpperCase();
 const validPermissions = p => Array.isArray(p) && p.length <= 100 && p.every(x => typeof x === 'string' && x.length < 100) && !p.includes('*');
@@ -16,7 +23,7 @@ router.get('/', async (req,res,next) => {
   } catch(e) { next(e); }
 });
 
-router.post('/', restrictTo('ADMIN','DIRECTOR'), async (req,res,next) => {
+router.post('/', manageUsers, async (req,res,next) => {
   try {
     const code = codeOf(req.body.code);
     const name = String(req.body.name || '').trim();
@@ -29,7 +36,7 @@ router.post('/', restrictTo('ADMIN','DIRECTOR'), async (req,res,next) => {
   } catch(e) { next(e); }
 });
 
-router.patch('/:code', restrictTo('ADMIN','DIRECTOR'), async (req,res,next) => {
+router.patch('/:code', manageUsers, async (req,res,next) => {
   try {
     const code = codeOf(req.params.code);
     const db = getServiceDB();
