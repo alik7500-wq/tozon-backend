@@ -5,6 +5,7 @@ import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
 const router = express.Router();
+const isChiefAdmin = user => String(user?.email || '').trim().toLowerCase() === 'admin@tozon.crm';
 const manageUsers = (req, res, next) => {
   if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return next(new AppError('Управление сотрудниками разрешено только руководству', 403));
   if (isMatrixUser(req.user) && !hasSection(req.user, 'users.view', true)) return next(new AppError('Нет права изменения сотрудников и ролей', 403));
@@ -19,13 +20,14 @@ router.get('/', async (req,res,next) => {
   try {
     const {data,error} = await getServiceDB().from('crm_roles').select('code,name,description,permissions,is_system,is_active').order('name');
     if (error) throw error;
-    res.json({status:'success',data:{roles:data}});
+    res.json({status:'success',data:{roles:isChiefAdmin(req.user) ? data : data.filter(role => role.code !== 'ADMIN')}});
   } catch(e) { next(e); }
 });
 
 router.post('/', manageUsers, async (req,res,next) => {
   try {
     const code = codeOf(req.body.code);
+    if (!isChiefAdmin(req.user) && code === 'ADMIN') return next(new AppError('Системная роль администратора недоступна',403));
     const name = String(req.body.name || '').trim();
     const permissions = req.body.permissions || ['access.v2'];
     if (!/^[A-Z][A-Z0-9_]{1,49}$/.test(code) || name.length < 2 || name.length > 100 || !validPermissions(permissions))
@@ -39,6 +41,7 @@ router.post('/', manageUsers, async (req,res,next) => {
 router.patch('/:code', manageUsers, async (req,res,next) => {
   try {
     const code = codeOf(req.params.code);
+    if (!isChiefAdmin(req.user) && code === 'ADMIN') return next(new AppError('Системная роль администратора недоступна',403));
     const db = getServiceDB();
     const {data:old,error:lookupError} = await db.from('crm_roles').select('*').eq('code',code).maybeSingle();
     if (lookupError) throw lookupError;
