@@ -130,6 +130,16 @@ export class LayoutPresentationRepository {
 
       if (tours && tours.length > 0) {
         tour360 = selectUnitTour(tours, unitId);
+        if (!tour360 && unit.layout_type_id) {
+          const sourceIds = [...new Set(tours.filter(t => t.tour_type === 'SHOWROOM' && t.entity_type === 'UNIT' && t.entity_id).map(t => t.entity_id))];
+          if (sourceIds.length) {
+            const { data: sourceUnits, error: sourceError } = await db.from('units')
+              .select('id,unit_number,layout_type_id,area_m2_x100,rooms,archived_at,floors(sections(buildings(id,project_id)))')
+              .in('id', sourceIds);
+            if (sourceError) throw new AppError('Не удалось загрузить тур планировки', 500);
+            tour360 = selectUnitTour(tours, unitId, unit, sourceUnits || []);
+          }
+        }
       }
     }
 
