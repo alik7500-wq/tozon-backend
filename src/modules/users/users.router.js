@@ -41,6 +41,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 export const ROLE_PRESET_PERMISSIONS = {
+  CASHIER: ['access.v2'],
   ADMIN: ['*'],
   DIRECTOR: [
     'analytics.view', 'analytics.reports',
@@ -103,7 +104,7 @@ router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
       return next(new AppError('Пользователь с таким Email уже существует', 400));
     }
 
-    const validRoles = ['ADMIN', 'DIRECTOR', 'SALES_MANAGER', 'FINANCE_MANAGER', 'MANAGER', 'WAREHOUSE_MANAGER'];
+    const validRoles = ['ADMIN', 'DIRECTOR', 'SALES_MANAGER', 'FINANCE_MANAGER', 'MANAGER', 'WAREHOUSE_MANAGER', 'CASHIER'];
     const userRole = validRoles.includes(role) ? role : 'SALES_MANAGER';
 
     const userPermissions = Array.isArray(permissions) && permissions.length > 0
