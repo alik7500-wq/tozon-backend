@@ -32,12 +32,18 @@ export const authorizeSectionRequest = async req => {
   const read = ['GET','HEAD'].includes(req.method);
   let key;
   let allowed;
-  // Granular finance controls are opt-in. Existing staff keep legacy permissions.
-  // Exact route matches prevent unrelated finance operations from being affected.
+  // Optional granular permissions: preserve access.v2 accounts until explicit migration.
+  // These are actual finance router endpoints, not frontend URLs.
   if (user.permissions?.includes('access.granular.v1')) {
-    const feature = path === '/api/finance/customer-pko-book' || path.startsWith('/api/finance/customer-pko-book/')
+    const feature = path === '/api/finance/income/customer-book.xlsx'
       ? 'finance.customer_pko_book'
-      : null;
+      : path === '/api/finance/calendar'
+        ? 'finance.payment_calendar'
+        : path === '/api/finance/plan-fact'
+          ? 'finance.plan_fact'
+          : (path === '/api/finance/transfers' || path === '/api/finance/convert')
+            ? 'finance.cash_transfers'
+            : null;
     if (feature && !hasSection(user, feature, !read)) {
       throw new AppError('Нет доступа к отдельной функции', 403);
     }
