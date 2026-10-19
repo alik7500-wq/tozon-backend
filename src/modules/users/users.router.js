@@ -7,6 +7,18 @@ import { getServiceDB } from '../../db/connection.js';
 import { hasSection, isMatrixUser } from '../../middleware/sectionAccess.js';
 
 const router = express.Router();
+const CHIEF_ADMIN_EMAIL = 'admin@tozon.crm';
+const isChiefAdmin = user => String(user?.email || '').trim().toLowerCase() === CHIEF_ADMIN_EMAIL;
+const isProtectedChief = user => isChiefAdmin(user);
+const chiefOnlyGuard = async (req, res, next) => {
+  try {
+    if (isChiefAdmin(req.user)) return next();
+    const target = await UsersRepository.findById(req.params.id);
+    if (isProtectedChief(target)) return next(new AppError('Учетная запись главного администратора недоступна', 403));
+    next();
+  } catch (error) { next(error); }
+};
+
 const manageUsers = (req, res, next) => {
   if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return next(new AppError('Управление сотрудниками разрешено только руководству', 403));
   if (isMatrixUser(req.user) && !hasSection(req.user, 'users.view', true)) return next(new AppError('Нет права изменения сотрудников и ролей', 403));
@@ -20,9 +32,10 @@ router.use(protect);
 router.get('/', async (req, res, next) => {
   try {
     const allUsers = await UsersRepository.findAll();
+    const visibleUsers = isChiefAdmin(req.user) ? allUsers : allUsers.filter(user => !isProtectedChief(user));
     const users = String(req.query.lookup) === '1'
-      ? allUsers.map(({ id, name, is_active }) => ({ id, name, is_active }))
-      : allUsers;
+      ? visibleUsers.map(({ id, name, is_active }) => ({ id, name, is_active }))
+      : visibleUsers;
     res.status(200).json({
       status: 'success',
       data: { users }
@@ -33,7 +46,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // GET /api/users/:id - Get user by id
-router.get('/:id', async (req, res, next) => {
+router.get('/:id', chiefOnlyGuard, async (req, res, next) => {
   try {
     const user = await UsersRepository.findById(req.params.id);
     if (!user) {
@@ -113,6 +126,7 @@ router.post('/', manageUsers, async (req, res, next) => {
     }
 
     const userRole = String(role || 'SALES_MANAGER').trim().toUpperCase();
+    if (!isChiefAdmin(req.user) && userRole === 'ADMIN') return next(new AppError('Назначение роли администратора недоступно', 403));
     const { data: roleEntry, error: roleError } = await getServiceDB().from('crm_roles').select('code,is_active,permissions').eq('code',userRole).maybeSingle();
     if (roleError) throw roleError;
     if (!roleEntry?.is_active) return next(new AppError('Роль не существует или отключена',400));
@@ -147,7 +161,7 @@ router.post('/', manageUsers, async (req, res, next) => {
 });
 
 // PATCH /api/users/:id - Update user
-router.patch('/:id', manageUsers, async (req, res, next) => {
+router.patch('/:id', manageUsers, chiefOnlyGuard, async (req, res, next) => {
   try {
     const { name, email, password, role, permissions, is_active, is_sales_rep } = req.body;
     const updates = {};
@@ -155,6 +169,7 @@ router.patch('/:id', manageUsers, async (req, res, next) => {
     if (email) updates.email = email.trim().toLowerCase();
     if (role) {
       const code = String(role).trim().toUpperCase();
+      if (!isChiefAdmin(req.user) && code === 'ADMIN') return next(new AppError('Назначение роли администратора недоступно', 403));
       const { data: entry, error } = await getServiceDB().from('crm_roles').select('is_active').eq('code',code).maybeSingle();
       if (error) throw error;
       if (!entry?.is_active) return next(new AppError('Роль не существует или отключена',400));
@@ -178,7 +193,7 @@ router.patch('/:id', manageUsers, async (req, res, next) => {
 });
 
 // DELETE /api/users/:id - Delete user
-router.delete('/:id', manageUsers, restrictTo('ADMIN'), async (req, res, next) => {
+router.delete('/:id', manageUsers, restrictTo('ADMIN'), chiefOnlyGuard, async (req, res, next) => {
   try {
     if (String(req.user.id) === String(req.params.id)) {
       return next(new AppError('Вы не можете удалить свою учетную запись', 400));
