@@ -1,4 +1,6 @@
 import crypto from 'crypto';
+import { isCustomerPko, isVoidedPko } from './customerPko.js';
+import { filterCustomerBook } from './customerPkoBook.js';
 import { expenseSettlement } from './expenseSettlement.js';
 import { getDB, getServiceDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
@@ -284,16 +286,17 @@ export class FinanceRepository {
     const availableYears = await this.getAvailableYears();
 
     const { data: paymentsData, error } = await db.from('payments').select(`
-      id, deal_id, schedule_id, amount_minor, currency, payment_date, method, reference, comment, payer_name, created_at,
+      id, deal_id, schedule_id, amount_minor, currency, payment_date, method, reference, document_number, customer_pko_number, comment, payer_name, created_at, settlement_method,
       status, void_reason, voided_at, voided_by, transfer_id, conversion_id, cash_desk_id, operation_type, amount_tjs, amount_usd, exchange_rate,
       created_by_user_id,
-      deals ( id, contract_number, currency, final_price_minor, deal_date, created_at, leads ( full_name, phone, inn ) ),
+      deals ( id, contract_number, currency, final_price_minor, deal_date, created_at, leads ( full_name, phone, inn ), units ( unit_number, unit_kind, floors ( floor_number, sections ( buildings ( name ) ) ) ) ),
       users:created_by_user_id ( id, name )
     `).order('payment_date', { ascending: false });
 
     if (error) throw error;
 
-    const allPayments = paymentsData || [];
+    const customerBook = filters.customer_book === '1' || filters.customer_book === true;
+    const allPayments = customerBook ? (paymentsData || []).filter(isCustomerPko) : (paymentsData || []);
     
     // Helper to extract tag from comment
     const extractTag = (text, tagName) => {
@@ -304,7 +307,7 @@ export class FinanceRepository {
 
     // Normalize and extract currency for each payment
     let normalizedList = allPayments
-      .filter(p => filters.include_voided ? true : (p.status !== 'VOIDED' && p.status !== 'CANCELLED' && p.status !== 'REVERSED' && !p.voided_at))
+      .filter(p => [true, '1', 'true'].includes(filters.include_voided) ? true : !isVoidedPko(p))
       .map(p => {
         const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
         const amount = (p.amount_minor || 0) / 100;
@@ -338,6 +341,10 @@ export class FinanceRepository {
           method: p.method || 'CASH',
           reference: p.reference || `ПКО-${p.id}`,
           document_number: p.document_number || null,
+          customerPkoNumber: p.customer_pko_number || null,
+          isCustomerPko: isCustomerPko(p),
+          property: p.deals?.units ? `${p.deals.units.floors?.sections?.buildings?.name || ''} · ${{APARTMENT:'Квартира',PARKING:'Машино-место',COMMERCIAL:'Коммерческое помещение'}[p.deals.units.unit_kind] || 'Квартира'} №${p.deals.units.unit_number} · этаж ${p.deals.units.floors?.floor_number ?? '—'}` : '',
+          cashDeskName: null,
           comment: (p.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').replace(/\[(Статья|Основание|Назначение):[^\]]+\]\s*/gi, '').trim(),
           payerName: p.payer_name || clientName,
           contract,
@@ -375,8 +382,19 @@ export class FinanceRepository {
         const createdByUser = userAccess.userId && Number(item.createdByUserId) === Number(userAccess.userId);
         return belongsToUserDesk || createdByUser;
       });
-    } else if (filters.cash_desk_id) {
+    }
+    if (filters.cash_desk_id) {
       normalizedList = normalizedList.filter(item => item.cashDeskId === filters.cash_desk_id);
+    }
+    if (customerBook) {
+      normalizedList = filterCustomerBook(normalizedList, filters);
+      const ids = [...new Set(normalizedList.map(p => p.cashDeskId).filter(Boolean))];
+      if (ids.length) {
+        const { data: desks, error: deskError } = await db.from('dictionaries').select('id,name').in('id',ids);
+        if (deskError) throw deskError;
+        const names = new Map((desks || []).map(d => [d.id,d.name]));
+        normalizedList.forEach(p => { p.cashDeskName = names.get(p.cashDeskId) || '—'; });
+      }
     }
 
     // Currencies present
@@ -397,6 +415,7 @@ export class FinanceRepository {
     let totalUsdEquivalent = 0;
 
     normalizedList.forEach(item => {
+      if (isVoidedPko(item)) return;
       const pYear = item.date ? new Date(item.date).getFullYear() : null;
       if (isAllYears || pYear === currentYear) {
         totalsByCurrency[item.currency] = (totalsByCurrency[item.currency] || 0) + item.amount;
@@ -436,7 +455,7 @@ export class FinanceRepository {
       filteredList = filteredList.filter(item => 
         matchSearchQuery(
           item,
-          ['clientName', 'contract', 'reference', 'comment', 'clientPhone', 'clientInn', 'payerName'],
+          ['clientName', 'contract', 'reference', 'document_number', 'property', 'cashDeskName', 'comment', 'clientPhone', 'clientInn', 'payerName'],
           filters.search,
           {
             phoneFields: ['clientPhone'],
@@ -476,6 +495,7 @@ export class FinanceRepository {
     const categoryCurrencies = {};
 
     categoryBaseItems.forEach(item => {
+      if (isVoidedPko(item)) return;
       const cat = resolveIncomeCategory(item);
       let amountInChartCur = item.amount;
       if (!selectedCurrency) {
@@ -504,6 +524,7 @@ export class FinanceRepository {
     
     const monthlyIncome = Array(12).fill(0);
     normalizedList.forEach(item => {
+      if (isVoidedPko(item)) return;
       const d = new Date(item.date);
       if (d.getFullYear() === currentYear) {
         if (selectedCurrency && item.currency !== selectedCurrency) {
@@ -551,6 +572,13 @@ export class FinanceRepository {
       finalIncList.push(...g.items);
     });
     filteredList = finalIncList;
+
+    if (customerBook) {
+      Object.keys(totalsByCurrency).forEach(c => { totalsByCurrency[c]=0; });
+      filteredList.filter(p=>!isVoidedPko(p)).forEach(p=>{
+        totalsByCurrency[p.currency]=Number(((totalsByCurrency[p.currency]||0)+p.amount).toFixed(2));
+      });
+    }
 
     return {
       list: filteredList,
