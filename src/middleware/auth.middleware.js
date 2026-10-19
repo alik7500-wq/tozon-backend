@@ -94,7 +94,7 @@ export const checkPermission = (requiredPermission) => {
       if (hasSection(req.user, key, write) || (requiredPermission === 'sms.send' && req.sectionAccessGranted && /\/preview$|\/template-availability$/.test(String(req.originalUrl || '')))) return next();
       return next(new AppError('Недостаточно прав доступа', 403));
     }
-    if (req.user.role === 'ADMIN' || req.user.role === 'DIRECTOR') {
+    if ((req.user.role === 'ADMIN' || req.user.role === 'DIRECTOR') && !isMatrixUser(req.user)) {
       return next();
     }
     const permissions = Array.isArray(req.user.permissions) ? req.user.permissions : [];
