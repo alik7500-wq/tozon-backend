@@ -1,5 +1,6 @@
 import { AppError } from '../shared/errors/errorHandler.js';
 import { getServiceDB } from '../db/connection.js';
+import { matchSectionRoute } from './sectionRegistry.js';
 
 export const ACCESS_PROFILE = 'access.v2';
 const pairs = {
@@ -107,6 +108,7 @@ export const authorizeSectionRequest = async req => {
     key = 'inventory.view';
     if (read && path.startsWith('/api/projects')) allowed = hasSection(user,key) || hasAny(user,[...financeReads,'analytics.view','analytics.reports']);
   }
+  if (allowed === undefined && !key) key = matchSectionRoute(path)?.permission;
   if (allowed === undefined) allowed = key ? hasSection(user,key,!read) : false;
   if (!allowed) throw new AppError(read ? 'Нет права чтения этого раздела' : 'Нет права добавления или редактирования в этом разделе', 403);
   req.sectionAccessGranted = true;
