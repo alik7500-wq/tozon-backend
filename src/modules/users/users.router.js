@@ -105,8 +105,8 @@ router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
     }
 
     const userRole = String(role || 'SALES_MANAGER').trim().toUpperCase();
-    const { getDB } = await import('../../db/connection.js');
-    const { data: roleEntry, error: roleError } = await getDB().from('crm_roles').select('code,is_active,permissions').eq('code',userRole).maybeSingle();
+    const { getServiceDB } = await import('../../db/connection.js');
+    const { data: roleEntry, error: roleError } = await getServiceDB().from('crm_roles').select('code,is_active,permissions').eq('code',userRole).maybeSingle();
     if (roleError) throw roleError;
     if (!roleEntry?.is_active) return next(new AppError('Роль не существует или отключена',400));
 
@@ -149,7 +149,7 @@ router.patch('/:id', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => 
     if (role) {
       const { getDB } = await import('../../db/connection.js');
       const code = String(role).trim().toUpperCase();
-      const { data: entry, error } = await getDB().from('crm_roles').select('is_active').eq('code',code).maybeSingle();
+      const { data: entry, error } = await getServiceDB().from('crm_roles').select('is_active').eq('code',code).maybeSingle();
       if (error) throw error;
       if (!entry?.is_active) return next(new AppError('Роль не существует или отключена',400));
       updates.role = code;
