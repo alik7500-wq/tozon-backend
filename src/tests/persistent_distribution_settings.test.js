@@ -64,11 +64,14 @@ describe('TOZON CRM — Phase 3.6.1 Persistent Distribution Settings Test Suite'
             })
           };
         }
-        return {
+        const fallbackBuilder = {
           select: vi.fn().mockReturnThis(),
           eq: vi.fn().mockReturnThis(),
+          order: vi.fn().mockImplementation(() => Promise.resolve({ data: [], error: null })),
           maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null })
         };
+        fallbackBuilder.then = (onRes, onRej) => Promise.resolve({ data: [], error: null }).then(onRes, onRej);
+        return fallbackBuilder;
       })
     };
 
