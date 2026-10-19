@@ -10,10 +10,10 @@ const pairs = {
 };
 export const readKey = key => Object.keys(pairs).find(k => pairs[k] === key) || key;
 export const writeKey = key => pairs[key] || `${key}.write`;
-export const isMatrixUser = user => user?.permissions?.includes(ACCESS_PROFILE) && user.role !== 'ADMIN';
+export const isMatrixUser = user => user?.permissions?.includes(ACCESS_PROFILE);
 export const hasSection = (user, key, write = false) => {
-  if (user?.role === 'ADMIN') return true;
   const permissions = user?.permissions || [];
+  if (user?.role === 'ADMIN' && !isMatrixUser(user)) return true;
   if (isMatrixUser(user)) return permissions.includes(key) && (!write || permissions.includes(writeKey(key)));
   return permissions.includes('*') || permissions.includes(key);
 };
