@@ -3,6 +3,7 @@ import bcrypt from 'bcrypt';
 import { UsersRepository } from './users.repository.js';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+import { getServiceDB } from '../../db/connection.js';
 
 const router = express.Router();
 
