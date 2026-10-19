@@ -44,7 +44,8 @@ export const authorizeSectionRequest = async req => {
           : (path === '/api/finance/transfers' || path === '/api/finance/convert')
             ? 'finance.cash_transfers'
             : null;
-    if (feature && !hasSection(user, feature, !read)) {
+    const extra = path.startsWith('/api/360-tours/') ? 'inventory.tours_360' : null;
+    if ((feature || extra) && !hasSection(user, feature || extra, !read)) {
       throw new AppError('Нет доступа к отдельной функции', 403);
     }
   }
