@@ -118,10 +118,33 @@ router.get('/apartment-demand', async (req, res, next) => {
 router.get('/sales-analytics-export', async (req, res, next) => {
   try {
     const exportType = req.query.type || 'plan_fact';
-    const csvContent = await SalesAnalyticsService.exportSalesAnalyticsCsv(exportType, req.query, req.user);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="tozon_sales_analytics_${exportType}.csv"`);
-    res.status(200).send(csvContent);
+    const isCsvRequested = req.query.format === 'csv';
+
+    if (isCsvRequested) {
+      const csvContent = await SalesAnalyticsService.exportSalesAnalyticsCsv(exportType, req.query, req.user);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="tozon_sales_analytics_${exportType}.csv"`);
+      return res.status(200).send(csvContent);
+    }
+
+    const buffer = await SalesAnalyticsService.exportSalesAnalyticsXlsx(exportType, req.query, req.user);
+    const dateStr = new Date().toISOString().split('T')[0];
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="tozon_sales_analytics_${exportType}_${dateStr}.xlsx"`);
+    res.status(200).send(Buffer.from(buffer));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/sales-analytics-export.xlsx', async (req, res, next) => {
+  try {
+    const exportType = req.query.type || 'plan_fact';
+    const buffer = await SalesAnalyticsService.exportSalesAnalyticsXlsx(exportType, req.query, req.user);
+    const dateStr = new Date().toISOString().split('T')[0];
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="tozon_sales_analytics_${exportType}_${dateStr}.xlsx"`);
+    res.status(200).send(Buffer.from(buffer));
   } catch (error) {
     next(error);
   }

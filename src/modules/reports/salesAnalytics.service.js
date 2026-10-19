@@ -1,7 +1,26 @@
+import ExcelJS from 'exceljs';
 import { getDB, getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
-import { getBusinessDate } from '../../utils/businessTime.js';
+import { getBusinessDate, getBusinessDateTime } from '../../utils/businessTime.js';
 import { parseOptionalBigInt } from '../../utils/idNormalizer.js';
+
+export function sanitizeCellString(val) {
+  if (val === null || val === undefined) return '';
+  const str = String(val);
+  if (/^[=+\-@\t\r]/.test(str)) {
+    return `'${str}`;
+  }
+  return str;
+}
+
+export function getDushanbeFormattedTimestamp() {
+  try {
+    const dt = getBusinessDateTime();
+    return `${dt.dateStr} ${dt.timeStr}:00 (Asia/Dushanbe, UTC+5)`;
+  } catch {
+    return `${getBusinessDate()} (Asia/Dushanbe)`;
+  }
+}
 
 export const LOST_REASON_LABELS = {
   PRICE: 'Высокая цена / бюджет',
@@ -162,11 +181,11 @@ export class SalesAnalyticsService {
       // Execution % and Deviations (Gap)
       const dealsExecutionPercent = targetDeals > 0
         ? Number(((actualDealsCount / targetDeals) * 100).toFixed(1))
-        : (actualDealsCount > 0 ? 100 : 0);
+        : null;
 
       const volumeExecutionPercent = targetVolumeMinor > 0n
         ? Number(((Number(actualVolumeMinor) / Number(targetVolumeMinor)) * 100).toFixed(1))
-        : (actualVolumeMinor > 0n ? 100 : 0);
+        : null;
 
       const dealsGap = actualDealsCount - targetDeals;
       const volumeGapUsd = Number((actualVolumeUsd - targetVolumeUsd).toFixed(2));
@@ -214,11 +233,11 @@ export class SalesAnalyticsService {
 
     const totalDealsExecutionPercent = totalTargetDeals > 0
       ? Number(((totalActualDeals / totalTargetDeals) * 100).toFixed(1))
-      : (totalActualDeals > 0 ? 100 : 0);
+      : null;
 
     const totalVolumeExecutionPercent = totalTargetVolumeUsd > 0
       ? Number(((totalActualVolumeUsd / totalTargetVolumeUsd) * 100).toFixed(1))
-      : (totalActualVolumeUsd > 0 ? 100 : 0);
+      : null;
 
     return {
       filters: {
@@ -893,9 +912,13 @@ export class SalesAnalyticsService {
       const data = await this.getPlanFactAnalytics(query, user);
       let csv = '\uFEFFПериод;План (кв);Факт (кв);Выполнение (кв %);Отклонение (кв);План (USD);Факт (USD);Выполнение (USD %);Отклонение (USD);Брони (USD);Расторжения (USD)\r\n';
       data.monthlyComparison.forEach(m => {
-        csv += `${m.period};${m.target.dealsCount};${m.actual.signedDealsCount};${m.execution.dealsPercent}%;${m.execution.dealsGap};${m.target.volumeUsd};${m.actual.signedVolumeUsd};${m.execution.volumePercent}%;${m.execution.volumeGapUsd};${m.pipelineSupplementary.reservedVolumeUsd};${m.pipelineSupplementary.cancelledVolumeUsd}\r\n`;
+        const dealsPct = m.target.dealsCount > 0 ? `${m.execution.dealsPercent}%` : 'Нет плана';
+        const volPct = m.target.volumeUsd > 0 ? `${m.execution.volumePercent}%` : 'Нет плана';
+        csv += `${m.period};${m.target.dealsCount};${m.actual.signedDealsCount};${dealsPct};${m.execution.dealsGap};${m.target.volumeUsd};${m.actual.signedVolumeUsd};${volPct};${m.execution.volumeGapUsd};${m.pipelineSupplementary.reservedVolumeUsd};${m.pipelineSupplementary.cancelledVolumeUsd}\r\n`;
       });
-      csv += `ИТОГО;${data.summary.totalTargetDeals};${data.summary.totalActualDeals};${data.summary.dealsExecutionPercent}%;${data.summary.dealsGap};${data.summary.totalTargetVolumeUsd};${data.summary.totalActualVolumeUsd};${data.summary.volumeExecutionPercent}%;${data.summary.volumeGapUsd};;\r\n`;
+      const totDealsPct = data.summary.totalTargetDeals > 0 ? `${data.summary.dealsExecutionPercent}%` : 'Нет плана';
+      const totVolPct = data.summary.totalTargetVolumeUsd > 0 ? `${data.summary.volumeExecutionPercent}%` : 'Нет плана';
+      csv += `ИТОГО;${data.summary.totalTargetDeals};${data.summary.totalActualDeals};${totDealsPct};${data.summary.dealsGap};${data.summary.totalTargetVolumeUsd};${data.summary.totalActualVolumeUsd};${totVolPct};${data.summary.volumeGapUsd};;\r\n`;
       return csv;
     }
 
@@ -919,6 +942,462 @@ export class SalesAnalyticsService {
         csv += `№${u.unitNumber};${u.rooms};${u.areaM2};${u.floorNumber};${u.buildingName};${u.currentStatus};${u.priceUsd};${u.interestsCount};${u.uniqueBuyersCount};${u.priorities.HIGH};${u.priorities.MEDIUM};${u.priorities.LOW}\r\n`;
       });
       return csv;
+    }
+
+    throw new AppError('Неизвестный тип экспорта: ' + type, 400);
+  }
+
+  /**
+   * ЭТАП 7: Экспорт аналитических таблиц в Excel (.xlsx) с фирменным стилем TOZON PLAZA
+   */
+  static async exportSalesAnalyticsXlsx(type = 'plan_fact', query = {}, user) {
+    let actualType = type;
+    let actualQuery = query;
+    let actualUser = user;
+    if (typeof type === 'object' && type !== null) {
+      actualType = type.type || 'plan_fact';
+      actualQuery = type;
+      actualUser = query;
+    }
+    this.checkAccess(actualUser);
+
+    const normalizedType = String(actualType || 'plan_fact').replace(/-/g, '_');
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'TOZON CRM';
+    workbook.lastModifiedBy = sanitizeCellString(actualUser?.name || 'TOZON System');
+    workbook.created = new Date();
+    workbook.calcProperties.fullCalcOnLoad = true;
+
+    const brandDarkGreen = '0F5132'; // Dark emerald green
+    const totalRowBg = 'D1E7DD';     // Soft green tint
+    const totalRowFont = '0A3616';   // Deep forest green
+    const zebraBg = 'F8FAFC';        // Slate-50 zebra background
+    const borderSlate = 'CBD5E1';    // Slate-300 clean thin border
+
+    const thinBorder = {
+      top: { style: 'thin', color: { argb: borderSlate } },
+      left: { style: 'thin', color: { argb: borderSlate } },
+      bottom: { style: 'thin', color: { argb: borderSlate } },
+      right: { style: 'thin', color: { argb: borderSlate } }
+    };
+
+    const dushanbeTimestamp = getDushanbeFormattedTimestamp();
+
+    if (normalizedType === 'plan_fact') {
+      const data = await this.getPlanFactAnalytics(actualQuery, actualUser);
+      const sheet = workbook.addWorksheet('План-факт продаж', {
+        views: [{ state: 'frozen', ySplit: 7 }]
+      });
+
+      sheet.addRow(['TOZON PLAZA • КОРПОРАТИВНАЯ СИСТЕМА УПРАВЛЕНИЯ ПРОДАЖАМИ']);
+      sheet.getRow(1).font = { bold: true, size: 13, color: { argb: brandDarkGreen } };
+
+      sheet.addRow(['ПЛАН-ФАКТ ВЫПОЛНЕНИЯ ПРОДАЖ (ПОМЕСЯЧНАЯ АНАЛИТИКА)']);
+      sheet.getRow(2).font = { bold: true, size: 15, color: { argb: '0F172A' } };
+
+      const periodsStr = (data.filters.periods || []).join(', ');
+      sheet.addRow([`Период анализа: ${periodsStr || 'Все месяцы'} | ЖК: ${data.filters.projectId || 'Все объекты'} | Корпус: ${data.filters.buildingId || 'Все корпуса'}`]);
+      sheet.addRow([`Дата и время формирования: ${dushanbeTimestamp}`]);
+      sheet.addRow([`Валюта отчета: USD (план и выручка) / TJS | Сформировал: ${sanitizeCellString(actualUser?.name || 'Пользователь')} (${sanitizeCellString(actualUser?.role || 'USER')})`]);
+      sheet.addRow(['Пояснения: План — утвержденная цель продаж; Факт — только подписанные договоры (SIGNED); Брони — активный пайплайн (RESERVED); Отклонение — разница (Факт - План). Договоры и кассовые поступления учитываются раздельно.']);
+
+      for (let r = 3; r <= 5; r++) {
+        sheet.getRow(r).font = { italic: true, size: 9, color: { argb: '475569' } };
+      }
+      sheet.getRow(6).font = { italic: true, size: 8.5, color: { argb: '64748B' } };
+
+      const headers = sheet.addRow([
+        '№',
+        'Период (месяц)',
+        'План продаж, квартир',
+        'Подписано договоров, квартир (факт)',
+        'Выполнение плана по квартирам, %',
+        'Отклонение по квартирам (факт - план)',
+        'План выручки, USD',
+        'Фактическая выручка по договорам, USD',
+        'Выполнение плана по выручке, %',
+        'Отклонение по выручке, USD (факт - план)',
+        'Активные бронирования, USD (пайплайн)',
+        'Расторгнутые сделки, USD (отток)'
+      ]);
+      headers.font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
+      headers.height = 32;
+      headers.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      headers.eachCell(cell => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
+        cell.border = thinBorder;
+      });
+
+      const startRow = 8;
+      data.monthlyComparison.forEach((m, idx) => {
+        const r = startRow + idx;
+        const row = sheet.addRow([
+          idx + 1,
+          m.period,
+          m.target.dealsCount,
+          m.actual.signedDealsCount,
+          m.target.dealsCount > 0
+            ? { formula: `D${r}/C${r}`, result: m.actual.signedDealsCount / m.target.dealsCount }
+            : 'Нет плана',
+          { formula: `D${r}-C${r}`, result: m.actual.signedDealsCount - m.target.dealsCount },
+          m.target.volumeUsd,
+          m.actual.signedVolumeUsd,
+          m.target.volumeUsd > 0
+            ? { formula: `H${r}/G${r}`, result: m.actual.signedVolumeUsd / m.target.volumeUsd }
+            : 'Нет плана',
+          { formula: `H${r}-G${r}`, result: Number((m.actual.signedVolumeUsd - m.target.volumeUsd).toFixed(2)) },
+          m.pipelineSupplementary.reservedVolumeUsd,
+          m.pipelineSupplementary.cancelledVolumeUsd
+        ]);
+
+        row.height = 22;
+        row.alignment = { vertical: 'middle' };
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(2).alignment = { horizontal: 'center' };
+        row.getCell(2).font = { bold: true };
+
+        // Numbers
+        [3, 4, 6].forEach(c => {
+          row.getCell(c).alignment = { horizontal: 'right' };
+          row.getCell(c).numFmt = '#,##0';
+        });
+
+        // Money
+        [7, 8, 10, 11, 12].forEach(c => {
+          row.getCell(c).alignment = { horizontal: 'right' };
+          row.getCell(c).numFmt = '#,##0.00';
+        });
+
+        // Percentages
+        [5, 9].forEach(c => {
+          row.getCell(c).alignment = { horizontal: 'right' };
+          if (typeof row.getCell(c).value === 'object') {
+            row.getCell(c).numFmt = '0.0%';
+          }
+        });
+
+        if (idx % 2 === 1) {
+          row.eachCell(cell => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+          });
+        }
+        row.eachCell(cell => { cell.border = thinBorder; });
+      });
+
+      const endRow = sheet.rowCount;
+      const totalRowIdx = endRow + 1;
+      const totalRow = sheet.addRow([
+        'ИТОГО',
+        'ВСЕ ПЕРИОДЫ',
+        { formula: `SUM(C${startRow}:C${endRow})` },
+        { formula: `SUM(D${startRow}:D${endRow})` },
+        { formula: `IF(C${totalRowIdx}>0, D${totalRowIdx}/C${totalRowIdx}, "Нет плана")` },
+        { formula: `D${totalRowIdx}-C${totalRowIdx}` },
+        { formula: `SUM(G${startRow}:G${endRow})` },
+        { formula: `SUM(H${startRow}:H${endRow})` },
+        { formula: `IF(G${totalRowIdx}>0, H${totalRowIdx}/G${totalRowIdx}, "Нет плана")` },
+        { formula: `H${totalRowIdx}-G${totalRowIdx}` },
+        { formula: `SUM(K${startRow}:K${endRow})` },
+        { formula: `SUM(L${startRow}:L${endRow})` }
+      ]);
+
+      totalRow.font = { bold: true, size: 10, color: { argb: totalRowFont } };
+      totalRow.height = 26;
+      totalRow.alignment = { vertical: 'middle' };
+      totalRow.getCell(2).alignment = { horizontal: 'center' };
+      totalRow.eachCell((cell, colIdx) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: totalRowBg } };
+        cell.border = thinBorder;
+        if ([3, 4, 6].includes(colIdx)) {
+          cell.alignment = { horizontal: 'right' };
+          cell.numFmt = '#,##0';
+        } else if ([7, 8, 10, 11, 12].includes(colIdx)) {
+          cell.alignment = { horizontal: 'right' };
+          cell.numFmt = '#,##0.00';
+        } else if ([5, 9].includes(colIdx)) {
+          cell.alignment = { horizontal: 'right' };
+          cell.numFmt = '0.0%';
+        }
+      });
+
+      sheet.columns.forEach((col, idx) => {
+        let maxLen = 0;
+        col.eachCell({ includeEmpty: false }, (cell) => {
+          const val = cell.value ? (typeof cell.value === 'object' && cell.value.result ? String(cell.value.result) : String(cell.value)) : '';
+          if (val.length > maxLen) maxLen = val.length;
+        });
+        col.width = Math.min(Math.max(maxLen + 4, idx === 0 ? 6 : 14), 40);
+      });
+
+      sheet.autoFilter = { from: 'A7', to: `L${endRow}` };
+      sheet.pageSetup = {
+        orientation: 'landscape',
+        paperSize: 9,
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        printTitlesRow: '7:7',
+        printArea: `A1:L${totalRowIdx}`
+      };
+
+      return await workbook.xlsx.writeBuffer();
+    }
+
+    if (normalizedType === 'managers') {
+      const data = await this.getEnhancedManagerPerformance(actualQuery, actualUser);
+      const sheet = workbook.addWorksheet('Менеджеры', {
+        views: [{ state: 'frozen', ySplit: 7 }]
+      });
+
+      sheet.addRow(['TOZON PLAZA • КОРПОРАТИВНАЯ СИСТЕМА УПРАВЛЕНИЯ ПРОДАЖАМИ']);
+      sheet.getRow(1).font = { bold: true, size: 13, color: { argb: brandDarkGreen } };
+
+      sheet.addRow(['РЕЗУЛЬТАТЫ РАБОТЫ И KPI ОТДЕЛА ПРОДАЖ ПО МЕНЕДЖЕРАМ']);
+      sheet.getRow(2).font = { bold: true, size: 15, color: { argb: '0F172A' } };
+
+      sheet.addRow([`Дата и время формирования: ${dushanbeTimestamp}`]);
+      sheet.addRow([`Сформировал: ${sanitizeCellString(actualUser?.name || 'Пользователь')} (${sanitizeCellString(actualUser?.role || 'USER')})`]);
+      sheet.addRow(['Валюта отчета: USD / TJS (раздельный учет) | Пояснения: Звонки и встречи — выполненные активности; Договоры — подписанные контракты продаж; Брони — активный пайплайн.']);
+      sheet.addRow([]);
+
+      for (let r = 3; r <= 5; r++) {
+        sheet.getRow(r).font = { italic: true, size: 9, color: { argb: '475569' } };
+      }
+
+      const headers = sheet.addRow([
+        '№',
+        'Менеджер отдела продаж',
+        'Должность / Роль',
+        'Лиды (всего), шт',
+        'Обработано, шт',
+        'Не обработано, шт',
+        'Просрочено задач, шт',
+        'Звонки (факт), шт',
+        'Встречи (факт), шт',
+        'Брони (пайплайн), шт',
+        'Подписано договоров, шт',
+        'Сумма продаж, USD',
+        'Конверсия, %'
+      ]);
+      headers.font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
+      headers.height = 28;
+      headers.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      headers.eachCell(cell => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
+        cell.border = thinBorder;
+      });
+
+      const startRow = 8;
+      data.managers.forEach((m, idx) => {
+        const r = startRow + idx;
+        const row = sheet.addRow([
+          idx + 1,
+          sanitizeCellString(m.name),
+          sanitizeCellString(m.role),
+          m.assignedLeadsCount || 0,
+          m.processedLeadsCount || 0,
+          m.unprocessedLeadsCount || 0,
+          m.overdueTasksCount || 0,
+          m.completedCalls || 0,
+          m.completedMeetings || 0,
+          m.reservedDealsCount || 0,
+          m.signedDealsCount || 0,
+          m.salesVolumeUsd || 0,
+          m.assignedLeadsCount > 0 ? { formula: `K${r}/D${r}`, result: (m.signedDealsCount / m.assignedLeadsCount) } : 0
+        ]);
+
+        row.height = 22;
+        row.alignment = { vertical: 'middle' };
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(3).alignment = { horizontal: 'center' };
+
+        [4, 5, 6, 7, 8, 9, 10, 11].forEach(c => {
+          row.getCell(c).alignment = { horizontal: 'right' };
+          row.getCell(c).numFmt = '#,##0';
+        });
+
+        row.getCell(12).alignment = { horizontal: 'right' };
+        row.getCell(12).numFmt = '#,##0.00';
+
+        row.getCell(13).alignment = { horizontal: 'right' };
+        row.getCell(13).numFmt = '0.0%';
+
+        if (idx % 2 === 1) {
+          row.eachCell(cell => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+          });
+        }
+        row.eachCell(cell => { cell.border = thinBorder; });
+      });
+
+      const endRow = sheet.rowCount;
+      const totalRowIdx = endRow + 1;
+      const totalRow = sheet.addRow([
+        '',
+        'ИТОГО ПО ОТДЕЛУ ПРОДАЖ',
+        `${data.managers.length} сотр.`,
+        { formula: `SUM(D${startRow}:D${endRow})` },
+        { formula: `SUM(E${startRow}:E${endRow})` },
+        { formula: `SUM(F${startRow}:F${endRow})` },
+        { formula: `SUM(G${startRow}:G${endRow})` },
+        { formula: `SUM(H${startRow}:H${endRow})` },
+        { formula: `SUM(I${startRow}:I${endRow})` },
+        { formula: `SUM(J${startRow}:J${endRow})` },
+        { formula: `SUM(K${startRow}:K${endRow})` },
+        { formula: `SUM(L${startRow}:L${endRow})` },
+        { formula: `IF(D${totalRowIdx}>0, K${totalRowIdx}/D${totalRowIdx}, 0)` }
+      ]);
+
+      totalRow.font = { bold: true, size: 10, color: { argb: totalRowFont } };
+      totalRow.height = 26;
+      totalRow.alignment = { vertical: 'middle' };
+      totalRow.eachCell((cell, colIdx) => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: totalRowBg } };
+        cell.border = thinBorder;
+        if ([4, 5, 6, 7, 8, 9, 10, 11].includes(colIdx)) {
+          cell.alignment = { horizontal: 'right' };
+          cell.numFmt = '#,##0';
+        } else if (colIdx === 12) {
+          cell.alignment = { horizontal: 'right' };
+          cell.numFmt = '#,##0.00';
+        } else if (colIdx === 13) {
+          cell.alignment = { horizontal: 'right' };
+          cell.numFmt = '0.0%';
+        }
+      });
+
+      sheet.columns.forEach((col, idx) => {
+        let maxLen = 0;
+        col.eachCell({ includeEmpty: false }, (cell) => {
+          const val = cell.value ? (typeof cell.value === 'object' && cell.value.result ? String(cell.value.result) : String(cell.value)) : '';
+          if (val.length > maxLen) maxLen = val.length;
+        });
+        col.width = Math.min(Math.max(maxLen + 4, idx === 0 ? 6 : 14), 38);
+      });
+
+      sheet.autoFilter = { from: 'A7', to: `M${endRow}` };
+      sheet.pageSetup = {
+        orientation: 'landscape',
+        paperSize: 9,
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        printTitlesRow: '7:7',
+        printArea: `A1:M${totalRowIdx}`
+      };
+
+      return await workbook.xlsx.writeBuffer();
+    }
+
+    if (normalizedType === 'demand') {
+      const data = await this.getApartmentDemandAnalytics(actualQuery, actualUser);
+      const sheet = workbook.addWorksheet('Спрос на квартиры', {
+        views: [{ state: 'frozen', ySplit: 7 }]
+      });
+
+      sheet.addRow(['TOZON PLAZA • КОРПОРАТИВНАЯ СИСТЕМА УПРАВЛЕНИЯ ПРОДАЖАМИ']);
+      sheet.getRow(1).font = { bold: true, size: 13, color: { argb: brandDarkGreen } };
+
+      sheet.addRow(['АНАЛИТИКА СПРОСА НА КВАРТИРЫ И ПРЕДПОЧТЕНИЙ КЛИЕНТОВ']);
+      sheet.getRow(2).font = { bold: true, size: 15, color: { argb: '0F172A' } };
+
+      sheet.addRow([`Дата и время формирования: ${dushanbeTimestamp}`]);
+      sheet.addRow([`Сформировал: ${sanitizeCellString(actualUser?.name || 'Пользователь')} (${sanitizeCellString(actualUser?.role || 'USER')})`]);
+      sheet.addRow(['Пояснения: Сохранений интереса — количество зафиксированных потребностей покупателей по типам планировок и объектам.']);
+      sheet.addRow([]);
+
+      for (let r = 3; r <= 5; r++) {
+        sheet.getRow(r).font = { italic: true, size: 9, color: { argb: '475569' } };
+      }
+
+      const headers = sheet.addRow([
+        '№',
+        'Квартира',
+        'Комнат',
+        'Площадь, м²',
+        'Этаж',
+        'Корпус / Блок',
+        'Текущий статус',
+        'Стоимость, USD',
+        'Сохранений интереса',
+        'Уникальных клиентов',
+        'Приоритет Высокий',
+        'Приоритет Средний',
+        'Приоритет Низкий'
+      ]);
+      headers.font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
+      headers.height = 28;
+      headers.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      headers.eachCell(cell => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
+        cell.border = thinBorder;
+      });
+
+      const list = data.topDemandedUnits || [];
+      list.forEach((u, idx) => {
+        const row = sheet.addRow([
+          idx + 1,
+          sanitizeCellString(`№${u.unitNumber}`),
+          u.rooms,
+          u.areaM2,
+          u.floorNumber,
+          sanitizeCellString(u.buildingName),
+          sanitizeCellString(u.currentStatus),
+          u.priceUsd,
+          u.interestsCount,
+          u.uniqueBuyersCount,
+          u.priorities?.HIGH || 0,
+          u.priorities?.MEDIUM || 0,
+          u.priorities?.LOW || 0
+        ]);
+
+        row.height = 22;
+        row.alignment = { vertical: 'middle' };
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(2).alignment = { horizontal: 'center' };
+        row.getCell(3).alignment = { horizontal: 'center' };
+        row.getCell(5).alignment = { horizontal: 'center' };
+        row.getCell(7).alignment = { horizontal: 'center' };
+
+        row.getCell(4).alignment = { horizontal: 'right' };
+        row.getCell(4).numFmt = '#,##0.00';
+        row.getCell(8).alignment = { horizontal: 'right' };
+        row.getCell(8).numFmt = '#,##0.00';
+
+        [9, 10, 11, 12, 13].forEach(c => {
+          row.getCell(c).alignment = { horizontal: 'right' };
+          row.getCell(c).numFmt = '#,##0';
+        });
+
+        if (idx % 2 === 1) {
+          row.eachCell(cell => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+          });
+        }
+        row.eachCell(cell => { cell.border = thinBorder; });
+      });
+
+      sheet.columns.forEach((col, idx) => {
+        let maxLen = 0;
+        col.eachCell({ includeEmpty: false }, (cell) => {
+          const val = cell.value ? String(cell.value) : '';
+          if (val.length > maxLen) maxLen = val.length;
+        });
+        col.width = Math.min(Math.max(maxLen + 4, idx === 0 ? 6 : 14), 35);
+      });
+
+      sheet.autoFilter = { from: 'A7', to: `M${sheet.rowCount}` };
+      sheet.pageSetup = {
+        orientation: 'landscape',
+        paperSize: 9,
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        printTitlesRow: '7:7',
+        printArea: `A1:M${sheet.rowCount}`
+      };
+
+      return await workbook.xlsx.writeBuffer();
     }
 
     throw new AppError('Неизвестный тип экспорта: ' + type, 400);

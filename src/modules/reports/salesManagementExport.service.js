@@ -82,16 +82,19 @@ export class SalesManagementExportService {
     workbook.created = new Date();
     workbook.calcProperties.fullCalcOnLoad = true;
 
-    // Palette & Styles
-    const brandNavy = '1E3A8A';   // Dark Blue Header #1E3A8A
-    const brandBlue = '2563EB';   // Primary Accent #2563EB
-    const emeraldGreen = '059669';// USD / Success #059669
-    const indigoTjs = '4F46E5';   // TJS / Secondary #4F46E5
-    const amberWarn = 'D97706';   // Reservations #D97706
-    const roseDanger = 'DC2626';  // Cancelled / Overdue #DC2626
-    const totalRowBg = 'E2E8F0';  // Slate 200
-    const zebraBg = 'F8FAFC';     // Slate 50
-    const borderSlate = 'CBD5E1'; // Slate 300
+    // Palette & Styles - TOZON PLAZA Corporate Dark Green
+    const brandDarkGreen = '0F5132'; // Corporate Dark Green #0F5132
+    const brandForestGreen = '14532D'; // Deep Forest Green #14532D
+    const emeraldGreen = '15803D';   // Emerald Green #15803D (accents)
+    const brandNavy = '0F5132';      // Backward-compatible alias
+    const brandBlue = '0F5132';      // Green accents #0F5132
+    const indigoTjs = '166534';      // TJS Secondary green #166534
+    const amberWarn = 'B45309';      // Reservations #B45309
+    const roseDanger = 'DC2626';     // Cancelled / Overdue #DC2626
+    const totalRowBg = 'D1E7DD';     // Soft Mint-Green Total Background #D1E7DD
+    const totalRowFont = '0A3616';   // Dark Forest Green Total Text #0A3616
+    const zebraBg = 'F8FAFC';        // Slate 50 zebra
+    const borderSlate = 'CBD5E1';    // Slate 300 clean thin border
 
     const thinBorder = {
       top: { style: 'thin', color: { argb: borderSlate } },
@@ -106,8 +109,8 @@ export class SalesManagementExportService {
      * Standard corporate header setup for any sheet
      */
     const addSheetHeader = (sheet, title, subtitle = '') => {
-      sheet.addRow(['TOZON CRM • КОРПОРАТИВНАЯ СИСТЕМА УПРАВЛЕНИЯ ПРОДАЖАМИ']);
-      sheet.getRow(1).font = { bold: true, size: 13, color: { argb: brandNavy } };
+      sheet.addRow(['TOZON PLAZA • КОРПОРАТИВНАЯ СИСТЕМА УПРАВЛЕНИЯ ПРОДАЖАМИ']);
+      sheet.getRow(1).font = { bold: true, size: 13, color: { argb: brandDarkGreen } };
 
       sheet.addRow([title]);
       sheet.getRow(2).font = { bold: true, size: 15, color: { argb: '0F172A' } };
@@ -116,14 +119,15 @@ export class SalesManagementExportService {
       const periodMonth = blockPlanFact.period;
       const weeksCount = weeklyDynamics.periodRange?.weeksCount || 8;
 
-      sheet.addRow([`Дата сводки: ${targetDate} | Месяц план-факта: ${periodMonth} | Горизонт: ${weeksCount} нед.`]);
+      sheet.addRow([`Период: ${periodMonth} | Дата сводки: ${targetDate} | Горизонт анализа: ${weeksCount} нед.`]);
       sheet.addRow([`Дата и время формирования: ${dushanbeTimestamp}`]);
-      sheet.addRow([`Сформировал: ${sanitizeCellString(user.name || 'Пользователь')} (${sanitizeCellString(user.role)}) ${subtitle ? `| ${subtitle}` : ''}`]);
-      sheet.addRow([]); // Blank row at index 6
+      sheet.addRow([`Валюта отчета: USD / TJS (раздельный учет) | Сформировал: ${sanitizeCellString(user.name || 'Пользователь')} (${sanitizeCellString(user.role)}) ${subtitle ? `| ${subtitle}` : ''}`]);
+      sheet.addRow(['Пояснения: План — утвержденная цель продаж; Факт — только подписанные договоры (SIGNED); Брони — активный пайплайн (RESERVED); Отклонение — разница (Факт - План). Договоры и кассовые поступления учитываются раздельно.']);
 
       for (let r = 3; r <= 5; r++) {
         sheet.getRow(r).font = { italic: true, size: 9, color: { argb: '475569' } };
       }
+      sheet.getRow(6).font = { italic: true, size: 8.5, color: { argb: '64748B' } };
     };
 
     // =========================================================================
@@ -143,10 +147,10 @@ export class SalesManagementExportService {
       'Примечание / Правило фиксации'
     ]);
     s1Headers.font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
-    s1Headers.height = 26;
-    s1Headers.alignment = { vertical: 'middle', horizontal: 'center' };
+    s1Headers.height = 28;
+    s1Headers.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     s1Headers.eachCell(cell => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandNavy } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
       cell.border = thinBorder;
     });
 
@@ -196,12 +200,21 @@ export class SalesManagementExportService {
     });
 
     sheet1.getColumn(1).width = 6;
-    sheet1.getColumn(2).width = 42;
+    sheet1.getColumn(2).width = 44;
     sheet1.getColumn(3).width = 22;
     sheet1.getColumn(4).width = 12;
     sheet1.getColumn(5).width = 18;
     sheet1.getColumn(6).width = 48;
     sheet1.autoFilter = { from: 'A7', to: `F${sheet1.rowCount}` };
+    sheet1.pageSetup = {
+      orientation: 'landscape',
+      paperSize: 9,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      printTitlesRow: '7:7',
+      printArea: `A1:F${sheet1.rowCount}`
+    };
 
 
     // =========================================================================
@@ -214,25 +227,25 @@ export class SalesManagementExportService {
 
     const s2Headers = sheet2.addRow([
       '№',
-      'Менеджер',
-      'Роль',
-      'Новые лиды',
-      'Звонки',
-      'Встречи',
-      'Всего контактов',
-      'Брони, шт',
-      'Брони объем, USD',
-      'Продажи, шт',
-      'Выручка, USD',
-      'Поступления, USD',
-      'Поступления, TJS',
-      'Просрочено задач'
+      'Менеджер отдела продаж',
+      'Должность / Роль',
+      'Новые лиды, шт',
+      'Звонки (факт), шт',
+      'Встречи (факт), шт',
+      'Всего контактов, шт',
+      'Брони (пайплайн), шт',
+      'Сумма броней, USD',
+      'Подписано договоров, шт',
+      'Сумма продаж, USD',
+      'Поступления кассы, USD ($)',
+      'Поступления кассы, TJS (смн)',
+      'Просрочено задач, шт'
     ]);
     s2Headers.font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
-    s2Headers.height = 26;
-    s2Headers.alignment = { vertical: 'middle', horizontal: 'center' };
+    s2Headers.height = 28;
+    s2Headers.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     s2Headers.eachCell(cell => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandNavy } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
       cell.border = thinBorder;
     });
 
@@ -300,8 +313,8 @@ export class SalesManagementExportService {
         { formula: `SUM(N${s2StartRow}:N${s2EndRow})` }
       ]);
 
-      totalRow.font = { bold: true, size: 10, color: { argb: '0F172A' } };
-      totalRow.height = 25;
+      totalRow.font = { bold: true, size: 10, color: { argb: totalRowFont } };
+      totalRow.height = 26;
       totalRow.alignment = { vertical: 'middle' };
       totalRow.eachCell((cell, colIdx) => {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: totalRowBg } };
@@ -319,11 +332,20 @@ export class SalesManagementExportService {
     sheet2.columns.forEach((col, idx) => {
       if (idx === 0) col.width = 6;
       else if (idx === 1) col.width = 28;
-      else if (idx === 2) col.width = 16;
+      else if (idx === 2) col.width = 18;
       else if ([8, 10, 11, 12].includes(idx)) col.width = 18;
-      else col.width = 14;
+      else col.width = 15;
     });
-    sheet2.autoFilter = { from: 'A7', to: `N${sheet2.rowCount}` };
+    sheet2.autoFilter = { from: 'A7', to: `N${s2EndRow}` };
+    sheet2.pageSetup = {
+      orientation: 'landscape',
+      paperSize: 9,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      printTitlesRow: '7:7',
+      printArea: `A1:N${sheet2.rowCount}`
+    };
 
 
     // =========================================================================
@@ -360,27 +382,32 @@ export class SalesManagementExportService {
       // Plan-Fact KPI summary block (Rows 7-12)
       sheet.addRow(['ПОКАЗАТЕЛЬ ПЛАН-ФАКТА', 'ПЛАН', 'ФАКТ / ВЫПОЛНЕНО', 'ОТКЛОНЕНИЕ (GAP)', '% ВЫПОЛНЕНИЯ', 'СТАТУС И ПАЙПЛАЙН']);
       sheet.getRow(7).font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
-      sheet.getRow(7).height = 24;
-      sheet.getRow(7).alignment = { vertical: 'middle', horizontal: 'center' };
+      sheet.getRow(7).height = 28;
+      sheet.getRow(7).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
       sheet.getRow(7).eachCell(cell => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandNavy } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
         cell.border = thinBorder;
       });
 
+      const hasPlanDeals = (blockInfo.plan?.targetDealsCount || 0) > 0;
+      const hasPlanVolume = (blockInfo.plan?.targetVolumeUsd || 0) > 0;
+      const dealsGap = (blockInfo.fact?.signedDealsCount || 0) - (blockInfo.plan?.targetDealsCount || 0);
+      const volumeGap = Number(((blockInfo.fact?.signedVolumeUsd || 0) - (blockInfo.plan?.targetVolumeUsd || 0)).toFixed(2));
+
       const r8 = sheet.addRow([
-        'Количество сделок, шт.',
+        'Количество договоров продажи, шт.',
         blockInfo.plan?.targetDealsCount || 0,
         blockInfo.fact?.signedDealsCount || 0,
-        (blockInfo.plan?.targetDealsCount || 0) - (blockInfo.fact?.signedDealsCount || 0),
-        `${blockInfo.execution?.dealsPercent || 0}%`,
+        dealsGap,
+        hasPlanDeals ? `${blockInfo.execution?.dealsPercent || 0}%` : 'Нет плана',
         `В брони: ${blockInfo.pipelineReserved?.reservedDealsCount || 0} кв.`
       ]);
       const r9 = sheet.addRow([
-        'Объем продаж, USD',
+        'Объем продаж по договорам, USD',
         blockInfo.plan?.targetVolumeUsd || 0,
         blockInfo.fact?.signedVolumeUsd || 0,
-        blockInfo.execution?.volumeGapUsd || 0,
-        `${blockInfo.execution?.volumePercent || 0}%`,
+        volumeGap,
+        hasPlanVolume ? `${blockInfo.execution?.volumePercent || 0}%` : 'Нет плана',
         `Брони: $${(blockInfo.pipelineReserved?.reservedVolumeUsd || 0).toLocaleString('ru-RU')}`
       ]);
       const r10 = sheet.addRow([
@@ -401,7 +428,7 @@ export class SalesManagementExportService {
       ]);
       sheet.addRow([]); // Blank row 12
       sheet.addRow(['РЕЕСТР ПОДПИСАННЫХ ДОГОВОРОВ ПРОДАЖИ (ФАКТ)']); // Row 13
-      sheet.getRow(13).font = { bold: true, size: 11, color: { argb: emeraldGreen } };
+      sheet.getRow(13).font = { bold: true, size: 11, color: { argb: brandDarkGreen } };
 
       [r8, r9, r10, r11].forEach(r => {
         r.height = 20;
@@ -425,17 +452,17 @@ export class SalesManagementExportService {
         'Квартира',
         'Комнат',
         'Площадь, м²',
-        'Стоимость, USD',
+        'Стоимость договора, USD',
         'Покупатель / Клиент',
         'Телефон',
-        'Менеджер',
-        'Дата договора'
+        'Ответственный менеджер',
+        'Дата подписания договора'
       ]);
       signedHeaders.font = { bold: true, color: { argb: 'FFFFFF' }, size: 9 };
-      signedHeaders.height = 24;
-      signedHeaders.alignment = { vertical: 'middle', horizontal: 'center' };
+      signedHeaders.height = 28;
+      signedHeaders.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
       signedHeaders.eachCell(cell => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: emeraldGreen } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
         cell.border = thinBorder;
       });
 
@@ -490,8 +517,8 @@ export class SalesManagementExportService {
           '',
           ''
         ]);
-        totalSigned.font = { bold: true, size: 9 };
-        totalSigned.height = 22;
+        totalSigned.font = { bold: true, size: 10, color: { argb: totalRowFont } };
+        totalSigned.height = 25;
         totalSigned.alignment = { vertical: 'middle' };
         totalSigned.getCell(5).alignment = { horizontal: 'right' };
         totalSigned.getCell(6).alignment = { horizontal: 'right' };
@@ -506,23 +533,23 @@ export class SalesManagementExportService {
       // Space before Table 2
       sheet.addRow([]);
       sheet.addRow(['РЕЕСТР АКТИВНЫХ БРОНИРОВАНИЙ (ПАЙПЛАЙН)']);
-      sheet.getRow(sheet.rowCount).font = { bold: true, size: 11, color: { argb: amberWarn } };
+      sheet.getRow(sheet.rowCount).font = { bold: true, size: 11, color: { argb: brandForestGreen } };
 
       const resHeaders = sheet.addRow([
         '№',
-        'Бронь / Договор',
+        'Номер брони / договора',
         'Квартира',
         'Площадь, м²',
-        'Стоимость, USD',
+        'Стоимость бронирования, USD',
         'Клиент',
         'Менеджер',
         'Срок бронирования'
       ]);
       resHeaders.font = { bold: true, color: { argb: 'FFFFFF' }, size: 9 };
-      resHeaders.height = 22;
-      resHeaders.alignment = { vertical: 'middle', horizontal: 'center' };
+      resHeaders.height = 28;
+      resHeaders.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
       resHeaders.eachCell(cell => {
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: amberWarn } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandForestGreen } };
         cell.border = thinBorder;
       });
 
@@ -572,8 +599,8 @@ export class SalesManagementExportService {
           '',
           ''
         ]);
-        totalRes.font = { bold: true, size: 9 };
-        totalRes.height = 22;
+        totalRes.font = { bold: true, size: 10, color: { argb: totalRowFont } };
+        totalRes.height = 25;
         totalRes.alignment = { vertical: 'middle' };
         totalRes.getCell(4).alignment = { horizontal: 'right' };
         totalRes.getCell(5).alignment = { horizontal: 'right' };
@@ -586,16 +613,25 @@ export class SalesManagementExportService {
       }
 
       sheet.getColumn(1).width = 6;
-      sheet.getColumn(2).width = 22;
+      sheet.getColumn(2).width = 24;
       sheet.getColumn(3).width = 14;
       sheet.getColumn(4).width = 12;
       sheet.getColumn(5).width = 16;
-      sheet.getColumn(6).width = 20;
+      sheet.getColumn(6).width = 22;
       sheet.getColumn(7).width = 28;
       sheet.getColumn(8).width = 18;
       sheet.getColumn(9).width = 24;
       sheet.getColumn(10).width = 16;
       sheet.autoFilter = { from: 'A14', to: `J${signedEndRow}` };
+      sheet.pageSetup = {
+        orientation: 'landscape',
+        paperSize: 9,
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        printTitlesRow: '14:14',
+        printArea: `A1:J${sheet.rowCount}`
+      };
     };
 
     // Render Sheet 3: «Блок А» and Sheet 4: «Блок Б»
@@ -613,24 +649,24 @@ export class SalesManagementExportService {
 
     const s5Headers = sheet5.addRow([
       '№ Недели',
-      'Начало недели',
-      'Конец недели',
-      'Лиды, шт',
-      'Брони, шт',
-      'Брони объем, USD',
-      'Продажи, шт',
-      'Площадь, м²',
-      'Выручка, USD',
-      'Поступления, USD',
-      'Поступления, TJS',
-      'Конверсия, %',
-      'Отмены, шт'
+      'Начало периода',
+      'Конец периода',
+      'Новые лиды, шт',
+      'Брони (пайплайн), шт',
+      'Объем броней, USD',
+      'Подписано договоров, шт',
+      'Проданная площадь, м²',
+      'Выручка по договорам, USD',
+      'Поступления кассы, USD ($)',
+      'Поступления кассы, TJS (смн)',
+      'Конверсия лид → договор, %',
+      'Расторгнуто сделок, шт'
     ]);
     s5Headers.font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
-    s5Headers.height = 26;
-    s5Headers.alignment = { vertical: 'middle', horizontal: 'center' };
+    s5Headers.height = 28;
+    s5Headers.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     s5Headers.eachCell(cell => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandNavy } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
       cell.border = thinBorder;
     });
 
@@ -698,8 +734,8 @@ export class SalesManagementExportService {
         { formula: `SUM(M${s5StartRow}:M${s5EndRow})` }
       ]);
 
-      totalWeekRow.font = { bold: true, size: 10, color: { argb: '0F172A' } };
-      totalWeekRow.height = 25;
+      totalWeekRow.font = { bold: true, size: 10, color: { argb: totalRowFont } };
+      totalWeekRow.height = 26;
       totalWeekRow.alignment = { vertical: 'middle' };
       totalWeekRow.eachCell((cell, colIdx) => {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: totalRowBg } };
@@ -721,9 +757,18 @@ export class SalesManagementExportService {
       if (idx === 0) col.width = 14;
       else if (idx === 1 || idx === 2) col.width = 15;
       else if ([5, 7, 8, 9, 10].includes(idx)) col.width = 18;
-      else col.width = 14;
+      else col.width = 15;
     });
-    sheet5.autoFilter = { from: 'A7', to: `M${sheet5.rowCount}` };
+    sheet5.autoFilter = { from: 'A7', to: `M${s5EndRow}` };
+    sheet5.pageSetup = {
+      orientation: 'landscape',
+      paperSize: 9,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      printTitlesRow: '7:7',
+      printArea: `A1:M${sheet5.rowCount}`
+    };
 
 
     // =========================================================================
@@ -739,20 +784,20 @@ export class SalesManagementExportService {
       'Номер ПКО (ID)',
       'Номер договора',
       'Квартира',
-      'Дата платежа',
+      'Дата поступления',
       'Плательщик / Покупатель',
       'Телефон',
-      'Сумма USD',
-      'Сумма TJS',
-      'Способ оплаты',
+      'Сумма поступило, USD ($)',
+      'Сумма поступило, TJS (смн)',
+      'Форма оплаты',
       'Ответственный менеджер',
-      'Основание / Примечание'
+      'Основание платежа / Примечание'
     ]);
     s6Headers.font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
-    s6Headers.height = 26;
-    s6Headers.alignment = { vertical: 'middle', horizontal: 'center' };
+    s6Headers.height = 28;
+    s6Headers.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     s6Headers.eachCell(cell => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: emeraldGreen } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
       cell.border = thinBorder;
     });
 
@@ -804,8 +849,8 @@ export class SalesManagementExportService {
     const s6EndRow = sheet6.rowCount;
     if (rawPayments.length > 0) {
       const totalPaymentsRow = sheet6.addRow([
-        '',
-        'ИТОГО ПОСТУПИЛО',
+        'ИТОГО',
+        'ПОСТУПИЛО',
         `${rawPayments.length} платежей`,
         '',
         '',
@@ -818,8 +863,8 @@ export class SalesManagementExportService {
         ''
       ]);
 
-      totalPaymentsRow.font = { bold: true, size: 10, color: { argb: '0F172A' } };
-      totalPaymentsRow.height = 25;
+      totalPaymentsRow.font = { bold: true, size: 10, color: { argb: totalRowFont } };
+      totalPaymentsRow.height = 26;
       totalPaymentsRow.alignment = { vertical: 'middle' };
       totalPaymentsRow.getCell(8).alignment = { horizontal: 'right' };
       totalPaymentsRow.getCell(9).alignment = { horizontal: 'right' };
@@ -836,15 +881,24 @@ export class SalesManagementExportService {
     sheet6.getColumn(2).width = 16;
     sheet6.getColumn(3).width = 18;
     sheet6.getColumn(4).width = 14;
-    sheet6.getColumn(5).width = 14;
+    sheet6.getColumn(5).width = 16;
     sheet6.getColumn(6).width = 28;
     sheet6.getColumn(7).width = 18;
-    sheet6.getColumn(8).width = 20;
-    sheet6.getColumn(9).width = 20;
+    sheet6.getColumn(8).width = 22;
+    sheet6.getColumn(9).width = 22;
     sheet6.getColumn(10).width = 16;
     sheet6.getColumn(11).width = 24;
-    sheet6.getColumn(12).width = 32;
-    sheet6.autoFilter = { from: 'A7', to: `L${sheet6.rowCount}` };
+    sheet6.getColumn(12).width = 34;
+    sheet6.autoFilter = { from: 'A7', to: `L${s6EndRow}` };
+    sheet6.pageSetup = {
+      orientation: 'landscape',
+      paperSize: 9,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      printTitlesRow: '7:7',
+      printArea: `A1:L${sheet6.rowCount}`
+    };
 
 
     // =========================================================================
@@ -857,7 +911,7 @@ export class SalesManagementExportService {
 
     // Section 1: Новые лиды за день
     sheet7.addRow(['1. РЕЕСТР НОВЫХ ЛИДОВ ЗА ОТЧЕТНУЮ ДАТУ']);
-    sheet7.getRow(7).font = { bold: true, size: 11, color: { argb: brandBlue } };
+    sheet7.getRow(7).font = { bold: true, size: 11, color: { argb: brandDarkGreen } };
 
     const leadsHeaders = sheet7.addRow([
       '№',
@@ -870,10 +924,10 @@ export class SalesManagementExportService {
       'Дата и время создания'
     ]);
     leadsHeaders.font = { bold: true, color: { argb: 'FFFFFF' }, size: 9 };
-    leadsHeaders.height = 24;
-    leadsHeaders.alignment = { vertical: 'middle', horizontal: 'center' };
+    leadsHeaders.height = 28;
+    leadsHeaders.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     leadsHeaders.eachCell(cell => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandBlue } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
       cell.border = thinBorder;
     });
 
@@ -908,7 +962,7 @@ export class SalesManagementExportService {
     // Space before Section 2
     sheet7.addRow([]);
     sheet7.addRow(['2. РЕЕСТР ВЫПОЛНЕННЫХ ЗВОНКОВ И ВСТРЕЧ']);
-    sheet7.getRow(sheet7.rowCount).font = { bold: true, size: 11, color: { argb: emeraldGreen } };
+    sheet7.getRow(sheet7.rowCount).font = { bold: true, size: 11, color: { argb: brandForestGreen } };
 
     const interactionsHeaders = sheet7.addRow([
       '№',
@@ -921,10 +975,10 @@ export class SalesManagementExportService {
       'Дата выполнения'
     ]);
     interactionsHeaders.font = { bold: true, color: { argb: 'FFFFFF' }, size: 9 };
-    interactionsHeaders.height = 24;
-    interactionsHeaders.alignment = { vertical: 'middle', horizontal: 'center' };
+    interactionsHeaders.height = 28;
+    interactionsHeaders.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     interactionsHeaders.eachCell(cell => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: emeraldGreen } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandForestGreen } };
       cell.border = thinBorder;
     });
 
@@ -976,8 +1030,8 @@ export class SalesManagementExportService {
       'Приоритет'
     ]);
     tasksHeaders.font = { bold: true, color: { argb: 'FFFFFF' }, size: 9 };
-    tasksHeaders.height = 24;
-    tasksHeaders.alignment = { vertical: 'middle', horizontal: 'center' };
+    tasksHeaders.height = 28;
+    tasksHeaders.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
     tasksHeaders.eachCell(cell => {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: roseDanger } };
       cell.border = thinBorder;
@@ -1022,6 +1076,15 @@ export class SalesManagementExportService {
     sheet7.getColumn(7).width = 24;
     sheet7.getColumn(8).width = 20;
     sheet7.getColumn(9).width = 14;
+    sheet7.pageSetup = {
+      orientation: 'landscape',
+      paperSize: 9,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 0,
+      printTitlesRow: '8:8',
+      printArea: `A1:I${sheet7.rowCount}`
+    };
 
     // Generate binary buffer
     const buffer = await workbook.xlsx.writeBuffer();
