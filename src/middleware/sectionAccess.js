@@ -44,7 +44,7 @@ export const authorizeSectionRequest = async req => {
           : (path === '/api/finance/transfers' || path === '/api/finance/convert')
             ? 'finance.cash_transfers'
             : null;
-    const extra = path.startsWith('/api/360-tours/') || path === '/api/360-tours' || path.startsWith('/api/360-panoramas/') || path.startsWith('/api/360-hotspots/') || path.startsWith('/api/tour360/') ? 'inventory.tours_360' : path.startsWith('/api/sms/') || path === '/api/sms' ? 'automation.sms_notifications' : null;
+    const extra = path.startsWith('/api/360-tours/') || path === '/api/360-tours' || path.startsWith('/api/360-panoramas/') || (path === '/api/360-hotspots' || path.startsWith('/api/360-hotspots/')) || path.startsWith('/api/tour360/') ? 'inventory.tours_360' : path.startsWith('/api/sms/') || path === '/api/sms' ? 'automation.sms_notifications' : null;
     if ((feature || extra) && !hasSection(user, feature || extra, !read)) {
       throw new AppError('Нет доступа к отдельной функции', 403);
     }
