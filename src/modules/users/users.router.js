@@ -104,12 +104,15 @@ router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
       return next(new AppError('Пользователь с таким Email уже существует', 400));
     }
 
-    const validRoles = ['ADMIN', 'DIRECTOR', 'SALES_MANAGER', 'FINANCE_MANAGER', 'MANAGER', 'WAREHOUSE_MANAGER', 'CASHIER'];
-    const userRole = validRoles.includes(role) ? role : 'SALES_MANAGER';
+    const userRole = String(role || 'SALES_MANAGER').trim().toUpperCase();
+    const { getDB } = await import('../../db/connection.js');
+    const { data: roleEntry, error: roleError } = await getDB().from('crm_roles').select('code,is_active,permissions').eq('code',userRole).maybeSingle();
+    if (roleError) throw roleError;
+    if (!roleEntry?.is_active) return next(new AppError('Роль не существует или отключена',400));
 
     const userPermissions = Array.isArray(permissions) && permissions.length > 0
       ? permissions
-      : (ROLE_PRESET_PERMISSIONS[userRole] || []);
+      : (roleEntry.permissions || []);
 
     const isSalesRep = is_sales_rep !== undefined
       ? Boolean(is_sales_rep)
@@ -143,7 +146,14 @@ router.patch('/:id', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => 
     const updates = {};
     if (name) updates.name = name.trim();
     if (email) updates.email = email.trim().toLowerCase();
-    if (role) updates.role = role;
+    if (role) {
+      const { getDB } = await import('../../db/connection.js');
+      const code = String(role).trim().toUpperCase();
+      const { data: entry, error } = await getDB().from('crm_roles').select('is_active').eq('code',code).maybeSingle();
+      if (error) throw error;
+      if (!entry?.is_active) return next(new AppError('Роль не существует или отключена',400));
+      updates.role = code;
+    }
     if (Array.isArray(permissions)) updates.permissions = permissions;
     if (typeof is_active !== 'undefined') updates.is_active = is_active ? 1 : 0;
     if (typeof is_sales_rep !== 'undefined') updates.is_sales_rep = Boolean(is_sales_rep);
