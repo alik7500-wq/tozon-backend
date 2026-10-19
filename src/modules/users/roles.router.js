@@ -1,5 +1,5 @@
 import express from 'express';
-import { getDB } from '../../db/connection.js';
+import { getServiceDB } from '../../db/connection.js';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
@@ -10,7 +10,7 @@ const validPermissions = p => Array.isArray(p) && p.length <= 100 && p.every(x =
 
 router.get('/', async (req,res,next) => {
   try {
-    const {data,error} = await getDB().from('crm_roles').select('code,name,description,permissions,is_system,is_active').order('name');
+    const {data,error} = await getServiceDB().from('crm_roles').select('code,name,description,permissions,is_system,is_active').order('name');
     if (error) throw error;
     res.json({status:'success',data:{roles:data}});
   } catch(e) { next(e); }
@@ -23,7 +23,7 @@ router.post('/', restrictTo('ADMIN','DIRECTOR'), async (req,res,next) => {
     const permissions = req.body.permissions || ['access.v2'];
     if (!/^[A-Z][A-Z0-9_]{1,49}$/.test(code) || name.length < 2 || name.length > 100 || !validPermissions(permissions))
       return next(new AppError('Некорректный код, название или права роли',400));
-    const {data,error} = await getDB().from('crm_roles').insert({code,name,description:String(req.body.description||'').slice(0,500),permissions:[...new Set(['access.v2',...permissions])]}).select().single();
+    const {data,error} = await getServiceDB().from('crm_roles').insert({code,name,description:String(req.body.description||'').slice(0,500),permissions:[...new Set(['access.v2',...permissions])]}).select().single();
     if (error) throw error;
     res.status(201).json({status:'success',data:{role:data}});
   } catch(e) { next(e); }
@@ -32,7 +32,7 @@ router.post('/', restrictTo('ADMIN','DIRECTOR'), async (req,res,next) => {
 router.patch('/:code', restrictTo('ADMIN','DIRECTOR'), async (req,res,next) => {
   try {
     const code = codeOf(req.params.code);
-    const db = getDB();
+    const db = getServiceDB();
     const {data:old,error:lookupError} = await db.from('crm_roles').select('*').eq('code',code).maybeSingle();
     if (lookupError) throw lookupError;
     if (!old) return next(new AppError('Роль не найдена',404));
