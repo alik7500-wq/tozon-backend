@@ -73,6 +73,7 @@ export const authorizeSectionRequest = async req => {
     if (user.role === 'FINANCE_MANAGER') allowed = false;
   }
   else if (path.startsWith('/api/tasks')) key = 'tasks.view';
+  else if (path.startsWith('/api/roles')) key = 'users.view';
   else if (path.startsWith('/api/users')) {
     key = 'users.view';
     if (read && path === '/api/users' && String(req.query?.lookup) === '1') allowed = hasAny(user, ['users.view','leads.view','tasks.view','deals.view','settings.view',...financeReads,...constructionReads]);
