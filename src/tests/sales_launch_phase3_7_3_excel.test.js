@@ -346,9 +346,9 @@ describe('TOZON CRM — Phase 3.7.3 Sales Management Excel Reporting Suite', () 
       // Sheet 2: «Менеджеры»
       const sheet2 = workbook.getWorksheet('Менеджеры');
       const lastRowSheet2 = sheet2.lastRow;
-      // Cell D (New leads sum) must contain a formula
+      // Cell D (New leads sum) must contain a formula (SUM or Subtotal addition)
       expect(lastRowSheet2.getCell('D').value).toHaveProperty('formula');
-      expect(lastRowSheet2.getCell('D').value.formula).toMatch(/^SUM\(D\d+:D\d+\)$/);
+      expect(lastRowSheet2.getCell('D').value.formula).toMatch(/^(SUM\(D\d+:D\d+\)|D\d+\+D\d+)$/);
 
       // Sheet 6: «Поступления»
       const sheet6 = workbook.getWorksheet('Поступления');

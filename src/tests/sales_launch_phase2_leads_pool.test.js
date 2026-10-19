@@ -352,9 +352,9 @@ describe('TOZON CRM — Sales Launch Phase 2: Leads Pool, 15-Min SLA & Distribut
   // 5. Automated Round-Robin Engine (Disabled by Default)
   // ---------------------------------------------------------------------------
   describe('5. Automated Round-Robin Lead Distribution Engine', () => {
-    it('is strictly DISABLED by default', () => {
+    it('is strictly DISABLED by default', async () => {
       delete process.env.LEADS_ROUND_ROBIN_ENABLED;
-      expect(RoundRobinService.isEnabled()).toBe(false);
+      expect(await RoundRobinService.isEnabled()).toBe(false);
     });
 
     it('filters only active sales reps under workload capacity limit when enabled', async () => {

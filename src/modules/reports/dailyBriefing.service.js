@@ -52,7 +52,7 @@ export class DailyBriefingService {
       managerIdFilter = userId;
     }
 
-    // 1. Fetch Users (Sales reps)
+    // 1. Fetch Users
     const { data: rawUsers, error: uErr } = await db
       .from('users')
       .select('id, name, email, role, is_active')
@@ -62,14 +62,25 @@ export class DailyBriefingService {
       throw new AppError('Ошибка при получении списка пользователей', 500);
     }
     const allUsers = rawUsers || [];
-    let salesReps = allUsers.filter(u => {
+
+    // Exclude strictly non-sales, non-management operational roles
+    const excludedRoles = ['FINANCE_MANAGER', 'WAREHOUSE_MANAGER', 'CASHIER'];
+    const activeUsers = allUsers.filter(u => {
       const isActive = u.is_active === 1 || u.is_active === true || u.is_active === '1' || u.is_active === undefined;
-      return isActive && !['FINANCE_MANAGER', 'WAREHOUSE_MANAGER'].includes(u.role);
+      return isActive && !excludedRoles.includes(u.role);
     });
+
+    const salesManagers = activeUsers.filter(u => u.role === 'SALES_MANAGER');
+    const managementUsers = activeUsers.filter(u => ['ADMIN', 'DIRECTOR'].includes(u.role));
+
+    let salesReps = [];
     if (!isSupervisor) {
-      salesReps = salesReps.filter(u => Number(u.id) === userId);
+      salesReps = salesManagers.filter(u => Number(u.id) === userId);
     } else if (managerIdFilter) {
-      salesReps = salesReps.filter(u => Number(u.id) === managerIdFilter);
+      salesReps = activeUsers.filter(u => Number(u.id) === managerIdFilter);
+    } else {
+      // For supervisors, list sales managers first, followed by management users
+      salesReps = [...salesManagers, ...managementUsers];
     }
 
     // 2. Fetch Leads
@@ -357,9 +368,10 @@ export class DailyBriefingService {
     // Filter payments linked to real deals and confirmed status
     allPayments = allPayments.filter(p => {
       if (!p.deal_id) return false;
-      if (['VOIDED', 'REVERSED'].includes(p.status)) return false;
+      const status = String(p.status || '').toUpperCase().trim();
+      if (['VOIDED', 'REVERSED', 'CANCELLED', 'DRAFT', 'PENDING'].includes(status)) return false;
       const validStatuses = ['ACTIVE', 'POSTED'];
-      return validStatuses.includes(p.status) || (p.status !== undefined && !['VOIDED', 'REVERSED'].includes(p.status));
+      return validStatuses.includes(status);
     });
 
     // Filter by project / building if requested
@@ -408,7 +420,9 @@ export class DailyBriefingService {
     const signedDealsVolumeMinor = signedDealsDrilldown.reduce((sum, d) => sum + d.finalPriceMinor, 0);
     const signedAreaM2 = signedDealsDrilldown.reduce((sum, d) => sum + d.areaM2, 0);
 
-    // 6. Breakdown by Manager
+    // 6. Breakdown by Manager and Management Direct Sales
+    const knownUserIds = new Set(salesReps.map(rep => Number(rep.id)));
+
     const managerDailyBreakdown = salesReps.map(rep => {
       const mid = Number(rep.id);
       const repNewLeads = newLeadsDrilldown.filter(l => Number(l.managerId) === mid);
@@ -424,10 +438,13 @@ export class DailyBriefingService {
       const repUsdCashMinor = repPayments.filter(p => p.currency === 'USD').reduce((sum, p) => sum + p.amountMinor, 0);
       const repTjsCashMinor = repPayments.filter(p => p.currency === 'TJS').reduce((sum, p) => sum + p.amountMinor, 0);
 
+      const isManagement = rep.role !== 'SALES_MANAGER';
+
       return {
         managerId: rep.id,
         name: rep.name,
         role: rep.role,
+        isManagement,
         newLeadsCount: repNewLeads.length,
         completedCallsCount: repCalls.length,
         completedMeetingsCount: repMeetings.length,
@@ -444,6 +461,51 @@ export class DailyBriefingService {
         overdueTasksCount: repOverdueTasks.length
       };
     });
+
+    // Check for unassigned items (where managerId is null or not in knownUserIds)
+    if (isSupervisor && !managerIdFilter) {
+      const unassignedLeads = newLeadsDrilldown.filter(l => !l.managerId || !knownUserIds.has(Number(l.managerId)));
+      const unassignedCalls = completedCallsDrilldown.filter(c => !c.managerId || !knownUserIds.has(Number(c.managerId)));
+      const unassignedMeetings = completedMeetingsDrilldown.filter(m => !m.managerId || !knownUserIds.has(Number(m.managerId)));
+      const unassignedReservations = newReservationsDrilldown.filter(r => !r.managerId || !knownUserIds.has(Number(r.managerId)));
+      const unassignedSignedDeals = signedDealsDrilldown.filter(s => !s.managerId || !knownUserIds.has(Number(s.managerId)));
+      const unassignedPayments = postedPaymentsDrilldown.filter(p => !p.managerId || !knownUserIds.has(Number(p.managerId)));
+      const unassignedOverdueTasks = overdueTasksDrilldown.filter(t => !t.managerId || !knownUserIds.has(Number(t.managerId)));
+
+      const hasUnassignedActivity = unassignedLeads.length > 0 || unassignedCalls.length > 0 ||
+        unassignedMeetings.length > 0 || unassignedReservations.length > 0 ||
+        unassignedSignedDeals.length > 0 || unassignedPayments.length > 0 ||
+        unassignedOverdueTasks.length > 0;
+
+      if (hasUnassignedActivity) {
+        const unassignedResMinor = unassignedReservations.reduce((sum, r) => sum + r.finalPriceMinor, 0);
+        const unassignedSignedMinor = unassignedSignedDeals.reduce((sum, s) => sum + s.finalPriceMinor, 0);
+        const unassignedUsdMinor = unassignedPayments.filter(p => p.currency === 'USD').reduce((sum, p) => sum + p.amountMinor, 0);
+        const unassignedTjsMinor = unassignedPayments.filter(p => p.currency === 'TJS').reduce((sum, p) => sum + p.amountMinor, 0);
+
+        managerDailyBreakdown.push({
+          managerId: 'UNASSIGNED',
+          name: 'Прямые сделки (без назначенного менеджера)',
+          role: 'DIRECT_SALES',
+          isManagement: true,
+          isUnassigned: true,
+          newLeadsCount: unassignedLeads.length,
+          completedCallsCount: unassignedCalls.length,
+          completedMeetingsCount: unassignedMeetings.length,
+          newReservationsCount: unassignedReservations.length,
+          newReservationsVolumeMinor: unassignedResMinor,
+          newReservationsVolumeUsd: Number((unassignedResMinor / 100).toFixed(2)),
+          signedDealsCount: unassignedSignedDeals.length,
+          signedDealsVolumeMinor: unassignedSignedMinor,
+          signedDealsVolumeUsd: Number((unassignedSignedMinor / 100).toFixed(2)),
+          collectedCashMinor: unassignedUsdMinor,
+          collectedCashUsd: Number((unassignedUsdMinor / 100).toFixed(2)),
+          collectedCashTjsMinor: unassignedTjsMinor,
+          collectedCashTjs: Number((unassignedTjsMinor / 100).toFixed(2)),
+          overdueTasksCount: unassignedOverdueTasks.length
+        });
+      }
+    }
 
     // 7. Server-side safe payload limit and pagination for drilldowns
     const drilldownLimit = query.drilldownLimit ? Math.max(1, Math.min(200, parseInt(query.drilldownLimit, 10))) : 100;

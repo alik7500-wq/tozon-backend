@@ -213,9 +213,10 @@ export class WeeklyDynamicsService {
     // Filter confirmed payments belonging to real deals
     allPayments = allPayments.filter(p => {
       if (!p.deal_id) return false;
-      if (['VOIDED', 'REVERSED'].includes(p.status)) return false;
+      const status = String(p.status || '').toUpperCase().trim();
+      if (['VOIDED', 'REVERSED', 'CANCELLED', 'DRAFT', 'PENDING'].includes(status)) return false;
       const validStatuses = ['ACTIVE', 'POSTED'];
-      return validStatuses.includes(p.status) || (p.status !== undefined && !['VOIDED', 'REVERSED'].includes(p.status));
+      return validStatuses.includes(status);
     });
 
     if (projectIdFilter) {

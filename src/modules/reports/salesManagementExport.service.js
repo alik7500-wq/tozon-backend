@@ -122,7 +122,7 @@ export class SalesManagementExportService {
       sheet.addRow([`Период: ${periodMonth} | Дата сводки: ${targetDate} | Горизонт анализа: ${weeksCount} нед.`]);
       sheet.addRow([`Дата и время формирования: ${dushanbeTimestamp}`]);
       sheet.addRow([`Валюта отчета: USD / TJS (раздельный учет) | Сформировал: ${sanitizeCellString(user.name || 'Пользователь')} (${sanitizeCellString(user.role)}) ${subtitle ? `| ${subtitle}` : ''}`]);
-      sheet.addRow(['Пояснения: План — утвержденная цель продаж; Факт — только подписанные договоры (SIGNED); Брони — активный пайплайн (RESERVED); Отклонение — разница (Факт - План). Договоры и кассовые поступления учитываются раздельно.']);
+      sheet.addRow(['Пояснения: «Сводка» и «Менеджеры» отражают срез на целевую дату; «Блок А» и «Блок Б» — накопительный план-факт за месяц. Продажи руководства (ADMIN/DIRECTOR) учитываются отдельно от менеджеров продаж, исключая искажение персонального KPI. План — утвержденная цель продаж; Факт — только подписанные договоры (SIGNED); Брони — активный пайплайн (RESERVED); Отклонение — разница (Факт - План). Договоры и кассовые поступления учитываются строго раздельно.']);
 
       for (let r = 3; r <= 5; r++) {
         sheet.getRow(r).font = { italic: true, size: 9, color: { argb: '475569' } };
@@ -157,19 +157,19 @@ export class SalesManagementExportService {
     const sumData = dailyBriefing.summary || {};
     const kpiRows = [
       [1, 'Новые лиды за день', sumData.newLeadsCount || 0, 'лид.', 'Воронка', 'Лиды, поступившие в базу данных за целевую дату'],
-      [2, 'Выполненные звонки', sumData.completedCallsCount || 0, 'звон.', 'Активность', 'Звонки менеджеров со статусом COMPLETED'],
-      [3, 'Проведенные встречи', sumData.completedMeetingsCount || 0, 'встр.', 'Активность', 'Встречи в офисе продаж со статусом COMPLETED'],
-      [4, 'Всего взаимодействий с клиентами', (sumData.completedCallsCount || 0) + (sumData.completedMeetingsCount || 0), 'конт.', 'Активность', 'Сумма результативных звонков и встреч'],
+      [2, 'Выполненные звонки', sumData.completedCallsCount || 0, 'звон.', 'Активность', 'Звонки менеджеров со статусом COMPLETED за день'],
+      [3, 'Проведенные встречи', sumData.completedMeetingsCount || 0, 'встр.', 'Активность', 'Встречи в офисе продаж со статусом COMPLETED за день'],
+      [4, 'Всего взаимодействий с клиентами', (sumData.completedCallsCount || 0) + (sumData.completedMeetingsCount || 0), 'конт.', 'Активность', 'Сумма результативных звонков и встреч за день'],
       [5, 'Новые бронирования (RESERVED)', sumData.newReservationsCount || 0, 'кв.', 'Пайплайн', 'Активные бронирования за день (не смешивать с продажами)'],
       [6, 'Объем новых бронирований, USD', sumData.newReservationsVolumeUsd || 0, 'USD', 'Пайплайн', 'Зафиксированная стоимость забронированных квартир'],
-      [7, 'Подписанные договоры (SIGNED)', sumData.signedDealsCount || 0, 'дог.', 'Продажи факт', 'Юридически заключенные договоры продажи'],
-      [8, 'Объем продаж по договорам, USD', sumData.signedDealsVolumeUsd || 0, 'USD', 'Продажи факт', 'Сумма подписанных контрактов продажи'],
-      [9, 'Реализованная площадь, м²', sumData.signedAreaM2 || 0, 'м²', 'Продажи факт', 'Суммарная площадь квартир по подписанным договорам'],
-      [10, 'Фактические поступления USD (Cash-in)', sumData.collectedCashUsd || 0, 'USD', 'Финансы факт', 'Реально поступившие денежные средства в кассу в USD'],
-      [11, 'Фактические поступления TJS (Cash-in)', sumData.collectedCashTjs || 0, 'TJS', 'Финансы факт', 'Реально поступившие денежные средства в кассу в TJS'],
-      [12, 'Просроченные задачи менеджеров', sumData.overdueTasksCount || 0, 'задач', 'Контроль SLA', 'Открытые задачи со сроком исполнения ранее отчетной даты'],
-      [13, 'Расторгнутые / отмененные сделки', sumData.cancelledDealsCount || 0, 'сдел.', 'Отток', 'Сделки в статусе CANCELLED (исключены из факта продаж)'],
-      [14, 'Объем расторгнутых сделок, USD', Number(((sumData.cancelledDealsVolumeMinor || 0) / 100).toFixed(2)), 'USD', 'Отток', 'Сумма расторгнутых сделок за дату']
+      [7, 'Подписанные договоры (SIGNED)', sumData.signedDealsCount || 0, 'дог.', 'Продажи факт', 'Юридически заключенные договоры продажи за отчетную дату'],
+      [8, 'Объем продаж по договорам, USD', sumData.signedDealsVolumeUsd || 0, 'USD', 'Продажи факт', 'Сумма подписанных контрактов продажи за отчетную дату'],
+      [9, 'Реализованная площадь, м²', sumData.signedAreaM2 || 0, 'м²', 'Продажи факт', 'Суммарная площадь квартир по подписанным договорам за дату'],
+      [10, 'Фактические поступления USD (Cash-in)', sumData.collectedCashUsd || 0, 'USD', 'Финансы факт', 'Реально поступившие денежные средства в кассу в USD за дату'],
+      [11, 'Фактические поступления TJS (Cash-in)', sumData.collectedCashTjs || 0, 'TJS', 'Финансы факт', 'Реально поступившие денежные средства в кассу в TJS за дату'],
+      [12, 'Просроченные задачи менеджеров', sumData.overdueTasksCount || 0, 'задач', 'Контроль SLA', 'Накопленный долг открытых задач со сроком ранее даты контроля'],
+      [13, 'Расторгнутые / отмененные сделки', sumData.cancelledDealsCount || 0, 'сдел.', 'Отток', 'Сделки в статусе CANCELLED за отчетную дату (исключены из факта)'],
+      [14, 'Объем расторгнутых сделок, USD', Number(((sumData.cancelledDealsVolumeMinor || 0) / 100).toFixed(2)), 'USD', 'Отток', 'Сумма расторгнутых сделок за отчетную дату']
     ];
 
     kpiRows.forEach((rowValues, idx) => {
@@ -179,6 +179,7 @@ export class SalesManagementExportService {
       row.getCell(1).alignment = { horizontal: 'center' };
       row.getCell(3).alignment = { horizontal: 'right' };
       row.getCell(4).alignment = { horizontal: 'center' };
+      row.getCell(6).alignment = { vertical: 'middle', wrapText: true };
 
       // Number formatting
       if ([6, 8, 10, 14].includes(rowValues[0])) {
@@ -200,11 +201,11 @@ export class SalesManagementExportService {
     });
 
     sheet1.getColumn(1).width = 6;
-    sheet1.getColumn(2).width = 44;
-    sheet1.getColumn(3).width = 22;
-    sheet1.getColumn(4).width = 12;
-    sheet1.getColumn(5).width = 18;
-    sheet1.getColumn(6).width = 48;
+    sheet1.getColumn(2).width = 48;
+    sheet1.getColumn(3).width = 24;
+    sheet1.getColumn(4).width = 14;
+    sheet1.getColumn(5).width = 22;
+    sheet1.getColumn(6).width = 72;
     sheet1.autoFilter = { from: 'A7', to: `F${sheet1.rowCount}` };
     sheet1.pageSetup = {
       orientation: 'landscape',
@@ -218,105 +219,137 @@ export class SalesManagementExportService {
 
 
     // =========================================================================
-    // ЛИСТ 2: «Менеджеры» — результаты работы каждого менеджера
+    // ЛИСТ 2: «Менеджеры» — результаты работы каждого менеджера и руководства
     // =========================================================================
     const sheet2 = workbook.addWorksheet('Менеджеры', {
-      views: [{ state: 'frozen', ySplit: 7 }]
+      views: [{ state: 'frozen', ySplit: 8 }]
     });
-    addSheetHeader(sheet2, 'РЕЗУЛЬТАТЫ РАБОТЫ И KPI ОТДЕЛА ПРОДАЖ ПО МЕНЕДЖЕРАМ');
-
-    const s2Headers = sheet2.addRow([
-      '№',
-      'Менеджер отдела продаж',
-      'Должность / Роль',
-      'Новые лиды, шт',
-      'Звонки (факт), шт',
-      'Встречи (факт), шт',
-      'Всего контактов, шт',
-      'Брони (пайплайн), шт',
-      'Сумма броней, USD',
-      'Подписано договоров, шт',
-      'Сумма продаж, USD',
-      'Поступления кассы, USD ($)',
-      'Поступления кассы, TJS (смн)',
-      'Просрочено задач, шт'
-    ]);
-    s2Headers.font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
-    s2Headers.height = 28;
-    s2Headers.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-    s2Headers.eachCell(cell => {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
-      cell.border = thinBorder;
-    });
+    addSheetHeader(sheet2, 'РЕЗУЛЬТАТЫ РАБОТЫ И KPI ПО МЕНЕДЖЕРАМ И РУКОВОДСТВУ');
 
     const managersList = dailyBriefing.managerDailyBreakdown || [];
-    const filteredManagers = isSupervisor ? managersList : managersList.filter(m => Number(m.managerId) === Number(user.id));
-    const s2StartRow = 8;
 
-    filteredManagers.forEach((m, idx) => {
-      const row = sheet2.addRow([
-        idx + 1,
-        sanitizeCellString(m.name),
-        sanitizeCellString(m.role),
-        m.newLeadsCount || 0,
-        m.completedCallsCount || 0,
-        m.completedMeetingsCount || 0,
-        { formula: `E${sheet2.rowCount + 1}+F${sheet2.rowCount + 1}`, result: (m.completedCallsCount || 0) + (m.completedMeetingsCount || 0) },
-        m.newReservationsCount || 0,
-        m.newReservationsVolumeUsd || 0,
-        m.signedDealsCount || 0,
-        m.signedDealsVolumeUsd || 0,
-        m.collectedCashUsd || 0,
-        m.collectedCashTjs || 0,
-        m.overdueTasksCount || 0
+    // Separate Sales Department Reps (SALES_MANAGER) vs Management Direct Sales (ADMIN/DIRECTOR/Unassigned)
+    const salesDepartment = isSupervisor
+      ? managersList.filter(m => m.role === 'SALES_MANAGER' && !m.isManagement)
+      : managersList.filter(m => Number(m.managerId) === Number(user.id));
+
+    const managementDirect = isSupervisor
+      ? managersList.filter(m => m.role !== 'SALES_MANAGER' || m.isManagement)
+      : [];
+
+    const buildManagerHeader = (sectionTitle) => {
+      sheet2.addRow([]);
+      const titleRow = sheet2.addRow([sectionTitle]);
+      titleRow.font = { bold: true, size: 11, color: { argb: brandDarkGreen } };
+      titleRow.height = 24;
+
+      const headers = sheet2.addRow([
+        '№',
+        'Сотрудник / Ответственный',
+        'Должность / Роль',
+        'Новые лиды, шт',
+        'Звонки (факт), шт',
+        'Встречи (факт), шт',
+        'Всего контактов, шт',
+        'Брони (пайплайн), шт',
+        'Сумма броней, USD',
+        'Подписано договоров, шт',
+        'Сумма продаж, USD',
+        'Поступления кассы, USD ($)',
+        'Поступления кассы, TJS (смн)',
+        'Просрочено задач, шт'
       ]);
-
-      row.height = 22;
-      row.alignment = { vertical: 'middle' };
-      row.getCell(1).alignment = { horizontal: 'center' };
-      row.getCell(3).alignment = { horizontal: 'center' };
-
-      // Formatting
-      [4, 5, 6, 7, 8, 10, 14].forEach(c => {
-        row.getCell(c).alignment = { horizontal: 'right' };
-        row.getCell(c).numFmt = '#,##0';
+      headers.font = { bold: true, color: { argb: 'FFFFFF' }, size: 9.5 };
+      headers.height = 28;
+      headers.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      headers.eachCell(cell => {
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
+        cell.border = thinBorder;
       });
-      [9, 11, 12, 13].forEach(c => {
-        row.getCell(c).alignment = { horizontal: 'right' };
-        row.getCell(c).numFmt = '#,##0.00';
-      });
+      return headers.number;
+    };
 
-      if (idx % 2 === 1) {
-        row.eachCell(cell => {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+    // --- Section 1: Sales Department ---
+    const s1HeaderRowNum = buildManagerHeader('1. ОТДЕЛ ПРОДАЖ (МЕНЕДЖЕРЫ ПО ПРОДАЖАМ)');
+    const s1StartRow = sheet2.rowCount + 1;
+
+    if (salesDepartment.length === 0) {
+      const emptyRow = sheet2.addRow([
+        '—',
+        'За выбранный период активных менеджеров по продажам не найдено',
+        '—',
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+      ]);
+      emptyRow.height = 22;
+      emptyRow.getCell(2).font = { italic: true, color: { argb: '64748B' } };
+      emptyRow.eachCell(cell => { cell.border = thinBorder; });
+    } else {
+      salesDepartment.forEach((m, idx) => {
+        const row = sheet2.addRow([
+          idx + 1,
+          sanitizeCellString(m.name),
+          sanitizeCellString(m.role === 'SALES_MANAGER' ? 'Менеджер по продажам' : m.role),
+          m.newLeadsCount || 0,
+          m.completedCallsCount || 0,
+          m.completedMeetingsCount || 0,
+          { formula: `E${sheet2.rowCount + 1}+F${sheet2.rowCount + 1}`, result: (m.completedCallsCount || 0) + (m.completedMeetingsCount || 0) },
+          m.newReservationsCount || 0,
+          m.newReservationsVolumeUsd || 0,
+          m.signedDealsCount || 0,
+          m.signedDealsVolumeUsd || 0,
+          m.collectedCashUsd || 0,
+          m.collectedCashTjs || 0,
+          m.overdueTasksCount || 0
+        ]);
+
+        row.height = 22;
+        row.alignment = { vertical: 'middle' };
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(2).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(3).alignment = { horizontal: 'center' };
+
+        [4, 5, 6, 7, 8, 10, 14].forEach(c => {
+          row.getCell(c).alignment = { horizontal: 'right' };
+          row.getCell(c).numFmt = '#,##0';
         });
-      }
-      row.eachCell(cell => { cell.border = thinBorder; });
-    });
+        [9, 11, 12, 13].forEach(c => {
+          row.getCell(c).alignment = { horizontal: 'right' };
+          row.getCell(c).numFmt = '#,##0.00';
+        });
 
-    const s2EndRow = sheet2.rowCount;
-    if (filteredManagers.length > 0) {
-      const totalRow = sheet2.addRow([
+        if (idx % 2 === 1) {
+          row.eachCell(cell => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+          });
+        }
+        row.eachCell(cell => { cell.border = thinBorder; });
+      });
+    }
+
+    const s1EndRow = sheet2.rowCount;
+    let s1SubtotalRow = null;
+
+    if (salesDepartment.length > 0) {
+      const subtotal1 = sheet2.addRow([
         '',
-        'ИТОГО ПО ОТДЕЛУ ПРОДАЖ',
-        `${filteredManagers.length} сотр.`,
-        { formula: `SUM(D${s2StartRow}:D${s2EndRow})` },
-        { formula: `SUM(E${s2StartRow}:E${s2EndRow})` },
-        { formula: `SUM(F${s2StartRow}:F${s2EndRow})` },
-        { formula: `SUM(G${s2StartRow}:G${s2EndRow})` },
-        { formula: `SUM(H${s2StartRow}:H${s2EndRow})` },
-        { formula: `SUM(I${s2StartRow}:I${s2EndRow})` },
-        { formula: `SUM(J${s2StartRow}:J${s2EndRow})` },
-        { formula: `SUM(K${s2StartRow}:K${s2EndRow})` },
-        { formula: `SUM(L${s2StartRow}:L${s2EndRow})` },
-        { formula: `SUM(M${s2StartRow}:M${s2EndRow})` },
-        { formula: `SUM(N${s2StartRow}:N${s2EndRow})` }
+        'ПОДОИТОГ: ОТДЕЛ ПРОДАЖ',
+        `${salesDepartment.length} сотр.`,
+        { formula: `SUM(D${s1StartRow}:D${s1EndRow})` },
+        { formula: `SUM(E${s1StartRow}:E${s1EndRow})` },
+        { formula: `SUM(F${s1StartRow}:F${s1EndRow})` },
+        { formula: `SUM(G${s1StartRow}:G${s1EndRow})` },
+        { formula: `SUM(H${s1StartRow}:H${s1EndRow})` },
+        { formula: `SUM(I${s1StartRow}:I${s1EndRow})` },
+        { formula: `SUM(J${s1StartRow}:J${s1EndRow})` },
+        { formula: `SUM(K${s1StartRow}:K${s1EndRow})` },
+        { formula: `SUM(L${s1StartRow}:L${s1EndRow})` },
+        { formula: `SUM(M${s1StartRow}:M${s1EndRow})` },
+        { formula: `SUM(N${s1StartRow}:N${s1EndRow})` }
       ]);
-
-      totalRow.font = { bold: true, size: 10, color: { argb: totalRowFont } };
-      totalRow.height = 26;
-      totalRow.alignment = { vertical: 'middle' };
-      totalRow.eachCell((cell, colIdx) => {
+      subtotal1.font = { bold: true, size: 9.5, color: { argb: totalRowFont } };
+      subtotal1.height = 25;
+      subtotal1.alignment = { vertical: 'middle' };
+      subtotal1.eachCell((cell, colIdx) => {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: totalRowBg } };
         cell.border = thinBorder;
         if ([4, 5, 6, 7, 8, 10, 14].includes(colIdx)) {
@@ -327,23 +360,166 @@ export class SalesManagementExportService {
           cell.alignment = { horizontal: 'right' };
         }
       });
+      s1SubtotalRow = subtotal1.number;
     }
 
-    sheet2.columns.forEach((col, idx) => {
-      if (idx === 0) col.width = 6;
-      else if (idx === 1) col.width = 28;
-      else if (idx === 2) col.width = 18;
-      else if ([8, 10, 11, 12].includes(idx)) col.width = 18;
-      else col.width = 15;
+    // --- Section 2: Management & Direct Deals (Only for supervisor) ---
+    let s2SubtotalRow = null;
+
+    if (isSupervisor) {
+      buildManagerHeader('2. ПРОДАЖИ РУКОВОДСТВА И ПРЯМОЕ ОФОРМЛЕНИЕ (ADMIN / DIRECTOR / БЕЗ МЕНЕДЖЕРА)');
+      const s2StartRow = sheet2.rowCount + 1;
+
+      if (managementDirect.length === 0) {
+        const emptyRow = sheet2.addRow([
+          '—',
+          'За выбранный период прямых сделок руководства нет',
+          '—',
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ]);
+        emptyRow.height = 22;
+        emptyRow.getCell(2).font = { italic: true, color: { argb: '64748B' } };
+        emptyRow.eachCell(cell => { cell.border = thinBorder; });
+      } else {
+        managementDirect.forEach((m, idx) => {
+          const row = sheet2.addRow([
+            idx + 1,
+            sanitizeCellString(m.name),
+            sanitizeCellString(m.role === 'ADMIN' ? 'Администрация / Руководство' : (m.role === 'DIRECTOR' ? 'Дирекция' : (m.role === 'DIRECT_SALES' ? 'Прямое оформление' : m.role))),
+            m.newLeadsCount || 0,
+            m.completedCallsCount || 0,
+            m.completedMeetingsCount || 0,
+            { formula: `E${sheet2.rowCount + 1}+F${sheet2.rowCount + 1}`, result: (m.completedCallsCount || 0) + (m.completedMeetingsCount || 0) },
+            m.newReservationsCount || 0,
+            m.newReservationsVolumeUsd || 0,
+            m.signedDealsCount || 0,
+            m.signedDealsVolumeUsd || 0,
+            m.collectedCashUsd || 0,
+            m.collectedCashTjs || 0,
+            m.overdueTasksCount || 0
+          ]);
+
+          row.height = 22;
+          row.alignment = { vertical: 'middle' };
+          row.getCell(1).alignment = { horizontal: 'center' };
+          row.getCell(2).alignment = { horizontal: 'left', wrapText: true };
+          row.getCell(3).alignment = { horizontal: 'center' };
+
+          [4, 5, 6, 7, 8, 10, 14].forEach(c => {
+            row.getCell(c).alignment = { horizontal: 'right' };
+            row.getCell(c).numFmt = '#,##0';
+          });
+          [9, 11, 12, 13].forEach(c => {
+            row.getCell(c).alignment = { horizontal: 'right' };
+            row.getCell(c).numFmt = '#,##0.00';
+          });
+
+          if (idx % 2 === 1) {
+            row.eachCell(cell => {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+            });
+          }
+          row.eachCell(cell => { cell.border = thinBorder; });
+        });
+      }
+
+      const s2EndRow = sheet2.rowCount;
+      if (managementDirect.length > 0) {
+        const subtotal2 = sheet2.addRow([
+          '',
+          'ПОДОИТОГ: РУКОВОДСТВО И ПРЯМЫЕ СДЕЛКИ',
+          `${managementDirect.length} уч.`,
+          { formula: `SUM(D${s2StartRow}:D${s2EndRow})` },
+          { formula: `SUM(E${s2StartRow}:E${s2EndRow})` },
+          { formula: `SUM(F${s2StartRow}:F${s2EndRow})` },
+          { formula: `SUM(G${s2StartRow}:G${s2EndRow})` },
+          { formula: `SUM(H${s2StartRow}:H${s2EndRow})` },
+          { formula: `SUM(I${s2StartRow}:I${s2EndRow})` },
+          { formula: `SUM(J${s2StartRow}:J${s2EndRow})` },
+          { formula: `SUM(K${s2StartRow}:K${s2EndRow})` },
+          { formula: `SUM(L${s2StartRow}:L${s2EndRow})` },
+          { formula: `SUM(M${s2StartRow}:M${s2EndRow})` },
+          { formula: `SUM(N${s2StartRow}:N${s2EndRow})` }
+        ]);
+        subtotal2.font = { bold: true, size: 9.5, color: { argb: totalRowFont } };
+        subtotal2.height = 25;
+        subtotal2.alignment = { vertical: 'middle' };
+        subtotal2.eachCell((cell, colIdx) => {
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: totalRowBg } };
+          cell.border = thinBorder;
+          if ([4, 5, 6, 7, 8, 10, 14].includes(colIdx)) {
+            cell.numFmt = '#,##0';
+            cell.alignment = { horizontal: 'right' };
+          } else if ([9, 11, 12, 13].includes(colIdx)) {
+            cell.numFmt = '#,##0.00';
+            cell.alignment = { horizontal: 'right' };
+          }
+        });
+        s2SubtotalRow = subtotal2.number;
+      }
+    }
+
+    // --- GRAND TOTAL ROW ---
+    sheet2.addRow([]);
+    const totalCount = salesDepartment.length + managementDirect.length;
+    const colLetters = ['D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N'];
+    const grandTotalRowValues = [
+      '',
+      'ИТОГО ПО ВСЕМ ПРОДАЖАМ И ПОСТУПЛЕНИЯМ',
+      `${totalCount} сотр./уч.`
+    ];
+
+    colLetters.forEach(col => {
+      if (s1SubtotalRow && s2SubtotalRow) {
+        grandTotalRowValues.push({ formula: `${col}${s1SubtotalRow}+${col}${s2SubtotalRow}` });
+      } else if (s1SubtotalRow) {
+        grandTotalRowValues.push({ formula: `${col}${s1SubtotalRow}` });
+      } else if (s2SubtotalRow) {
+        grandTotalRowValues.push({ formula: `${col}${s2SubtotalRow}` });
+      } else {
+        grandTotalRowValues.push(0);
+      }
     });
-    sheet2.autoFilter = { from: 'A7', to: `N${s2EndRow}` };
+
+    const grandTotalRow = sheet2.addRow(grandTotalRowValues);
+    grandTotalRow.font = { bold: true, size: 10.5, color: { argb: 'FFFFFF' } };
+    grandTotalRow.height = 30;
+    grandTotalRow.alignment = { vertical: 'middle' };
+    grandTotalRow.eachCell((cell, colIdx) => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandDarkGreen } };
+      cell.border = thinBorder;
+      if ([4, 5, 6, 7, 8, 10, 14].includes(colIdx)) {
+        cell.numFmt = '#,##0';
+        cell.alignment = { horizontal: 'right' };
+      } else if ([9, 11, 12, 13].includes(colIdx)) {
+        cell.numFmt = '#,##0.00';
+        cell.alignment = { horizontal: 'right' };
+      }
+    });
+
+    sheet2.getColumn(1).width = 6;
+    sheet2.getColumn(2).width = 36;
+    sheet2.getColumn(3).width = 24;
+    sheet2.getColumn(4).width = 16;
+    sheet2.getColumn(5).width = 16;
+    sheet2.getColumn(6).width = 16;
+    sheet2.getColumn(7).width = 18;
+    sheet2.getColumn(8).width = 16;
+    sheet2.getColumn(9).width = 22;
+    sheet2.getColumn(10).width = 18;
+    sheet2.getColumn(11).width = 24;
+    sheet2.getColumn(12).width = 22;
+    sheet2.getColumn(13).width = 22;
+    sheet2.getColumn(14).width = 18;
+
+    sheet2.autoFilter = { from: `A${s1HeaderRowNum}`, to: `N${s1EndRow}` };
     sheet2.pageSetup = {
       orientation: 'landscape',
       paperSize: 9,
       fitToPage: true,
       fitToWidth: 1,
       fitToHeight: 0,
-      printTitlesRow: '7:7',
+      printTitlesRow: `${s1HeaderRowNum}:${s1HeaderRowNum}`,
       printArea: `A1:N${sheet2.rowCount}`
     };
 
@@ -469,39 +645,59 @@ export class SalesManagementExportService {
       const signedList = blockInfo.drilldowns?.signedDeals || [];
       const signedStartRow = sheet.rowCount + 1;
 
-      signedList.forEach((d, idx) => {
-        const row = sheet.addRow([
-          idx + 1,
-          sanitizeCellString(d.contractNumber),
-          sanitizeCellString(d.unitNumber ? `№${d.unitNumber}` : '—'),
-          d.rooms || '—',
-          d.areaM2 || 0,
-          d.finalPriceUsd || 0,
-          sanitizeCellString(d.clientName),
-          sanitizeCellString(isSupervisor ? (d.phone || '') : (Number(d.managerId) === Number(user.id) ? (d.phone || '') : '***')),
-          sanitizeCellString(d.managerName),
-          d.signedAt ? String(d.signedAt).slice(0, 10) : '—'
+      if (signedList.length === 0) {
+        const emptyRow = sheet.addRow([
+          '—',
+          'За выбранный период записей нет',
+          '—',
+          '—',
+          0,
+          0,
+          '—',
+          '—',
+          '—',
+          '—'
         ]);
+        emptyRow.height = 22;
+        emptyRow.getCell(2).font = { italic: true, color: { argb: '64748B' } };
+        emptyRow.eachCell(cell => { cell.border = thinBorder; });
+      } else {
+        signedList.forEach((d, idx) => {
+          const row = sheet.addRow([
+            idx + 1,
+            sanitizeCellString(d.contractNumber),
+            sanitizeCellString(d.unitNumber ? `№${d.unitNumber}` : '—'),
+            d.rooms || '—',
+            d.areaM2 || 0,
+            d.finalPriceUsd || 0,
+            sanitizeCellString(isSupervisor ? (d.clientName || 'Клиент') : (Number(d.managerId) === Number(user.id) ? (d.clientName || 'Клиент') : 'Конфиденциально')),
+            sanitizeCellString(isSupervisor ? (d.phone || '') : (Number(d.managerId) === Number(user.id) ? (d.phone || '') : '***')),
+            sanitizeCellString(d.managerName),
+            d.signedAt ? String(d.signedAt).slice(0, 10) : '—'
+          ]);
 
-        row.height = 20;
-        row.alignment = { vertical: 'middle' };
-        row.getCell(1).alignment = { horizontal: 'center' };
-        row.getCell(3).alignment = { horizontal: 'center' };
-        row.getCell(4).alignment = { horizontal: 'center' };
-        row.getCell(5).alignment = { horizontal: 'right' };
-        row.getCell(6).alignment = { horizontal: 'right' };
-        row.getCell(10).alignment = { horizontal: 'center' };
+          row.height = 20;
+          row.alignment = { vertical: 'middle' };
+          row.getCell(1).alignment = { horizontal: 'center' };
+          row.getCell(3).alignment = { horizontal: 'center' };
+          row.getCell(4).alignment = { horizontal: 'center' };
+          row.getCell(5).alignment = { horizontal: 'right' };
+          row.getCell(6).alignment = { horizontal: 'right' };
+          row.getCell(7).alignment = { horizontal: 'left', wrapText: true };
+          row.getCell(9).alignment = { horizontal: 'left', wrapText: true };
+          row.getCell(10).alignment = { horizontal: 'center' };
 
-        row.getCell(5).numFmt = '#,##0.00';
-        row.getCell(6).numFmt = '#,##0.00';
+          row.getCell(5).numFmt = '#,##0.00';
+          row.getCell(6).numFmt = '#,##0.00';
 
-        if (idx % 2 === 1) {
-          row.eachCell(cell => {
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
-          });
-        }
-        row.eachCell(cell => { cell.border = thinBorder; });
-      });
+          if (idx % 2 === 1) {
+            row.eachCell(cell => {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+            });
+          }
+          row.eachCell(cell => { cell.border = thinBorder; });
+        });
+      }
 
       const signedEndRow = sheet.rowCount;
       if (signedList.length > 0) {
@@ -556,36 +752,54 @@ export class SalesManagementExportService {
       const resList = blockInfo.drilldowns?.reservedDeals || [];
       const resStartRow = sheet.rowCount + 1;
 
-      resList.forEach((r, idx) => {
-        const row = sheet.addRow([
-          idx + 1,
-          sanitizeCellString(r.contractNumber || `Бронь #${r.id}`),
-          sanitizeCellString(r.unitNumber ? `№${r.unitNumber}` : '—'),
-          r.areaM2 || 0,
-          r.finalPriceUsd || 0,
-          sanitizeCellString(r.clientName),
-          sanitizeCellString(r.managerName),
-          r.reservationExpiresAt ? String(r.reservationExpiresAt).slice(0, 10) : '—'
+      if (resList.length === 0) {
+        const emptyRow = sheet.addRow([
+          '—',
+          'За выбранный период записей нет',
+          '—',
+          0,
+          0,
+          '—',
+          '—',
+          '—'
         ]);
+        emptyRow.height = 22;
+        emptyRow.getCell(2).font = { italic: true, color: { argb: '64748B' } };
+        emptyRow.eachCell(cell => { cell.border = thinBorder; });
+      } else {
+        resList.forEach((r, idx) => {
+          const row = sheet.addRow([
+            idx + 1,
+            sanitizeCellString(r.contractNumber || `Бронь #${r.id}`),
+            sanitizeCellString(r.unitNumber ? `№${r.unitNumber}` : '—'),
+            r.areaM2 || 0,
+            r.finalPriceUsd || 0,
+            sanitizeCellString(isSupervisor ? (r.clientName || 'Клиент') : (Number(r.managerId) === Number(user.id) ? (r.clientName || 'Клиент') : 'Конфиденциально')),
+            sanitizeCellString(r.managerName),
+            r.reservationExpiresAt ? String(r.reservationExpiresAt).slice(0, 10) : '—'
+          ]);
 
-        row.height = 20;
-        row.alignment = { vertical: 'middle' };
-        row.getCell(1).alignment = { horizontal: 'center' };
-        row.getCell(3).alignment = { horizontal: 'center' };
-        row.getCell(4).alignment = { horizontal: 'right' };
-        row.getCell(5).alignment = { horizontal: 'right' };
-        row.getCell(8).alignment = { horizontal: 'center' };
+          row.height = 20;
+          row.alignment = { vertical: 'middle' };
+          row.getCell(1).alignment = { horizontal: 'center' };
+          row.getCell(3).alignment = { horizontal: 'center' };
+          row.getCell(4).alignment = { horizontal: 'right' };
+          row.getCell(5).alignment = { horizontal: 'right' };
+          row.getCell(6).alignment = { horizontal: 'left', wrapText: true };
+          row.getCell(7).alignment = { horizontal: 'left', wrapText: true };
+          row.getCell(8).alignment = { horizontal: 'center' };
 
-        row.getCell(4).numFmt = '#,##0.00';
-        row.getCell(5).numFmt = '#,##0.00';
+          row.getCell(4).numFmt = '#,##0.00';
+          row.getCell(5).numFmt = '#,##0.00';
 
-        if (idx % 2 === 1) {
-          row.eachCell(cell => {
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
-          });
-        }
-        row.eachCell(cell => { cell.border = thinBorder; });
-      });
+          if (idx % 2 === 1) {
+            row.eachCell(cell => {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+            });
+          }
+          row.eachCell(cell => { cell.border = thinBorder; });
+        });
+      }
 
       const resEndRow = sheet.rowCount;
       if (resList.length > 0) {
@@ -614,14 +828,14 @@ export class SalesManagementExportService {
 
       sheet.getColumn(1).width = 6;
       sheet.getColumn(2).width = 24;
-      sheet.getColumn(3).width = 14;
-      sheet.getColumn(4).width = 12;
-      sheet.getColumn(5).width = 16;
-      sheet.getColumn(6).width = 22;
-      sheet.getColumn(7).width = 28;
-      sheet.getColumn(8).width = 18;
-      sheet.getColumn(9).width = 24;
-      sheet.getColumn(10).width = 16;
+      sheet.getColumn(3).width = 16;
+      sheet.getColumn(4).width = 14;
+      sheet.getColumn(5).width = 18;
+      sheet.getColumn(6).width = 26;
+      sheet.getColumn(7).width = 34;
+      sheet.getColumn(8).width = 20;
+      sheet.getColumn(9).width = 32;
+      sheet.getColumn(10).width = 20;
       sheet.autoFilter = { from: 'A14', to: `J${signedEndRow}` };
       sheet.pageSetup = {
         orientation: 'landscape',
@@ -659,7 +873,7 @@ export class SalesManagementExportService {
       'Выручка по договорам, USD',
       'Поступления кассы, USD ($)',
       'Поступления кассы, TJS (смн)',
-      'Конверсия лид → договор, %',
+      'Темп продаж к лидам, %',
       'Расторгнуто сделок, шт'
     ]);
     s5Headers.font = { bold: true, color: { argb: 'FFFFFF' }, size: 10 };
@@ -673,48 +887,60 @@ export class SalesManagementExportService {
     const weeksData = weeklyDynamics.weeks || [];
     const s5StartRow = 8;
 
-    weeksData.forEach((w, idx) => {
-      const row = sheet5.addRow([
-        w.weekNumber ? `Неделя ${w.weekNumber}` : `Неделя ${idx + 1}`,
-        w.startDate,
-        w.endDate,
-        w.leadsCount || 0,
-        w.reservationsCount || 0,
-        w.reservationsVolumeUsd || 0,
-        w.signedDealsCount || 0,
-        w.signedAreaM2 || 0,
-        w.signedDealsVolumeUsd || 0,
-        w.paymentsVolumeUsd || 0,
-        w.paymentsVolumeTjs || 0,
-        w.leadsCount > 0 ? { formula: `G${sheet5.rowCount + 1}/D${sheet5.rowCount + 1}`, result: ((w.signedDealsCount || 0) / w.leadsCount) } : 0,
-        w.cancelledDealsCount || 0
+    if (weeksData.length === 0) {
+      const emptyRow = sheet5.addRow([
+        '—',
+        '—',
+        'За выбранный период записей нет',
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0
       ]);
+      emptyRow.height = 22;
+      emptyRow.getCell(3).font = { italic: true, color: { argb: '64748B' } };
+      emptyRow.eachCell(cell => { cell.border = thinBorder; });
+    } else {
+      weeksData.forEach((w, idx) => {
+        const row = sheet5.addRow([
+          w.weekNumber ? `Неделя ${w.weekNumber}` : `Неделя ${idx + 1}`,
+          w.startDate,
+          w.endDate,
+          w.leadsCount || 0,
+          w.reservationsCount || 0,
+          w.reservationsVolumeUsd || 0,
+          w.signedDealsCount || 0,
+          w.signedAreaM2 || 0,
+          w.signedDealsVolumeUsd || 0,
+          w.paymentsVolumeUsd || 0,
+          w.paymentsVolumeTjs || 0,
+          w.leadsCount > 0 ? { formula: `G${sheet5.rowCount + 1}/D${sheet5.rowCount + 1}`, result: ((w.signedDealsCount || 0) / w.leadsCount) } : 0,
+          w.cancelledDealsCount || 0
+        ]);
 
-      row.height = 22;
-      row.alignment = { vertical: 'middle' };
-      row.getCell(1).alignment = { horizontal: 'center' };
-      row.getCell(2).alignment = { horizontal: 'center' };
-      row.getCell(3).alignment = { horizontal: 'center' };
+        row.height = 22;
+        row.alignment = { vertical: 'middle' };
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(2).alignment = { horizontal: 'center' };
+        row.getCell(3).alignment = { horizontal: 'center' };
 
-      // Number formatting
-      [4, 5, 7, 13].forEach(c => {
-        row.getCell(c).alignment = { horizontal: 'right' };
-        row.getCell(c).numFmt = '#,##0';
-      });
-      [6, 8, 9, 10, 11].forEach(c => {
-        row.getCell(c).alignment = { horizontal: 'right' };
-        row.getCell(c).numFmt = '#,##0.00';
-      });
-      row.getCell(12).alignment = { horizontal: 'right' };
-      row.getCell(12).numFmt = '0.0%';
-
-      if (idx % 2 === 1) {
-        row.eachCell(cell => {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+        // Number formatting
+        [4, 5, 7, 13].forEach(c => {
+          row.getCell(c).alignment = { horizontal: 'right' };
+          row.getCell(c).numFmt = '#,##0';
         });
-      }
-      row.eachCell(cell => { cell.border = thinBorder; });
-    });
+        [6, 8, 9, 10, 11].forEach(c => {
+          row.getCell(c).alignment = { horizontal: 'right' };
+          row.getCell(c).numFmt = '#,##0.00';
+        });
+        row.getCell(12).alignment = { horizontal: 'right' };
+        row.getCell(12).numFmt = '0.0%';
+
+        if (idx % 2 === 1) {
+          row.eachCell(cell => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+          });
+        }
+        row.eachCell(cell => { cell.border = thinBorder; });
+      });
+    }
 
     const s5EndRow = sheet5.rowCount;
     if (weeksData.length > 0) {
@@ -753,12 +979,19 @@ export class SalesManagementExportService {
       });
     }
 
-    sheet5.columns.forEach((col, idx) => {
-      if (idx === 0) col.width = 14;
-      else if (idx === 1 || idx === 2) col.width = 15;
-      else if ([5, 7, 8, 9, 10].includes(idx)) col.width = 18;
-      else col.width = 15;
-    });
+    sheet5.getColumn(1).width = 16;
+    sheet5.getColumn(2).width = 16;
+    sheet5.getColumn(3).width = 16;
+    sheet5.getColumn(4).width = 16;
+    sheet5.getColumn(5).width = 16;
+    sheet5.getColumn(6).width = 22;
+    sheet5.getColumn(7).width = 18;
+    sheet5.getColumn(8).width = 18;
+    sheet5.getColumn(9).width = 26;
+    sheet5.getColumn(10).width = 22;
+    sheet5.getColumn(11).width = 22;
+    sheet5.getColumn(12).width = 24;
+    sheet5.getColumn(13).width = 18;
     sheet5.autoFilter = { from: 'A7', to: `M${s5EndRow}` };
     sheet5.pageSetup = {
       orientation: 'landscape',
@@ -804,47 +1037,70 @@ export class SalesManagementExportService {
     const rawPayments = dailyBriefing.drilldowns?.postedPayments || [];
     const s6StartRow = 8;
 
-    rawPayments.forEach((p, idx) => {
-      const isUsd = p.currency === 'USD';
-      const isTjs = p.currency === 'TJS';
-      const amount = p.amountFormatted || Number(((p.amountMinor || 0) / 100).toFixed(2));
-
-      const row = sheet6.addRow([
-        idx + 1,
-        sanitizeCellString(`ПКО #${p.id}`),
-        sanitizeCellString(p.contractNumber || '—'),
-        sanitizeCellString(p.unitNumber ? `№${p.unitNumber}` : '—'),
-        p.paymentDate || '—',
-        sanitizeCellString(p.clientName || 'Плательщик'),
-        sanitizeCellString(isSupervisor ? (p.phone || '') : (Number(p.managerId) === Number(user.id) ? (p.phone || '') : '***')),
-        isUsd ? amount : 0,
-        isTjs ? amount : 0,
-        sanitizeCellString(p.method || 'CASH'),
-        sanitizeCellString(p.managerName || 'Не назначен'),
-        sanitizeCellString(p.reference || p.comment || 'Оплата по договору')
+    if (rawPayments.length === 0) {
+      const emptyRow = sheet6.addRow([
+        '—',
+        '—',
+        '—',
+        '—',
+        '—',
+        'За выбранный период кассовых поступлений нет',
+        '—',
+        0,
+        0,
+        '—',
+        '—',
+        '—'
       ]);
+      emptyRow.height = 24;
+      emptyRow.getCell(6).font = { italic: true, color: { argb: '64748B' } };
+      emptyRow.eachCell(cell => { cell.border = thinBorder; });
+    } else {
+      rawPayments.forEach((p, idx) => {
+        const isUsd = p.currency === 'USD';
+        const isTjs = p.currency === 'TJS';
+        const amount = p.amountFormatted || Number(((p.amountMinor || 0) / 100).toFixed(2));
 
-      row.height = 22;
-      row.alignment = { vertical: 'middle' };
-      row.getCell(1).alignment = { horizontal: 'center' };
-      row.getCell(2).alignment = { horizontal: 'center' };
-      row.getCell(3).alignment = { horizontal: 'center' };
-      row.getCell(4).alignment = { horizontal: 'center' };
-      row.getCell(5).alignment = { horizontal: 'center' };
-      row.getCell(8).alignment = { horizontal: 'right' };
-      row.getCell(9).alignment = { horizontal: 'right' };
-      row.getCell(10).alignment = { horizontal: 'center' };
+        const row = sheet6.addRow([
+          idx + 1,
+          sanitizeCellString(`ПКО #${p.id}`),
+          sanitizeCellString(p.contractNumber || '—'),
+          sanitizeCellString(p.unitNumber ? `№${p.unitNumber}` : '—'),
+          p.paymentDate || '—',
+          sanitizeCellString(isSupervisor ? (p.clientName || 'Плательщик') : (Number(p.managerId) === Number(user.id) ? (p.clientName || 'Плательщик') : 'Конфиденциально')),
+          sanitizeCellString(isSupervisor ? (p.phone || '') : (Number(p.managerId) === Number(user.id) ? (p.phone || '') : '***')),
+          isUsd ? amount : 0,
+          isTjs ? amount : 0,
+          sanitizeCellString(p.method || 'CASH'),
+          sanitizeCellString(p.managerName || 'Не назначен'),
+          sanitizeCellString(p.reference || p.comment || 'Оплата по договору')
+        ]);
 
-      row.getCell(8).numFmt = '#,##0.00;[Red]-#,##0.00;\"-\"';
-      row.getCell(9).numFmt = '#,##0.00;[Red]-#,##0.00;\"-\"';
+        row.height = 22;
+        row.alignment = { vertical: 'middle' };
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(2).alignment = { horizontal: 'center' };
+        row.getCell(3).alignment = { horizontal: 'center' };
+        row.getCell(4).alignment = { horizontal: 'center' };
+        row.getCell(5).alignment = { horizontal: 'center' };
+        row.getCell(6).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(8).alignment = { horizontal: 'right' };
+        row.getCell(9).alignment = { horizontal: 'right' };
+        row.getCell(10).alignment = { horizontal: 'center' };
+        row.getCell(11).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(12).alignment = { horizontal: 'left', wrapText: true };
 
-      if (idx % 2 === 1) {
-        row.eachCell(cell => {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
-        });
-      }
-      row.eachCell(cell => { cell.border = thinBorder; });
-    });
+        row.getCell(8).numFmt = '#,##0.00;[Red]-#,##0.00;\"-\"';
+        row.getCell(9).numFmt = '#,##0.00;[Red]-#,##0.00;\"-\"';
+
+        if (idx % 2 === 1) {
+          row.eachCell(cell => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+          });
+        }
+        row.eachCell(cell => { cell.border = thinBorder; });
+      });
+    }
 
     const s6EndRow = sheet6.rowCount;
     if (rawPayments.length > 0) {
@@ -877,18 +1133,18 @@ export class SalesManagementExportService {
       });
     }
 
-    sheet6.getColumn(1).width = 6;
-    sheet6.getColumn(2).width = 16;
-    sheet6.getColumn(3).width = 18;
-    sheet6.getColumn(4).width = 14;
-    sheet6.getColumn(5).width = 16;
-    sheet6.getColumn(6).width = 28;
-    sheet6.getColumn(7).width = 18;
-    sheet6.getColumn(8).width = 22;
-    sheet6.getColumn(9).width = 22;
-    sheet6.getColumn(10).width = 16;
-    sheet6.getColumn(11).width = 24;
-    sheet6.getColumn(12).width = 34;
+    sheet6.getColumn(1).width = 8;
+    sheet6.getColumn(2).width = 18;
+    sheet6.getColumn(3).width = 22;
+    sheet6.getColumn(4).width = 16;
+    sheet6.getColumn(5).width = 18;
+    sheet6.getColumn(6).width = 34;
+    sheet6.getColumn(7).width = 20;
+    sheet6.getColumn(8).width = 24;
+    sheet6.getColumn(9).width = 24;
+    sheet6.getColumn(10).width = 18;
+    sheet6.getColumn(11).width = 32;
+    sheet6.getColumn(12).width = 44;
     sheet6.autoFilter = { from: 'A7', to: `L${s6EndRow}` };
     sheet6.pageSetup = {
       orientation: 'landscape',
@@ -932,32 +1188,50 @@ export class SalesManagementExportService {
     });
 
     const leadsList = dailyBriefing.drilldowns?.newLeads || [];
-    leadsList.forEach((l, idx) => {
-      const row = sheet7.addRow([
-        idx + 1,
-        sanitizeCellString(`Лид #${l.id}`),
-        sanitizeCellString(l.fullName),
-        sanitizeCellString(isSupervisor ? (l.phone || '') : (Number(l.managerId) === Number(user.id) ? (l.phone || '') : '***')),
-        sanitizeCellString(l.source || 'Прямой'),
-        sanitizeCellString(l.status || 'NEW'),
-        sanitizeCellString(l.managerName || 'Не назначен'),
-        l.createdAt ? String(l.createdAt).replace('T', ' ').slice(0, 19) : '—'
+    if (leadsList.length === 0) {
+      const emptyRow = sheet7.addRow([
+        '—',
+        '—',
+        'За выбранный период записей нет',
+        '—',
+        '—',
+        '—',
+        '—',
+        '—'
       ]);
+      emptyRow.height = 22;
+      emptyRow.getCell(3).font = { italic: true, color: { argb: '64748B' } };
+      emptyRow.eachCell(cell => { cell.border = thinBorder; });
+    } else {
+      leadsList.forEach((l, idx) => {
+        const row = sheet7.addRow([
+          idx + 1,
+          sanitizeCellString(`Лид #${l.id}`),
+          sanitizeCellString(isSupervisor ? (l.fullName || 'Клиент') : (Number(l.managerId) === Number(user.id) ? (l.fullName || 'Клиент') : 'Конфиденциально')),
+          sanitizeCellString(isSupervisor ? (l.phone || '') : (Number(l.managerId) === Number(user.id) ? (l.phone || '') : '***')),
+          sanitizeCellString(l.source || 'Прямой'),
+          sanitizeCellString(l.status || 'NEW'),
+          sanitizeCellString(l.managerName || 'Не назначен'),
+          l.createdAt ? String(l.createdAt).replace('T', ' ').slice(0, 19) : '—'
+        ]);
 
-      row.height = 20;
-      row.alignment = { vertical: 'middle' };
-      row.getCell(1).alignment = { horizontal: 'center' };
-      row.getCell(2).alignment = { horizontal: 'center' };
-      row.getCell(6).alignment = { horizontal: 'center' };
-      row.getCell(8).alignment = { horizontal: 'center' };
+        row.height = 20;
+        row.alignment = { vertical: 'middle' };
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(2).alignment = { horizontal: 'center' };
+        row.getCell(3).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(6).alignment = { horizontal: 'center' };
+        row.getCell(7).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(8).alignment = { horizontal: 'center' };
 
-      if (idx % 2 === 1) {
-        row.eachCell(cell => {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
-        });
-      }
-      row.eachCell(cell => { cell.border = thinBorder; });
-    });
+        if (idx % 2 === 1) {
+          row.eachCell(cell => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+          });
+        }
+        row.eachCell(cell => { cell.border = thinBorder; });
+      });
+    }
 
     // Space before Section 2
     sheet7.addRow([]);
@@ -986,32 +1260,51 @@ export class SalesManagementExportService {
     const meetingsList = dailyBriefing.drilldowns?.completedMeetings || [];
     const interactions = [...callsList, ...meetingsList];
 
-    interactions.forEach((item, idx) => {
-      const row = sheet7.addRow([
-        idx + 1,
-        sanitizeCellString(`Task #${item.id}`),
-        sanitizeCellString(item.type === 'MEETING' ? 'ВСТРЕЧА В ОФИСЕ' : 'ЗВОНОК КЛИЕНТУ'),
-        sanitizeCellString(item.clientName || 'Клиент'),
-        sanitizeCellString(isSupervisor ? (item.phone || '') : (Number(item.managerId) === Number(user.id) ? (item.phone || '') : '***')),
-        sanitizeCellString(item.title || 'Взаимодействие'),
-        sanitizeCellString(item.managerName || 'Менеджер'),
-        item.completedAt ? String(item.completedAt).slice(0, 10) : '—'
+    if (interactions.length === 0) {
+      const emptyRow = sheet7.addRow([
+        '—',
+        '—',
+        '—',
+        'За выбранный период записей нет',
+        '—',
+        '—',
+        '—',
+        '—'
       ]);
+      emptyRow.height = 22;
+      emptyRow.getCell(4).font = { italic: true, color: { argb: '64748B' } };
+      emptyRow.eachCell(cell => { cell.border = thinBorder; });
+    } else {
+      interactions.forEach((item, idx) => {
+        const row = sheet7.addRow([
+          idx + 1,
+          sanitizeCellString(`Task #${item.id}`),
+          sanitizeCellString(item.type === 'MEETING' ? 'ВСТРЕЧА В ОФИСЕ' : 'ЗВОНОК КЛИЕНТУ'),
+          sanitizeCellString(isSupervisor ? (item.clientName || 'Клиент') : (Number(item.managerId) === Number(user.id) ? (item.clientName || 'Клиент') : 'Конфиденциально')),
+          sanitizeCellString(isSupervisor ? (item.phone || '') : (Number(item.managerId) === Number(user.id) ? (item.phone || '') : '***')),
+          sanitizeCellString(item.title || 'Взаимодействие'),
+          sanitizeCellString(item.managerName || 'Менеджер'),
+          item.completedAt ? String(item.completedAt).slice(0, 10) : '—'
+        ]);
 
-      row.height = 20;
-      row.alignment = { vertical: 'middle' };
-      row.getCell(1).alignment = { horizontal: 'center' };
-      row.getCell(2).alignment = { horizontal: 'center' };
-      row.getCell(3).alignment = { horizontal: 'center' };
-      row.getCell(8).alignment = { horizontal: 'center' };
+        row.height = 20;
+        row.alignment = { vertical: 'middle' };
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(2).alignment = { horizontal: 'center' };
+        row.getCell(3).alignment = { horizontal: 'center' };
+        row.getCell(4).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(6).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(7).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(8).alignment = { horizontal: 'center' };
 
-      if (idx % 2 === 1) {
-        row.eachCell(cell => {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
-        });
-      }
-      row.eachCell(cell => { cell.border = thinBorder; });
-    });
+        if (idx % 2 === 1) {
+          row.eachCell(cell => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+          });
+        }
+        row.eachCell(cell => { cell.border = thinBorder; });
+      });
+    }
 
     // Space before Section 3
     sheet7.addRow([]);
@@ -1038,44 +1331,64 @@ export class SalesManagementExportService {
     });
 
     const overdueTasks = dailyBriefing.drilldowns?.overdueTasks || [];
-    overdueTasks.forEach((t, idx) => {
-      const row = sheet7.addRow([
-        idx + 1,
-        sanitizeCellString(`Task #${t.id}`),
-        sanitizeCellString(t.type || 'TASK'),
-        sanitizeCellString(t.title || 'Задача'),
-        sanitizeCellString(t.clientName || 'Клиент'),
-        sanitizeCellString(isSupervisor ? (t.phone || '') : (Number(t.managerId) === Number(user.id) ? (t.phone || '') : '***')),
-        sanitizeCellString(t.managerName || 'Менеджер'),
-        t.dueDate || '—',
-        sanitizeCellString(t.priority || 'NORMAL')
+    if (overdueTasks.length === 0) {
+      const emptyRow = sheet7.addRow([
+        '—',
+        '—',
+        '—',
+        'За выбранный период просроченных задач нет',
+        '—',
+        '—',
+        '—',
+        '—',
+        '—'
       ]);
+      emptyRow.height = 22;
+      emptyRow.getCell(4).font = { italic: true, color: { argb: '64748B' } };
+      emptyRow.eachCell(cell => { cell.border = thinBorder; });
+    } else {
+      overdueTasks.forEach((t, idx) => {
+        const row = sheet7.addRow([
+          idx + 1,
+          sanitizeCellString(`Task #${t.id}`),
+          sanitizeCellString(t.type || 'TASK'),
+          sanitizeCellString(t.title || 'Задача'),
+          sanitizeCellString(isSupervisor ? (t.clientName || 'Клиент') : (Number(t.managerId) === Number(user.id) ? (t.clientName || 'Клиент') : 'Конфиденциально')),
+          sanitizeCellString(isSupervisor ? (t.phone || '') : (Number(t.managerId) === Number(user.id) ? (t.phone || '') : '***')),
+          sanitizeCellString(t.managerName || 'Менеджер'),
+          t.dueDate || '—',
+          sanitizeCellString(t.priority || 'NORMAL')
+        ]);
 
-      row.height = 20;
-      row.alignment = { vertical: 'middle' };
-      row.getCell(1).alignment = { horizontal: 'center' };
-      row.getCell(2).alignment = { horizontal: 'center' };
-      row.getCell(3).alignment = { horizontal: 'center' };
-      row.getCell(8).alignment = { horizontal: 'center' };
-      row.getCell(9).alignment = { horizontal: 'center' };
+        row.height = 20;
+        row.alignment = { vertical: 'middle' };
+        row.getCell(1).alignment = { horizontal: 'center' };
+        row.getCell(2).alignment = { horizontal: 'center' };
+        row.getCell(3).alignment = { horizontal: 'center' };
+        row.getCell(4).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(5).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(7).alignment = { horizontal: 'left', wrapText: true };
+        row.getCell(8).alignment = { horizontal: 'center' };
+        row.getCell(9).alignment = { horizontal: 'center' };
 
-      if (idx % 2 === 1) {
-        row.eachCell(cell => {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
-        });
-      }
-      row.eachCell(cell => { cell.border = thinBorder; });
-    });
+        if (idx % 2 === 1) {
+          row.eachCell(cell => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: zebraBg } };
+          });
+        }
+        row.eachCell(cell => { cell.border = thinBorder; });
+      });
+    }
 
-    sheet7.getColumn(1).width = 6;
-    sheet7.getColumn(2).width = 16;
-    sheet7.getColumn(3).width = 20;
-    sheet7.getColumn(4).width = 24;
-    sheet7.getColumn(5).width = 20;
-    sheet7.getColumn(6).width = 30;
-    sheet7.getColumn(7).width = 24;
-    sheet7.getColumn(8).width = 20;
-    sheet7.getColumn(9).width = 14;
+    sheet7.getColumn(1).width = 8;
+    sheet7.getColumn(2).width = 18;
+    sheet7.getColumn(3).width = 24;
+    sheet7.getColumn(4).width = 34;
+    sheet7.getColumn(5).width = 22;
+    sheet7.getColumn(6).width = 48;
+    sheet7.getColumn(7).width = 32;
+    sheet7.getColumn(8).width = 22;
+    sheet7.getColumn(9).width = 18;
     sheet7.pageSetup = {
       orientation: 'landscape',
       paperSize: 9,
