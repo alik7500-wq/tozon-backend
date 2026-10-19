@@ -2,6 +2,7 @@ import { getServiceDB } from '../../db/connection.js';
 import { Router } from 'express';
 import { 
   getIncome, 
+  exportCustomerPkoBook,
   getIncomeById,
   addIncome, 
   updateIncome,
@@ -55,6 +56,7 @@ router.get('/access', (req, res) => {
 router.use(paymentCalendarRouter);
 
 router.get('/income', getIncome);
+router.get('/income/customer-book.xlsx', exportCustomerPkoBook);
 router.post('/income/reconcile-tjs/bulk', reconcileIncomeTjsBulk);
 router.get('/income/:id', getIncomeById);
 router.post('/income', requireCashDeskIncome, addIncome);

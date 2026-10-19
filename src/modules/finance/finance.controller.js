@@ -1,5 +1,15 @@
 import { FinanceRepository } from './finance.repository.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+import { customerBookWorkbook } from './customerPkoBook.js';
+
+export const exportCustomerPkoBook = async (req,res,next) => {
+  try {
+    const data = await FinanceRepository.getIncome({...req.query,customer_book:'1',include_voided:'1'},req.cashDeskAccess);
+    res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition','attachment; filename="customer-pko-book.xlsx"');
+    res.send(Buffer.from(await customerBookWorkbook(data.list)));
+  } catch(e) { next(e); }
+};
 
 export const getIncome = async (req, res, next) => {
   try {
