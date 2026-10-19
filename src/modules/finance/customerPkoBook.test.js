@@ -14,6 +14,39 @@ describe('buyer book classification and exports',()=>{
   it('exports official numbers, cash desks, amounts and voided status to a real workbook',async()=>{
     const buffer=await customerBookWorkbook([{date:'2026-10-19',document_number:'ПКО-98',reference:'old',clientName:'=bad',contract:'0045',cashDeskName:'Касса',amount:100,currency:'USD',amountTjs:926,exchangeRate:9.26,status:'VOIDED'}]);
     const wb=new ExcelJS.Workbook();await wb.xlsx.load(buffer);const ws=wb.worksheets[0];
-    expect(ws.getCell('B2').value).toBe('ПКО-98');expect(ws.getCell('C2').value).toBe("'=bad");expect(ws.getCell('G2').value).toBe(100);expect(ws.getCell('I2').value).toBe(926);expect(ws.getCell('M2').value).toBe('Аннулирован');
+    expect(ws.getCell('B10').value).toBe('ПКО-98');expect(ws.getCell('C10').value).toBe("'=bad");expect(ws.getCell('G10').value).toBe(100);expect(ws.getCell('I10').value).toBe(926);expect(ws.getCell('M10').value).toBe('Аннулирован');
   });
+  it('makes the register readable and totals each currency without voided receipts',async()=>{
+    const rows=[
+      {date:'2026-10-19',document_number:'ПКО-98',clientName:'Покупатель недвижимости',contract:'0045',amount:100,currency:'USD',amountTjs:926,status:'ACTIVE'},
+      {date:'2026-10-18',document_number:'ПКО-97',amount:900,currency:'USD',status:'VOIDED'},
+      {date:'2026-10-17',document_number:'ПКО-96',amount:300,currency:'TJS',status:'ACTIVE'}
+    ];
+    const wb=new ExcelJS.Workbook();await wb.xlsx.load(await customerBookWorkbook(rows));const ws=wb.worksheets[0];
+    expect(ws.getCell('A2').value).toContain('КНИГА РЕГИСТРАЦИИ ПКО');
+    expect(ws.getCell('A4').value).toContain('17.10.2026 — 19.10.2026');
+    expect(ws.getCell('A6').value).toBe('Всего ПКО: 3');
+    expect(ws.getCell('E6').value).toBe('Действующих: 2');
+    expect(ws.getCell('A10').value).toEqual(new Date('2026-10-19T00:00:00Z'));
+    expect(ws.getCell('D10').value).toBe('0045');
+    expect(ws.getRow(10).height).toBeLessThanOrEqual(58);
+    expect(ws.getCell('A9').fill.fgColor.argb).toBe('173C55');
+    expect(ws.views[0]).toMatchObject({xSplit:2,ySplit:9,showGridLines:false});
+    expect(ws.autoFilter).toBe('A9:M12');
+    expect(ws.pageSetup).toMatchObject({orientation:'landscape',fitToWidth:1});
+    expect(ws.getCell('G15').value).toMatchObject({result:300});
+    expect(ws.getCell('H15').value).toBe('TJS');
+    expect(ws.getCell('G16').value).toMatchObject({result:100});
+    expect(ws.getCell('G16').value.formula).toContain('SUMIFS');
+    expect(ws.getCell('H16').value).toBe('USD');
+    expect(ws.conditionalFormattings).toHaveLength(2);
+  });
+  it('exports an empty book with headings and no invalid total formulas',async()=>{
+    const wb=new ExcelJS.Workbook();await wb.xlsx.load(await customerBookWorkbook([]));const ws=wb.worksheets[0];
+    expect(ws.getCell('A6').value).toBe('Всего ПКО: 0');
+    expect(ws.getCell('A9').value).toBe('Дата');
+    expect(ws.autoFilter).toBe('A9:M9');
+    ws.eachRow(row=>row.eachCell(cell=>expect(cell.value?.formula).toBeUndefined()));
+  });
+
 });
