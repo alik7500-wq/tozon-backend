@@ -4,8 +4,15 @@ import { UsersRepository } from './users.repository.js';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { getServiceDB } from '../../db/connection.js';
+import { hasSection, isMatrixUser } from '../../middleware/sectionAccess.js';
 
 const router = express.Router();
+const manageUsers = (req, res, next) => {
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return next(new AppError('Управление сотрудниками разрешено только руководству', 403));
+  if (isMatrixUser(req.user) && !hasSection(req.user, 'users.view', true)) return next(new AppError('Нет права изменения сотрудников и ролей', 403));
+  return next();
+};
+
 
 router.use(protect);
 
@@ -91,7 +98,7 @@ export const ROLE_PRESET_PERMISSIONS = {
 };
 
 // POST /api/users - Create new user (ADMIN or DIRECTOR)
-router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.post('/', manageUsers, async (req, res, next) => {
   try {
     const { name, email, password, role, permissions, is_sales_rep } = req.body;
 
@@ -140,7 +147,7 @@ router.post('/', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
 });
 
 // PATCH /api/users/:id - Update user
-router.patch('/:id', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+router.patch('/:id', manageUsers, async (req, res, next) => {
   try {
     const { name, email, password, role, permissions, is_active, is_sales_rep } = req.body;
     const updates = {};
@@ -171,7 +178,7 @@ router.patch('/:id', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => 
 });
 
 // DELETE /api/users/:id - Delete user
-router.delete('/:id', restrictTo('ADMIN'), async (req, res, next) => {
+router.delete('/:id', manageUsers, restrictTo('ADMIN'), async (req, res, next) => {
   try {
     if (String(req.user.id) === String(req.params.id)) {
       return next(new AppError('Вы не можете удалить свою учетную запись', 400));
