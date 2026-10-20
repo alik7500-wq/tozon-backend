@@ -203,7 +203,7 @@ export class DealsRepository {
       leads ( full_name, phone, secondary_phone, passport_series, passport_number, passport_issued_by, passport_issue_date, birth_date, registration_address, inn ),
       units ( 
         unit_number, unit_kind, rooms, area_m2_x100, price_per_m2_minor, status,
-        layout_types ( name, image_path ),
+        layout_types ( id, name, code, image_path, technical_plan_path, furnished_plan_path ),
         floors ( floor_number, name, sections ( name, buildings ( name, projects ( id, name, developer_name, address, currency ) ) ) )
       ),
       users!responsible_user_id ( name, email ),
@@ -261,8 +261,12 @@ export class DealsRepository {
       price_per_m2_minor: computedDealPricePerM2,
       exchange_rate: deal.exchange_rate ? Number(deal.exchange_rate) : null,
       unit_status: deal.units?.status,
+      layout_id: deal.units?.layout_types?.id,
       layout_name: deal.units?.layout_types?.name,
+      layout_code: deal.units?.layout_types?.code,
       layout_image_path: deal.units?.layout_types?.image_path,
+      technical_plan_path: deal.units?.layout_types?.technical_plan_path,
+      furnished_plan_path: deal.units?.layout_types?.furnished_plan_path,
       floor_number: deal.units?.floors?.floor_number,
       floor_name: deal.units?.floors?.name,
       section_name: deal.units?.floors?.sections?.name,
@@ -864,7 +868,7 @@ export class DealsRepository {
     let query = db.from('units').select(`
       id, unit_number, unit_kind, rooms, area_m2_x100, price_per_m2_minor, manual_total_price_minor, status,
       floors ( floor_number, name, sections ( name, buildings ( name, projects ( id, name, currency ) ) ) ),
-      layout_types ( name, image_path )
+      layout_types ( id, name, code, image_path, technical_plan_path, furnished_plan_path )
     `).eq('status', 'AVAILABLE').is('archived_at', null);
 
     const { data, error } = await query;
@@ -893,8 +897,12 @@ export class DealsRepository {
         project_id: p.id,
         project_name: p.name,
         project_currency: p.currency,
+        layout_id: u.layout_types?.id,
         layout_name: u.layout_types?.name,
-        layout_image_path: u.layout_types?.image_path
+        layout_code: u.layout_types?.code,
+        layout_image_path: u.layout_types?.image_path,
+        technical_plan_path: u.layout_types?.technical_plan_path,
+        furnished_plan_path: u.layout_types?.furnished_plan_path
       };
     });
   }
