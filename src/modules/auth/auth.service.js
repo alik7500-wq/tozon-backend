@@ -4,7 +4,8 @@ import { AppError } from '../../shared/errors/errorHandler.js';
 import { UsersRepository } from '../users/users.repository.js';
 
 const signToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET || 'super-secret-key-for-dev-only', {
+  if (!process.env.JWT_SECRET) throw new Error('JWT_SECRET must be configured');
+  return jwt.sign({ id }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || '90d'
   });
 };
