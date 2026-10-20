@@ -4,6 +4,7 @@ import { AppError } from '../shared/errors/errorHandler.js';
 import { UsersRepository } from '../modules/users/users.repository.js';
 
 export const protect = async (req, res, next) => {
+  if (!process.env.JWT_SECRET) return next(new AppError('Authentication is not configured', 503));
   try {
     let token;
     
@@ -18,7 +19,7 @@ export const protect = async (req, res, next) => {
     }
 
     // Verify token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'super-secret-key-for-dev-only');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Check if user still exists
     const currentUser = await UsersRepository.findById(decoded.id);
@@ -50,6 +51,7 @@ export const protect = async (req, res, next) => {
 };
 
 export const protectOptional = async (req, res, next) => {
+  if (!process.env.JWT_SECRET) return next(new AppError('Authentication is not configured', 503));
   try {
     let token;
     if (req.cookies?.jwt) {
@@ -59,7 +61,7 @@ export const protectOptional = async (req, res, next) => {
     }
 
     if (token) {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'super-secret-key-for-dev-only');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
       const currentUser = await UsersRepository.findById(decoded.id);
       if (currentUser && currentUser.is_active) {
         req.user = currentUser;
