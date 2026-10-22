@@ -944,6 +944,10 @@ export class DealsRepository {
     const { data: existingDeal } = await db.from('deals').select('*').eq('id', id).single();
     if (!existingDeal) throw new AppError('Сделка не найдена', 404);
 
+    const hasVehicleUpdate = data.vehicle_details !== undefined;
+    const vehicleDetails = hasVehicleUpdate ? validateVehicleDetails(data.vehicle_details) : undefined;
+    if (hasVehicleUpdate && (data.payment_type || existingDeal.payment_type) !== 'PARTIAL_BARTER') throw new AppError('Данные автомобиля доступны для сделки «Бартер + Доплата»', 400);
+
     // 1. Paid deal protection check
     const { count: paymentsCount } = await db.from('payments').select('*', { count: 'exact', head: true }).eq('deal_id', id);
     const hasPaidPayments = (paymentsCount || 0) > 0;
@@ -967,6 +971,7 @@ export class DealsRepository {
     }
 
     const updatesJson = {};
+    if (hasVehicleUpdate) updatesJson.vehicle_details = vehicleDetails;
     if (data.status !== undefined) updatesJson.status = data.status;
     if (data.deal_date !== undefined) updatesJson.deal_date = data.deal_date;
     if (data.contract_number !== undefined) updatesJson.contract_number = data.contract_number;
@@ -1034,6 +1039,16 @@ export class DealsRepository {
           });
         }
       }
+    }
+
+    // Vehicle edits must commit with metadata and audit, or leave the contract untouched.
+    if (hasVehicleUpdate) {
+      const { error } = await getServiceDB().rpc('update_deal_vehicle_atomic', {
+        p_deal_id: Number(id), p_user_id: Number(userId), p_updates_json: updatesJson,
+        p_lead_updates_json: leadUpdatesJson, p_schedules_json: schedulesJson
+      });
+      if (error) throw new AppError(error.message || 'Не удалось сохранить данные автомобиля', 400);
+      return this.getDealById(id);
     }
 
     // Try calling atomic Postgres RPC
