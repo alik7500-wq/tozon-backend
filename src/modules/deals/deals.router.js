@@ -1,5 +1,6 @@
 import express from 'express';
 import { DealsRepository } from './deals.repository.js';
+import { DictionariesRepository } from '../dictionaries/dictionaries.repository.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { resolveCashDeskAccess } from '../../middleware/cashDeskAuth.middleware.js';
@@ -99,7 +100,9 @@ router.patch('/:id', restrictTo('ADMIN'), async (req, res, next) => {
   }
 });
 
-router.post('/', async (req, res, next) => {
+// Resolve financial permissions only when this sale also records an initial receipt.
+const recordsInitialPayment = body => (body.status || 'SIGNED') === 'SIGNED' && body.record_initial_payment && Number(body.down_payment_minor) > 0;
+router.post('/', (req, res, next) => recordsInitialPayment(req.body) ? resolveCashDeskAccess(req, res, next) : next(), async (req, res, next) => {
   try {
     const leadId = parseRequiredBigInt(req.body.lead_id, 'lead_id');
     const unitId = parseRequiredBigInt(req.body.unit_id, 'unit_id');
@@ -108,10 +111,27 @@ router.post('/', async (req, res, next) => {
       return next(new AppError('Сумма сделки обязательна', 400));
     }
 
+    let initialCashDeskId = null;
+    if (recordsInitialPayment(req.body)) {
+      initialCashDeskId = req.body.initial_payment_cash_desk_id || req.body.cash_desk_id;
+      if (!initialCashDeskId) return next(new AppError('Выберите кассу зачисления первоначального взноса', 400));
+      const access = req.cashDeskAccess;
+      if (!access?.canCreateIncome || (!access.allWritableDesks && !access.incomeDeskIds?.includes(initialCashDeskId))) {
+        return next(new AppError('Выбранная касса недоступна для зачисления средств', 403));
+      }
+      const desks = await DictionariesRepository.getItems('CASH_DESK');
+      if (!desks.some(d => d.id === initialCashDeskId && d.is_active !== false)) {
+        return next(new AppError('Выбранная касса не найдена или неактивна', 400));
+      }
+    }
+
     const deal = await DealsRepository.createDeal({
       ...req.body,
       lead_id: leadId,
-      unit_id: unitId
+      unit_id: unitId,
+      // Both legacy keys must resolve to the same validated destination.
+      cash_desk_id: initialCashDeskId,
+      initial_payment_cash_desk_id: initialCashDeskId
     }, req.user.id);
 
     // Auto-generate task for reservation control
