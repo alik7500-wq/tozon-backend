@@ -1,4 +1,5 @@
 import { getDB, getServiceDB } from '../../db/connection.js';
+import { validateVehicleDetails } from './vehicleDetails.validation.js';
 import { validateAmendment } from './amendment.validation.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
@@ -290,6 +291,8 @@ export class DealsRepository {
   }
 
   static async createDeal(data, responsibleUserId) {
+    const vehicleDetails = validateVehicleDetails(data.vehicle_details);
+    if (vehicleDetails && !['BARTER', 'PARTIAL_BARTER'].includes(data.payment_type)) throw new AppError('Автомобиль можно указать только для бартерной сделки', 400);
     const db = getDB();
     const now = new Date().toISOString();
     const dealDate = data.deal_date || now.split('T')[0];
@@ -350,6 +353,7 @@ export class DealsRepository {
       first_payment_date: data.first_payment_date || data.schedules?.[0]?.due_date || null,
       installment_interval_months: Number(data.installment_interval_months) || 1,
       barter_description: data.barter_description || null,
+      ...(vehicleDetails ? { vehicle_details: vehicleDetails } : {}),
       barter_amount_minor: data.barter_amount_minor || 0,
       reservation_expires_at: reservationExpiresAt,
       deal_date: dealDate,
