@@ -29,13 +29,14 @@ beforeAll(async () => {
  INSERT INTO projects VALUES(1,'USD'),(2,'USD');
  INSERT INTO buildings VALUES(1,1),(2,2); INSERT INTO sections VALUES(1,1),(2,2); INSERT INTO floors VALUES(1,1),(2,2);
  `);
- await db.exec(readFileSync(new URL('../../../db/migrations/20261008181434_contract_amendment.sql',import.meta.url),'utf8'));
+ await db.exec('ALTER TABLE deals ADD COLUMN barter_amount_minor int DEFAULT 0, ADD COLUMN barter_description text, ADD COLUMN vehicle_details jsonb');
+ await db.exec(readFileSync(new URL('../../../../supabase/migrations/20261024072817_amend_down_payment_and_barter.sql',import.meta.url),'utf8'));
 });
 afterAll(async()=>{await db.close();});
 beforeEach(async()=>{
  await db.exec(`TRUNCATE payments,deal_payment_schedules,deal_audit_logs,deals,units CASCADE;
  INSERT INTO units VALUES(1,1,'A1',9220,'SOLD',null,'${stamp}'),(2,1,'A2',10000,'AVAILABLE',null,'${stamp}'),(3,2,'B1',8000,'AVAILABLE',null,'${stamp}');
- INSERT INTO deals VALUES(1,1,'0006','2026-02-12','SIGNED','INSTALLMENT','USD',4425600,0,4425600,48000,664100,'${stamp}');
+ INSERT INTO deals(id,unit_id,contract_number,deal_date,status,payment_type,currency,base_price_minor,discount_minor,final_price_minor,deal_price_per_m2_minor,down_payment_minor,updated_at) VALUES(1,1,'0006','2026-02-12','SIGNED','INSTALLMENT','USD',4425600,0,4425600,48000,664100,'${stamp}');
  INSERT INTO deal_payment_schedules VALUES(10,1,1,'2026-03-12',1880750,771432,'PARTIAL','${stamp}'),(11,1,2,'2026-12-12',1880750,0,'UPCOMING','${stamp}');
  INSERT INTO payments VALUES(100,1,10,1435532,'ACTIVE',9.29,133361.92,'test-desk'),(101,1,11,100000,'VOIDED',9.26,9260,'test-desk');`);
 });
@@ -90,4 +91,43 @@ describe('atomic contract amendment (real PostgreSQL engine, synthetic data)',()
    }
  });
  it.each([NaN,Infinity,-1,0,1.5,'5000',2147483648])('validates invalid prices %s',value=>{expect(()=>validateAmendment(amendment({final_price_minor:value}))).toThrow();});
+ it('raises the agreed down payment and reduces the schedule exactly without changing receipts',async()=>{
+   const before=await rows('payments');await call(amendment({unit_id:1,down_payment_minor:1664100}));
+   expect(await rows('payments')).toEqual(before);
+   expect((await rows('deals'))[0].down_payment_minor).toBe(1664100);
+   const plan=await rows('deal_payment_schedules');expect(plan.reduce((n,r)=>n+r.amount_minor,0)).toBe(5000000-1664100);
+   expect(plan.reduce((n,r)=>n+r.paid_amount_minor,0)).toBe(0);
+   expect(plan.map(r=>r.id)).toEqual([10,11]);
+   expect((await rows('deal_audit_logs'))[0].changes_json.old.down_payment_minor).toBe(664100);
+ });
+ it('adds a car to an existing installment: barter is included once in the down payment',async()=>{
+   const before=await rows('payments');
+   await call(amendment({unit_id:1,final_price_minor:4425600,down_payment_minor:1664100,payment_type:'PARTIAL_BARTER',barter_amount_minor:1000000,barter_description:'Test vehicle',vehicle_details:{brand_model:'Test Motors',vin:'TEST123'}}));
+   const [d]=await rows('deals');expect(d.payment_type).toBe('PARTIAL_BARTER');expect(d.barter_amount_minor).toBe(1000000);expect(d.vehicle_details.vin).toBe('TEST123');
+   expect((await rows('deal_payment_schedules')).reduce((n,r)=>n+r.amount_minor,0)).toBe(4425600-1664100);
+   expect(await rows('payments')).toEqual(before);
+   expect(d.contract_number).toBe('0006');expect(d.deal_date).toBe('2026-02-12');
+ });
+ it('amends an existing partial barter contract and retains its car unless explicitly edited',async()=>{
+   await db.exec(`update deals set payment_type='PARTIAL_BARTER',barter_amount_minor=500000,vehicle_details='{"brand_model":"Test Car"}'`);
+   await call(amendment({unit_id:1,down_payment_minor:900000}));
+   expect((await rows('deals'))[0].vehicle_details).toEqual({brand_model:'Test Car'});
+ });
+ it.each([
+   {down_payment_minor:-1}, {down_payment_minor:5000001}, {down_payment_minor:1.5},
+   {down_payment_minor:null}, {down_payment_minor:1000000,barter_amount_minor:1000001,payment_type:'PARTIAL_BARTER'},
+   {payment_type:'PARTIAL_BARTER',barter_amount_minor:0},
+   {payment_type:'BARTER'}, {vehicle_details:{brand_model:'car'}},
+   {payment_type:'PARTIAL_BARTER',barter_amount_minor:100,barter_description:'Test',vehicle_details:[]},
+ ])('rejects invalid deposit or barter and leaves all rows untouched: %j',async(fields)=>{
+   const before=await rows('deals');const payments=await rows('payments');const plan=await rows('deal_payment_schedules');
+   await expect(call(amendment(fields))).rejects.toThrow();
+   expect(await rows('deals')).toEqual(before);expect(await rows('payments')).toEqual(payments);expect(await rows('deal_payment_schedules')).toEqual(plan);
+ });
+ it('accepts new terms only after strict API validation',()=>{
+   expect(validateAmendment(amendment({down_payment_minor:1664100,payment_type:'PARTIAL_BARTER',barter_amount_minor:1000000,vehicle_details:{brand_model:' Test Car '}})).vehicle_details).toEqual({brand_model:'Test Car'});
+   for(const v of [-1,1.5,null,'100',2147483648]) expect(()=>validateAmendment(amendment({down_payment_minor:v}))).toThrow();
+   expect(()=>validateAmendment(amendment({vehicle_details:{engine_number:'x'}}))).toThrow();
+ });
+
 });
