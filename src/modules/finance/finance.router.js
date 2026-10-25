@@ -9,7 +9,7 @@ import {
   reconcileIncomeTjs,
   reconcileIncomeTjsBulk,
   deleteIncome,
-  getExpenses, 
+  getExpenses, getRkoRegistrationBook, exportRkoRegistrationBook,
   getExpenseById,
   addExpense, 
   updateExpense,
@@ -75,6 +75,8 @@ router.get('/settlement-parties', async(req,res,next)=>{
  }catch(e){next(e);}
 });
 router.get('/expenses', getExpenses);
+router.get('/expenses/book', getRkoRegistrationBook);
+router.get('/expenses/book.xlsx', exportRkoRegistrationBook);
 router.get('/expenses/:id', getExpenseById);
 router.post('/expenses', requireCashDeskExpense, addExpense);
 router.put('/expenses/:id', requireCashDeskMutation, updateExpense);

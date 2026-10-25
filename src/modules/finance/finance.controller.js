@@ -1,3 +1,5 @@
+import { getDB } from '../../db/connection.js';
+import { getRkoBook, rkoBookWorkbook } from './rkoBook.js';
 import { FinanceRepository } from './finance.repository.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { customerBookWorkbook } from './customerPkoBook.js';
@@ -249,3 +251,15 @@ export const createCashTransfer = async (req, res, next) => {
   }
 };
 
+
+export const getRkoRegistrationBook = async (req,res,next) => {
+ try {res.json({success:true,data:await getRkoBook(getDB(),req.query,req.cashDeskAccess)});} catch(e){next(e);}
+};
+export const exportRkoRegistrationBook = async (req,res,next) => {
+ try {
+  const data=await getRkoBook(getDB(),req.query,req.cashDeskAccess);
+  res.setHeader('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition','attachment; filename="rko-registration-book.xlsx"');
+  res.send(Buffer.from(await rkoBookWorkbook(data.list)));
+ } catch(e){next(e);}
+};
