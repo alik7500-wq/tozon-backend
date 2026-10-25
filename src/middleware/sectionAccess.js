@@ -37,6 +37,8 @@ export const authorizeSectionRequest = async req => {
   if (user.permissions?.includes('access.granular.v1')) {
     const feature = path === '/api/finance/income/customer-book.xlsx'
       ? 'finance.customer_pko_book'
+      : ['/api/finance/expenses/book','/api/finance/expenses/book.xlsx'].includes(path)
+        ? 'finance.rko_book'
       : path === '/api/finance/calendar'
         ? 'finance.payment_calendar'
         : path === '/api/finance/plan-fact'

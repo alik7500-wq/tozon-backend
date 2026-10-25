@@ -53,3 +53,11 @@ describe('per-section read/write matrix',()=>{
   await expect(authorizeSectionRequest(req('GET','/api/search?q=test',['leads.view']))).rejects.toMatchObject({statusCode:403});
  });
 });
+
+it.each(['/api/finance/expenses/book','/api/finance/expenses/book.xlsx'])('protects RKO book endpoint %s with expense and optional granular permissions',async path=>{
+ await expect(authorizeSectionRequest(req('GET',path,['finance.expenses']))).resolves.toBeUndefined();
+ await expect(authorizeSectionRequest(req('GET',path,[]))).rejects.toMatchObject({statusCode:403});
+ await expect(authorizeSectionRequest(req('GET',path,['access.granular.v1','finance.expenses']))).rejects.toMatchObject({statusCode:403});
+ await expect(authorizeSectionRequest(req('GET',path,['access.granular.v1','finance.rko_book']))).rejects.toMatchObject({statusCode:403});
+ await expect(authorizeSectionRequest(req('GET',path,['access.granular.v1','finance.expenses','finance.rko_book']))).resolves.toBeUndefined();
+});
