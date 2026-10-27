@@ -10,3 +10,12 @@ describe('discount schemes',()=>{
  it('rejects stale version, other project, expired or disabled scheme',()=>{for(const altered of [{updated_at:'new'},{project_id:4},{ends_on:'2026-10-27'},{is_active:false}])expect(()=>validateSchemeSale({...scheme,...altered},sale(rules[1]),unit,'2026-10-28')).toThrow();});
  it('validates dates, duplicates and full-payment term',()=>{for(const patch of [{starts_on:'2026-99-99'},{rules:[rules[1],rules[1]]},{rules:[{...rules[5],months:30}]}])expect(()=>validateScheme({name:'test',project_id:3,rules,...patch})).toThrow();expect(validateScheme({name:'test',project_id:3,rules})).toMatchObject({rules});});
 });
+it('uses explicit price per square metre without stacking percentage',()=>{
+ const rule={...rules[1],price_per_m2:650};
+ const final=2809300;
+ const input={...sale(rule),final_price_minor:final,discount_minor:3025400-final,down_payment_minor:Math.round(final*0.05)};
+ expect(validateSchemeSale({...scheme,rules:[rule]},input,unit,'2026-10-28')).toMatchObject({price_per_m2:650,final_price_minor:final});
+ expect(validateScheme({name:'test',project_id:3,rules:[rule]}).rules[0].price_per_m2).toBe(650);
+ for(const price of [-1,0,650.001,'invalid']) expect(()=>validateScheme({name:'test',project_id:3,rules:[{...rule,price_per_m2:price}]})).toThrow();
+ expect(()=>validateSchemeSale({...scheme,rules:[{...rule,price_per_m2:750}]},input,unit,'2026-10-28')).toThrow();
+});
