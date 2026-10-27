@@ -13,7 +13,9 @@ export function validateScheme(body) {
     if ((payment_percent === 100) !== (months === 0)) fail('Срок 0 месяцев допускается только при взносе 100%');
     if (seen.has(payment_percent)) fail('Процент первоначального взноса не должен повторяться');
     seen.add(payment_percent);
-    return { payment_percent, discount_percent, months };
+    const price = row.price_per_m2 === '' || row.price_per_m2 == null ? null : Number(row.price_per_m2);
+    if (price !== null && (!Number.isFinite(price) || price <= 0 || !Number.isSafeInteger(Math.round(price*100)) || Math.abs(Math.round(price*100)-price*100)>0.000001)) fail('Цена за м² должна быть положительной, до 2 знаков после запятой');
+    return { payment_percent, discount_percent, months, ...(price !== null ? {price_per_m2:price} : {}) };
   }).sort((a,b) => a.payment_percent-b.payment_percent);
   for (const key of ['starts_on','ends_on']) if (body[key] && (!/^\d{4}-\d{2}-\d{2}$/.test(body[key]) || !Number.isFinite(new Date(body[key]).getTime()) || new Date(body[key]).toISOString().slice(0,10)!==body[key])) fail('Неверная дата действия скидки');
   if (body.starts_on && body.ends_on && body.starts_on > body.ends_on) fail('Дата окончания раньше начала');
@@ -29,7 +31,11 @@ export function validateSchemeSale(scheme, data, unit, today) {
   if (!rule) fail('Условие скидки не найдено');
   const base = Math.round(Number(unit.area_m2_x100) * Number(unit.price_per_m2_minor) / 100);
   if (!Number.isSafeInteger(base) || base <= 0) fail('В карточке квартиры не задана базовая цена');
-  const discount = Math.round(base * rule.discount_percent / 100), final = base-discount;
+  const final = rule.price_per_m2 != null
+    ? Math.round(Number(unit.area_m2_x100) * Math.round(Number(rule.price_per_m2)*100) / 100)
+    : base - Math.round(base * rule.discount_percent / 100);
+  if (!Number.isSafeInteger(final) || final <= 0 || final > base) fail('Цена со скидкой должна быть положительной и не превышать базовую цену квартиры');
+  const discount = base-final;
   if (Number(data.base_price_minor)!==base || Number(data.discount_minor)!==discount || Number(data.final_price_minor)!==final) fail('Цена не соответствует выбранной схеме скидок');
   const full = rule.payment_percent === 100;
   if (full ? data.payment_type !== 'FULL' : !['INSTALLMENT','PARTIAL_BARTER'].includes(data.payment_type)) fail('Тип оплаты не соответствует условию скидки');
