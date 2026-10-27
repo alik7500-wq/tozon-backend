@@ -61,3 +61,8 @@ it.each(['/api/finance/expenses/book','/api/finance/expenses/book.xlsx'])('prote
  await expect(authorizeSectionRequest(req('GET',path,['access.granular.v1','finance.rko_book']))).rejects.toMatchObject({statusCode:403});
  await expect(authorizeSectionRequest(req('GET',path,['access.granular.v1','finance.expenses','finance.rko_book']))).resolves.toBeUndefined();
 });
+it('allows sale discount reads but requires settings management for changes',async()=>{
+ await expect(authorizeSectionRequest(req('GET','/api/discount-schemes',['deals.view']))).resolves.toBeUndefined();
+ await expect(authorizeSectionRequest(req('PUT','/api/discount-schemes/1',['deals.view','deals.manage']))).rejects.toMatchObject({statusCode:403});
+ await expect(authorizeSectionRequest(req('PUT','/api/discount-schemes/1',['settings.view','settings.manage']))).resolves.toBeUndefined();
+});

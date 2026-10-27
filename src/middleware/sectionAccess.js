@@ -51,6 +51,10 @@ export const authorizeSectionRequest = async req => {
       throw new AppError('Нет доступа к отдельной функции', 403);
     }
   }
+  if (path.startsWith('/api/discount-schemes')) {
+    if (read) allowed = hasAny(user, ['deals.view','settings.view']);
+    else key = 'settings.view';
+  }
   if (path.startsWith('/api/auth/')) return;
   if (path.startsWith('/api/notifications')) return; // personal notifications, existing ownership checks apply
   if (path.startsWith('/api/costs')) {
