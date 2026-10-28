@@ -1,3 +1,4 @@
+import { excludeReclassifiedTransfers, applyBarterResults } from './barterRealization.js';
 import crypto from 'crypto';
 import { isCustomerPko, isVoidedPko } from './customerPko.js';
 import { filterCustomerBook } from './customerPkoBook.js';
@@ -2062,9 +2063,16 @@ export class FinanceRepository {
     `);
     if (eErr) throw eErr;
 
-    // Filter out VOIDED items for financial calculations
-    let activePayments = (paymentsData || []).filter(p => p.status !== 'VOIDED');
-    let activeExpenses = (expensesData || []).filter(e => e.status !== 'VOIDED');
+    const {data: realizationData,error: realizationError}=await getServiceDB().from('barter_realization_results').select('*').eq('status','ACTIVE');
+    if(realizationError) throw realizationError;
+    const realizationResults=(realizationData || []).filter(r=>
+      (paymentsData || []).some(p=>Number(p.id)===Number(r.reclassified_payment_id) && p.status!=='VOIDED') &&
+      (expensesData || []).some(e=>Number(e.id)===Number(r.reclassified_expense_id) && e.status!=='VOIDED')
+    );
+    const cashDocuments=excludeReclassifiedTransfers(paymentsData || [],expensesData || [],realizationResults);
+    // Preserve original documents for audit; their non-cash reclassification is not cashflow.
+    let activePayments = cashDocuments.payments.filter(p => p.status !== 'VOIDED');
+    let activeExpenses = cashDocuments.expenses.filter(e => e.status !== 'VOIDED');
 
     // Серверная изоляция и контроль прав доступа: проверяем запросы к кассам
     if (userAccess && !userAccess.isAdmin) {
@@ -2390,8 +2398,8 @@ export class FinanceRepository {
     // Unified Cashflow Ledger (transactions)
     const transactions = [];
 
-    const txPayments = (paymentsData || []).filter(p => filters.include_voided ? true : p.status !== 'VOIDED');
-    const txExpenses = (expensesData || []).filter(e => filters.include_voided ? true : e.status !== 'VOIDED');
+    const txPayments = cashDocuments.payments.filter(p => filters.include_voided ? true : p.status !== 'VOIDED');
+    const txExpenses = cashDocuments.expenses.filter(e => filters.include_voided ? true : e.status !== 'VOIDED');
 
     txPayments.forEach(p => {
       const cur = (p.currency || p.deals?.currency || 'USD').toUpperCase();
@@ -2729,12 +2737,18 @@ export class FinanceRepository {
       }
     });
 
+    applyBarterResults(cashDesksMap,activeDesks,realizationResults);
+
     const cashDesksSummary = Object.values(cashDesksMap).map(d => ({
       name: d.name,
       icon: d.icon,
       balanceUsd: Number(d.USD.toFixed(2)),
       balanceTjs: Number(d.TJS.toFixed(2)),
       balanceRub: Number((d.RUB || 0).toFixed(2)),
+      nonCashAdjustmentUsd: d.nonCashAdjustmentUsd || 0,
+      nonCashAdjustmentTjs: d.nonCashAdjustmentTjs || 0,
+      isAnalytical: !!d.isAnalytical,
+      resultDetails: d.resultDetails || [],
       totalIncomeUsd: Number(d.totalIncomeUsd.toFixed(2)),
       totalExpenseUsd: Number(d.totalExpenseUsd.toFixed(2)),
       totalIncomeTjs: Number(d.totalIncomeTjs.toFixed(2)),
@@ -2760,8 +2774,8 @@ export class FinanceRepository {
         };
       }
     } else {
-      const totalCapitalUsd = Number(Object.values(cashDesksMap).reduce((sum, d) => sum + (d.USD || 0), 0).toFixed(2));
-      const totalCapitalTjs = Number(Object.values(cashDesksMap).reduce((sum, d) => sum + (d.TJS || 0), 0).toFixed(2));
+      const totalCapitalUsd = Number(Object.values(cashDesksMap).filter(d=>!d.isAnalytical).reduce((sum, d) => sum + (d.USD || 0), 0).toFixed(2));
+      const totalCapitalTjs = Number(Object.values(cashDesksMap).filter(d=>!d.isAnalytical).reduce((sum, d) => sum + (d.TJS || 0), 0).toFixed(2));
       if (summaryByCurrency['USD']) {
         summaryByCurrency['USD'].netCashflow = totalCapitalUsd;
       }
