@@ -208,7 +208,9 @@ export class CashflowExcelService {
         { formula: `SUM(L${startRowS1}:L${endRowS1})` },
         { formula: `SUM(M${startRowS1}:M${endRowS1})` },
         { formula: `SUM(N${startRowS1}:N${endRowS1})` },
-        { formula: `SUM(O${startRowS1}:O${endRowS1})` }
+        { formula: `SUM(O${startRowS1}:O${endRowS1})` },
+        { formula: `SUM(P${startRowS1}:P${endRowS1})` },
+        { formula: `SUM(Q${startRowS1}:Q${endRowS1})` }
       ]);
 
       grandRow.font = { bold: true, size: 11, color: { argb: '0F172A' } };
@@ -519,8 +521,8 @@ export class CashflowExcelService {
       },
       {
         id: 3,
-        name: 'Начальный остаток USD + Приход USD − Расход USD = Конечный остаток USD',
-        calcFormula: desksSummary.length > 0 ? `'Свод по кассам'!B${endRowS1 + 1}+'Свод по кассам'!C${endRowS1 + 1}-'Свод по кассам'!D${endRowS1 + 1}` : '0',
+        name: 'Начальный остаток USD + Приход USD − Расход USD + Неденежная корректировка = Конечный остаток USD',
+        calcFormula: desksSummary.length > 0 ? `'Свод по кассам'!B${endRowS1 + 1}+'Свод по кассам'!C${endRowS1 + 1}-'Свод по кассам'!D${endRowS1 + 1}+'Свод по кассам'!P${endRowS1 + 1}` : '0',
         ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!G${endRowS1 + 1}` : '0'
       },
       {
@@ -555,8 +557,8 @@ export class CashflowExcelService {
       },
       {
         id: 9,
-        name: 'Начальный остаток TJS + Приход TJS − Расход TJS = Конечный остаток TJS',
-        calcFormula: desksSummary.length > 0 ? `'Свод по кассам'!H${endRowS1 + 1}+'Свод по кассам'!I${endRowS1 + 1}-'Свод по кассам'!J${endRowS1 + 1}` : '0',
+        name: 'Начальный остаток TJS + Приход TJS − Расход TJS + Неденежная корректировка = Конечный остаток TJS',
+        calcFormula: desksSummary.length > 0 ? `'Свод по кассам'!H${endRowS1 + 1}+'Свод по кассам'!I${endRowS1 + 1}-'Свод по кассам'!J${endRowS1 + 1}+'Свод по кассам'!Q${endRowS1 + 1}` : '0',
         ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!M${endRowS1 + 1}` : '0'
       }
     ];
