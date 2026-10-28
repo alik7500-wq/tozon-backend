@@ -88,3 +88,12 @@ describe('DDS export formula rows and separate cash desk ledgers', () => {
     expect(sheets[0].getCell('B1').value).toBe("'" + name);
   });
 });
+
+it('exports non-cash barter loss separately from money and preserves the asset write-off',async()=>{
+ const data=fixture();data.cashDesksSummary[0].nonCashAdjustmentUsd=-15;
+ data.cashDesksSummary.push({name:'Результат бартера',isAnalytical:true,balanceUsd:-15,balanceTjs:-150,resultDetails:[{asset:'Genesis',date:'2026-10-28',costTjs:1000,proceedsTjs:850,sellingCostTjs:0,resultTjs:-150,resultUsd:-15}]});
+ const book=await build(data);const sheet=book.getWorksheet('Свод по кассам');
+ expect(sheet.getCell('G9').result).toBe(80);expect(sheet.getCell('G9').formula).toContain('+P9');
+ expect(book.getWorksheet('Результат бартера').getCell('F3').value).toBe(-150);
+ expect(sheet.getCell('A11').value).not.toBe('Результат бартера');
+});

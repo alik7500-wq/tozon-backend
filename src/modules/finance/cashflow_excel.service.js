@@ -106,8 +106,21 @@ export class CashflowExcelService {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandBlue } };
     });
 
+    sheet1.getCell('P8').value='Неденежная корректировка USD';
+    sheet1.getCell('Q8').value='Неденежная корректировка TJS';
+    sheet1.getColumn(16).width=26;
+    sheet1.getColumn(17).width=26;
+
     // Populate cash desks summary rows
-    const desksSummary = cashflowData.cashDesksSummary || [];
+    const desksSummary = (cashflowData.cashDesksSummary || []).filter(d=>!d.isAnalytical);
+    const resultDesks=(cashflowData.cashDesksSummary || []).filter(d=>d.isAnalytical);
+    if(resultDesks.length) {
+      const resultSheet=workbook.addWorksheet('Результат бартера');
+      resultSheet.addRow(['Финансовый результат — не денежные средства']);
+      resultSheet.addRow(['Объект','Дата','Принято, TJS','Выручка, TJS','Расходы, TJS','Прибыль/убыток, TJS','Эквивалент, USD']);
+      for(const desk of resultDesks) for(const r of desk.resultDetails || []) resultSheet.addRow([sanitizeCellString(r.asset),r.date,r.costTjs,r.proceedsTjs,r.sellingCostTjs,r.resultTjs,r.resultUsd]);
+      resultSheet.columns.forEach(c=>{c.width=24});
+    }
     const transactions = cashflowData.transactions || [];
 
     let startRowS1 = 9;
@@ -150,15 +163,17 @@ export class CashflowExcelService {
         desk.totalExpenseUsd || 0,
         internalIncomeUsd,
         internalExpenseUsd,
-        { formula: `B${rowIndex}+C${rowIndex}-D${rowIndex}`, result: Number((startUsd + (desk.totalIncomeUsd || 0) - (desk.totalExpenseUsd || 0)).toFixed(2)) },
+        { formula: desk.nonCashAdjustmentUsd ? `B${rowIndex}+C${rowIndex}-D${rowIndex}+P${rowIndex}` : `B${rowIndex}+C${rowIndex}-D${rowIndex}`, result: Number((startUsd + (desk.totalIncomeUsd || 0) - (desk.totalExpenseUsd || 0) + (desk.nonCashAdjustmentUsd || 0)).toFixed(2)) },
         startTjs,
         desk.totalIncomeTjs || 0,
         desk.totalExpenseTjs || 0,
         internalIncomeTjs,
         internalExpenseTjs,
-        { formula: `H${rowIndex}+I${rowIndex}-J${rowIndex}`, result: Number((startTjs + (desk.totalIncomeTjs || 0) - (desk.totalExpenseTjs || 0)).toFixed(2)) },
+        { formula: desk.nonCashAdjustmentTjs ? `H${rowIndex}+I${rowIndex}-J${rowIndex}+Q${rowIndex}` : `H${rowIndex}+I${rowIndex}-J${rowIndex}`, result: Number((startTjs + (desk.totalIncomeTjs || 0) - (desk.totalExpenseTjs || 0) + (desk.nonCashAdjustmentTjs || 0)).toFixed(2)) },
         pkoCount,
-        rkoCount
+        rkoCount,
+        desk.nonCashAdjustmentUsd || 0,
+        desk.nonCashAdjustmentTjs || 0
       ]);
 
       row.height = 22;
