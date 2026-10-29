@@ -100,3 +100,25 @@ it('does not let another Telegram account claim a session prepared for a registe
  expect(bridge.patch).not.toHaveBeenCalled();
  expect(api.call.mock.calls[0][1].text).toContain('другому менеджеру');
 });
+
+it.each([0,1])('requires the second page before recognition (%s photo)',async count=>{
+ const s={id:'s',user_id:12,status:'UPLOAD',file_ids:Array(count).fill('photo')};
+ const q={select:()=>q,eq:()=>q,gt:()=>q,maybeSingle:async()=>({data:s})};
+ const analyze=vi.fn(),api={call:vi.fn()};
+ const bridge=new PassportBridge({db:{from:()=>q},users:{findById:async()=>({id:12,is_active:1,role:'SALES_MANAGER'})},analyze});
+ bridge.patch=vi.fn();
+ await bridge.handle({callback_query:{id:'cb',from:{id:7},data:'passport:scan:s',message:{chat:{id:7,type:'private'}}}},api);
+ expect(analyze).not.toHaveBeenCalled();expect(bridge.patch).not.toHaveBeenCalled();
+ expect(api.call.mock.calls[0][1].text).toContain('вторую страницу');
+});
+it.each([0,1])('offers recognition only after two photos (previously %s)',async count=>{
+ const s={id:'s',user_id:12,status:'UPLOAD',file_ids:Array(count).fill('photo')};
+ const q={select:()=>q,eq:()=>q,gt:()=>q,in:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>({data:s})};
+ const api={call:vi.fn()};
+ const bridge=new PassportBridge({db:{from:()=>q},users:{findById:async()=>({id:12,is_active:1,role:'SALES_MANAGER'})}});
+ bridge.patch=vi.fn().mockResolvedValue(s);
+ await bridge.handle({message:{from:{id:7},chat:{id:7,type:'private'},photo:[{file_id:'next'}]}},api);
+ const payload=api.call.mock.calls[0][1];
+ if(count===0){expect(payload.reply_markup).toBeUndefined();expect(payload.text).toContain('вторую страницу');}
+ else expect(payload.reply_markup.inline_keyboard[0][0].callback_data).toBe('passport:scan:s');
+});

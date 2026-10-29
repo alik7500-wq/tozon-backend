@@ -105,9 +105,17 @@ export class PassportBridge {
       if(photo.file_size>10*1024*1024) { await send('Фото должно быть не больше 10 МБ.'); return true; }
       await this.patch(s,{file_ids:[...s.file_ids,photo.file_id]});
       // Remove the queued file handle once processed; no image bytes are stored by CRM.
-      await send(`Получено фото: ${s.file_ids.length+1}. Можно отправить оборотную сторону.`,[[{text:'Распознать паспорт',callback_data:`passport:scan:${s.id}`}]]); return true;
+      if(s.file_ids.length===0) {
+        await send('✅ Первая страница получена.\n\n📷 Теперь сфотографируйте и отправьте вторую страницу паспорта или оборотную сторону ID-карты — с адресом регистрации и дополнительными данными.\n\nРаспознавание будет доступно после второго фото.');
+      } else {
+        await send(`✅ Получено фотографий: ${s.file_ids.length+1}.\n\nМожно распознать обе страницы вместе. При необходимости сначала отправьте дополнительные страницы.`,[[{text:'Распознать паспорт',callback_data:`passport:scan:${s.id}`}]]);
+      }
+      return true;
     }
-    if(command===`passport:scan:${s.id}`&&s.status==='UPLOAD'&&s.file_ids.length) {
+    if(command===`passport:scan:${s.id}`&&s.status==='UPLOAD'&&s.file_ids.length<2) {
+      await send('📷 Перед распознаванием отправьте вторую страницу паспорта или оборотную сторону ID-карты.');return true;
+    }
+    if(command===`passport:scan:${s.id}`&&s.status==='UPLOAD'&&s.file_ids.length>=2) {
       if(!await this.patch(s,{status:'PROCESSING'})) return true;
       await send('Распознаю паспорт. Результат потребуется проверить.');
       try {
