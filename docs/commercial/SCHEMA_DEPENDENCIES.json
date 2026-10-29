@@ -1,0 +1,256 @@
+{
+  "scope": "Static literal references in src/modules only; dynamic names, storage APIs, views and external dependencies require manual review.",
+  "crmReady": false,
+  "installedTables": [
+    "barter_realization_results",
+    "buildings",
+    "cash_transfers",
+    "company_settings",
+    "construction_documents",
+    "construction_expense_settlement_audit",
+    "construction_materials",
+    "construction_parties",
+    "construction_price_corrections",
+    "construction_report_receipts",
+    "construction_settings",
+    "construction_settlement_entries",
+    "construction_stock_entries",
+    "construction_warehouses",
+    "cost_audit",
+    "cost_building_bases",
+    "cost_expense_allocations",
+    "cost_material_audit",
+    "cost_material_payment_links",
+    "cost_material_usages",
+    "crm_document_settings",
+    "crm_document_settings_history",
+    "crm_document_templates",
+    "crm_roles",
+    "deal_audit_logs",
+    "deal_payment_schedules",
+    "deals",
+    "dictionaries",
+    "discount_schemes",
+    "expenses",
+    "finance_audit_backups",
+    "floors",
+    "identity_documents",
+    "layout_features",
+    "layout_rooms",
+    "layout_types",
+    "lead_assignment_history",
+    "lead_distribution_settings",
+    "lead_interested_units",
+    "lead_notes",
+    "lead_status_history",
+    "leads",
+    "map_hotspots",
+    "panorama_360",
+    "panorama_hotspots",
+    "passport_ai_audit_logs",
+    "payments",
+    "project_media",
+    "projects",
+    "sales_plan_alert_settings",
+    "sales_plan_audit_logs",
+    "sales_plans",
+    "scene_3d",
+    "scene_3d_entities",
+    "sections",
+    "sms_events",
+    "sms_messages",
+    "sms_notification_rules",
+    "sms_settings_history",
+    "sms_templates",
+    "tasks",
+    "telegram_finance_deliveries",
+    "telegram_finance_expense_drafts",
+    "telegram_finance_sessions",
+    "telegram_finance_sheet_outbox",
+    "telegram_finance_state",
+    "telegram_finance_subscribers",
+    "telegram_finance_updates",
+    "tours_360",
+    "units",
+    "user_cash_desk_access",
+    "user_notifications",
+    "users",
+    "visual_maps"
+  ],
+  "missingTableCandidates": [
+    {
+      "name": "tour360_publish_jobs",
+      "sources": [
+        "src/modules/tour360/tour360PublishJournal.js"
+      ]
+    }
+  ],
+  "requiredRpcCandidates": [
+    {
+      "name": "activate_crm_document_template",
+      "sources": [
+        "src/modules/document-settings/document-settings.router.js"
+      ]
+    },
+    {
+      "name": "amend_deal_atomic",
+      "sources": [
+        "src/modules/deals/deals.repository.js"
+      ]
+    },
+    {
+      "name": "construction_correct_receipt_price",
+      "sources": [
+        "src/modules/construction/construction.router.js"
+      ]
+    },
+    {
+      "name": "construction_post",
+      "sources": [
+        "src/modules/construction/construction.router.js"
+      ]
+    },
+    {
+      "name": "correct_installment_term_atomic",
+      "sources": [
+        "src/modules/deals/deals.repository.js"
+      ]
+    },
+    {
+      "name": "cost_remove_material_payment",
+      "sources": [
+        "src/modules/costs/costs.router.js"
+      ]
+    },
+    {
+      "name": "cost_save_allocation",
+      "sources": [
+        "src/modules/costs/costs.router.js"
+      ]
+    },
+    {
+      "name": "cost_save_basis",
+      "sources": [
+        "src/modules/costs/costs.router.js"
+      ]
+    },
+    {
+      "name": "cost_save_material_payment",
+      "sources": [
+        "src/modules/costs/costs.router.js"
+      ]
+    },
+    {
+      "name": "cost_save_material_usage",
+      "sources": [
+        "src/modules/costs/costs.router.js"
+      ]
+    },
+    {
+      "name": "create_atomic_cash_transfer",
+      "sources": [
+        "src/modules/finance/finance.repository.js"
+      ]
+    },
+    {
+      "name": "create_atomic_expense",
+      "sources": [
+        "src/modules/finance/finance.repository.js"
+      ]
+    },
+    {
+      "name": "create_atomic_payment",
+      "sources": [
+        "src/modules/deals/deals.repository.js"
+      ]
+    },
+    {
+      "name": "create_expense_with_settlement",
+      "sources": [
+        "src/modules/finance/finance.repository.js"
+      ]
+    },
+    {
+      "name": "create_income_payment_atomic",
+      "sources": [
+        "src/modules/finance/finance.repository.js"
+      ]
+    },
+    {
+      "name": "fn_assign_lead_atomic",
+      "sources": [
+        "src/modules/leads/leads.repository.js"
+      ]
+    },
+    {
+      "name": "queue_daily_configured_sms",
+      "sources": [
+        "src/modules/sms/smsSettings.repository.js"
+      ]
+    },
+    {
+      "name": "reconcile_pko_tjs_atomic",
+      "sources": [
+        "src/modules/finance/finance.repository.js"
+      ]
+    },
+    {
+      "name": "reconcile_pko_tjs_bulk_atomic",
+      "sources": [
+        "src/modules/finance/finance.repository.js"
+      ]
+    },
+    {
+      "name": "save_crm_document_settings",
+      "sources": [
+        "src/modules/document-settings/document-settings.router.js"
+      ]
+    },
+    {
+      "name": "telegram_finance_claim_worker",
+      "sources": [
+        "src/modules/telegram-finance/repository.js"
+      ]
+    },
+    {
+      "name": "telegram_finance_post_expense",
+      "sources": [
+        "src/modules/telegram-finance/repository.js"
+      ]
+    },
+    {
+      "name": "telegram_finance_snapshot",
+      "sources": [
+        "src/modules/telegram-finance/repository.js"
+      ]
+    },
+    {
+      "name": "terminate_deal_atomic",
+      "sources": [
+        "src/modules/deals/deals.repository.js"
+      ]
+    },
+    {
+      "name": "update_deal_atomic",
+      "sources": [
+        "src/modules/deals/deals.repository.js"
+      ]
+    },
+    {
+      "name": "update_income_payment_atomic",
+      "sources": [
+        "src/modules/finance/finance.repository.js"
+      ]
+    },
+    {
+      "name": "void_income_payment_atomic",
+      "sources": [
+        "src/modules/finance/finance.repository.js"
+      ]
+    }
+  ],
+  "missingRpcCandidates": [],
+  "optionalUnreleasedTables": [
+    "tour360_publish_jobs"
+  ]
+}

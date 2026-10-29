@@ -1,0 +1,105 @@
+{
+  "enums": null,
+  "tables": [
+    {
+      "rls": true,
+      "name": "customer_pko_counter",
+      "columns": [
+        {
+          "name": "id",
+          "type": "smallint",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "last_number",
+          "type": "bigint",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    }
+  ],
+  "indexes": [
+    {
+      "name": "customer_pko_counter_pkey",
+      "table": "customer_pko_counter",
+      "definition": "CREATE UNIQUE INDEX customer_pko_counter_pkey ON tozon_internal.customer_pko_counter USING btree (id)"
+    }
+  ],
+  "triggers": null,
+  "functions": [
+    {
+      "name": "assign_customer_pko_number",
+      "language": "plpgsql",
+      "arguments": "",
+      "security_definer": true
+    },
+    {
+      "name": "assign_document_number",
+      "language": "plpgsql",
+      "arguments": "",
+      "security_definer": true
+    },
+    {
+      "name": "audit_sms_settings",
+      "language": "plpgsql",
+      "arguments": "",
+      "security_definer": true
+    },
+    {
+      "name": "is_customer_pko",
+      "language": "sql",
+      "arguments": "p jsonb",
+      "security_definer": false
+    },
+    {
+      "name": "queue_configured_sms",
+      "language": "plpgsql",
+      "arguments": "p_type text, p_key text, p_client integer, p_deal integer, p_payment integer",
+      "security_definer": true
+    },
+    {
+      "name": "queue_deal_sms",
+      "language": "plpgsql",
+      "arguments": "",
+      "security_definer": true
+    },
+    {
+      "name": "queue_payment_sms",
+      "language": "plpgsql",
+      "arguments": "",
+      "security_definer": true
+    },
+    {
+      "name": "queue_schedule_sms",
+      "language": "plpgsql",
+      "arguments": "",
+      "security_definer": true
+    }
+  ],
+  "constraints": [
+    {
+      "kind": "c",
+      "name": "customer_pko_counter_id_check",
+      "table": "tozon_internal.customer_pko_counter",
+      "definition": "CHECK (id = 1)"
+    },
+    {
+      "kind": "c",
+      "name": "customer_pko_counter_last_number_check",
+      "table": "tozon_internal.customer_pko_counter",
+      "definition": "CHECK (last_number >= 94)"
+    },
+    {
+      "kind": "p",
+      "name": "customer_pko_counter_pkey",
+      "table": "tozon_internal.customer_pko_counter",
+      "definition": "PRIMARY KEY (id)"
+    }
+  ]
+}

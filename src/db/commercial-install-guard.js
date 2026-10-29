@@ -22,12 +22,26 @@ export function assertCommercialInstallTarget(env = process.env) {
   if (!parsed.hostname || !parsed.username || !parsed.password) {
     throw new Error('COMMERCIAL_DATABASE_CREDENTIALS_REQUIRED');
   }
-  const normalized = decodeURIComponent(rawUrl).toLowerCase();
+  let normalized;
+  let username;
+  try {
+    normalized = decodeURIComponent(rawUrl).toLowerCase();
+    username = decodeURIComponent(parsed.username);
+  } catch { throw new Error('INVALID_COMMERCIAL_DATABASE_URL_ENCODING'); }
   for (const ref of PROTECTED_REFS) {
     if (normalized.includes(ref)) throw new Error('PRODUCTION_DATABASE_TARGET_FORBIDDEN');
   }
-  if (!normalized.includes(projectRef)) {
+  // Bind the ref to the routing fields, never to a password, path or query.
+  const direct = parsed.hostname === `db.${projectRef}.supabase.co`
+    && ['postgres', `postgres.${projectRef}`].includes(username);
+  const pooler = /^aws-\d+-[a-z0-9-]+\.pooler\.supabase\.com$/.test(parsed.hostname)
+    && username === `postgres.${projectRef}`;
+  if (!direct && !pooler) {
     throw new Error('DATABASE_PROJECT_REF_MISMATCH');
+  }
+  if ((parsed.port && parsed.port !== '5432') || parsed.pathname !== '/postgres'
+    || parsed.search || parsed.hash) {
+    throw new Error('UNSUPPORTED_COMMERCIAL_DATABASE_CONNECTION');
   }
   return { projectRef, databaseUrl: rawUrl };
 }

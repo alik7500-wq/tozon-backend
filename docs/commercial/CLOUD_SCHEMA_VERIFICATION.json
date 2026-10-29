@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-28",
+  "projectRef": "yaolkwbnhnacxxjpgiyu",
+  "verification": {
+    "users": 0,
+    "ledger": [
+      {
+        "name": "0001_bootstrap",
+        "checksum": "919da3703c1e7ac1a107504cca7733ee4fe840c0919fbaa20a2f3eefa5eac707"
+      },
+      {
+        "name": "0002_core_preview",
+        "checksum": "9125c43f76fa8685aa2254001223953c6e1c762c4a284043782cc1c0045e8768"
+      },
+      {
+        "name": "0003_schema_reconciliation",
+        "checksum": "04c808c4aa426bd1fd31dc960724cefa00058c88d2e50b656b9c5a7481ee5c4d"
+      },
+      {
+        "name": "0004_backend_functions",
+        "checksum": "9baf3b33a76a1045eda9d2c0bbe07bbd14ea6e6c7f2d6cec83233bd08855876e"
+      }
+    ],
+    "counter": 0,
+    "expenses": 0,
+    "payments": 0,
+    "functions": 45,
+    "public_tables": 74,
+    "internal_tables": 1,
+    "api_table_grants": 0,
+    "definer_functions": 0,
+    "tables_without_rls": 0,
+    "api_function_grants": 0
+  },
+  "syntheticSmoke": {
+    "status": "passed",
+    "rolledBack": true,
+    "checks": [
+      "lead assignment",
+      "double-sale constraint",
+      "income payment",
+      "fresh customer PKO number",
+      "schedule recalculation",
+      "expense idempotency",
+      "insufficient funds denial",
+      "payment voiding",
+      "unchanged PKO number",
+      "no unconfigured SMS queue"
+    ]
+  },
+  "localTests": 38,
+  "advisors": [
+    {
+      "name": "rls_enabled_no_policy",
+      "level": "INFO",
+      "count": 75,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy"
+    },
+    {
+      "name": "unindexed_foreign_keys",
+      "level": "INFO",
+      "count": 58,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0001_unindexed_foreign_keys"
+    },
+    {
+      "name": "unused_index",
+      "level": "INFO",
+      "count": 120,
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index"
+    },
+    {
+      "name": "auth_db_connections_absolute",
+      "level": "INFO",
+      "count": 1,
+      "remediation": "https://supabase.com/docs/guides/deployment/going-into-prod"
+    }
+  ],
+  "crmReady": false
+}

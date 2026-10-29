@@ -1,0 +1,2255 @@
+{
+  "enums": null,
+  "tables": [
+    {
+      "rls": true,
+      "name": "buildings",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "project_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "code",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "sort_order",
+          "type": "integer",
+          "default": "0",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "archived_at",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "company_settings",
+      "columns": [
+        {
+          "name": "singleton",
+          "type": "boolean",
+          "default": "true",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "company_name",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "legal_name",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "tax_id",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "address",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "default_currency",
+          "type": "text",
+          "default": "'TJS'::text",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "timezone",
+          "type": "text",
+          "default": "'Asia/Dushanbe'::text",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "default": "now()",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "default": "now()",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "deal_payment_schedules",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "deal_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "payment_number",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "due_date",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "amount_minor",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "paid_amount_minor",
+          "type": "integer",
+          "default": "0",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "default": "'UPCOMING'::text",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "deals",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "contract_number",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "lead_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "unit_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "responsible_user_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "default": "'DRAFT'::text",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "payment_type",
+          "type": "text",
+          "default": "'FULL'::text",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "currency",
+          "type": "text",
+          "default": "'TJS'::text",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "base_price_minor",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "discount_minor",
+          "type": "integer",
+          "default": "0",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "final_price_minor",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "down_payment_minor",
+          "type": "integer",
+          "default": "0",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "installment_months",
+          "type": "integer",
+          "default": "0",
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "reservation_expires_at",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "deal_date",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "signed_at",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "cancelled_at",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "cancellation_reason",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "barter_description",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "barter_amount_minor",
+          "type": "integer",
+          "default": "0",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "floors",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "section_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "floor_number",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "sort_order",
+          "type": "integer",
+          "default": "0",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "archived_at",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "layout_types",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "project_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "code",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "rooms",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "area_m2_x100",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "default_price_per_m2_minor",
+          "type": "integer",
+          "default": "0",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "image_path",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "archived_at",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "lead_notes",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "lead_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "author_user_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "body",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "leads",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "full_name",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "phone",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "secondary_phone",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "source",
+          "type": "text",
+          "default": "'DIRECT'::text",
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "default": "'NEW'::text",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "responsible_user_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "passport_series",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "passport_number",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "passport_issued_by",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "passport_issue_date",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "birth_date",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "registration_address",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "notes",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "archived_at",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "interested_project_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "desired_rooms",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "budget_min_minor",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "budget_max_minor",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "lost_reason",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "inn",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "map_hotspots",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "visual_map_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "target_building_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "target_section_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "target_floor_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "target_unit_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "x_pct",
+          "type": "real",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "y_pct",
+          "type": "real",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "width_pct",
+          "type": "real",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "height_pct",
+          "type": "real",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "label",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "sort_order",
+          "type": "integer",
+          "default": "0",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "payments",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "deal_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "schedule_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "amount_minor",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "payment_date",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "method",
+          "type": "text",
+          "default": "'CASH'::text",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "reference",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "comment",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_by_user_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "projects",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "code",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "developer_name",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "address",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "description",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "currency",
+          "type": "text",
+          "default": "'TJS'::text",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "archived_at",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "sections",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "building_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "code",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "sort_order",
+          "type": "integer",
+          "default": "0",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "archived_at",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "units",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "floor_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "layout_type_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "unit_number",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "position_on_floor",
+          "type": "integer",
+          "default": "1",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "rooms",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "area_m2_x100",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "price_per_m2_minor",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "manual_total_price_minor",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "default": "'AVAILABLE'::text",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "block_reason",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "archived_at",
+          "type": "text",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "users",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "name",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "email",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "password_hash",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "role",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "is_active",
+          "type": "integer",
+          "default": "1",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "permissions",
+          "type": "jsonb",
+          "default": "'[]'::jsonb",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "is_sales_rep",
+          "type": "boolean",
+          "default": "false",
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    },
+    {
+      "rls": true,
+      "name": "visual_maps",
+      "columns": [
+        {
+          "name": "id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "d",
+          "generated": ""
+        },
+        {
+          "name": "project_id",
+          "type": "integer",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "building_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "section_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "floor_id",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "kind",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "title",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "image_path",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "image_width",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "image_height",
+          "type": "integer",
+          "default": null,
+          "notnull": false,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "created_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        },
+        {
+          "name": "updated_at",
+          "type": "text",
+          "default": null,
+          "notnull": true,
+          "identity": "",
+          "generated": ""
+        }
+      ]
+    }
+  ],
+  "indexes": [
+    {
+      "name": "buildings_pkey",
+      "table": "buildings",
+      "definition": "CREATE UNIQUE INDEX buildings_pkey ON public.buildings USING btree (id)"
+    },
+    {
+      "name": "buildings_project_id_code_key",
+      "table": "buildings",
+      "definition": "CREATE UNIQUE INDEX buildings_project_id_code_key ON public.buildings USING btree (project_id, code)"
+    },
+    {
+      "name": "idx_buildings_project",
+      "table": "buildings",
+      "definition": "CREATE INDEX idx_buildings_project ON public.buildings USING btree (project_id)"
+    },
+    {
+      "name": "company_settings_pkey",
+      "table": "company_settings",
+      "definition": "CREATE UNIQUE INDEX company_settings_pkey ON public.company_settings USING btree (singleton)"
+    },
+    {
+      "name": "deal_payment_schedules_pkey",
+      "table": "deal_payment_schedules",
+      "definition": "CREATE UNIQUE INDEX deal_payment_schedules_pkey ON public.deal_payment_schedules USING btree (id)"
+    },
+    {
+      "name": "idx_schedules_deal",
+      "table": "deal_payment_schedules",
+      "definition": "CREATE INDEX idx_schedules_deal ON public.deal_payment_schedules USING btree (deal_id)"
+    },
+    {
+      "name": "deals_contract_number_key",
+      "table": "deals",
+      "definition": "CREATE UNIQUE INDEX deals_contract_number_key ON public.deals USING btree (contract_number)"
+    },
+    {
+      "name": "deals_pkey",
+      "table": "deals",
+      "definition": "CREATE UNIQUE INDEX deals_pkey ON public.deals USING btree (id)"
+    },
+    {
+      "name": "idx_deals_active_unit",
+      "table": "deals",
+      "definition": "CREATE UNIQUE INDEX idx_deals_active_unit ON public.deals USING btree (unit_id) WHERE (status = ANY (ARRAY['RESERVED'::text, 'SIGNED'::text]))"
+    },
+    {
+      "name": "idx_deals_lead",
+      "table": "deals",
+      "definition": "CREATE INDEX idx_deals_lead ON public.deals USING btree (lead_id)"
+    },
+    {
+      "name": "idx_deals_responsible",
+      "table": "deals",
+      "definition": "CREATE INDEX idx_deals_responsible ON public.deals USING btree (responsible_user_id)"
+    },
+    {
+      "name": "idx_deals_unit",
+      "table": "deals",
+      "definition": "CREATE INDEX idx_deals_unit ON public.deals USING btree (unit_id)"
+    },
+    {
+      "name": "floors_pkey",
+      "table": "floors",
+      "definition": "CREATE UNIQUE INDEX floors_pkey ON public.floors USING btree (id)"
+    },
+    {
+      "name": "floors_section_id_floor_number_key",
+      "table": "floors",
+      "definition": "CREATE UNIQUE INDEX floors_section_id_floor_number_key ON public.floors USING btree (section_id, floor_number)"
+    },
+    {
+      "name": "idx_floors_section",
+      "table": "floors",
+      "definition": "CREATE INDEX idx_floors_section ON public.floors USING btree (section_id)"
+    },
+    {
+      "name": "idx_layout_types_project",
+      "table": "layout_types",
+      "definition": "CREATE INDEX idx_layout_types_project ON public.layout_types USING btree (project_id)"
+    },
+    {
+      "name": "layout_types_pkey",
+      "table": "layout_types",
+      "definition": "CREATE UNIQUE INDEX layout_types_pkey ON public.layout_types USING btree (id)"
+    },
+    {
+      "name": "layout_types_project_id_code_key",
+      "table": "layout_types",
+      "definition": "CREATE UNIQUE INDEX layout_types_project_id_code_key ON public.layout_types USING btree (project_id, code)"
+    },
+    {
+      "name": "idx_lead_notes_author",
+      "table": "lead_notes",
+      "definition": "CREATE INDEX idx_lead_notes_author ON public.lead_notes USING btree (author_user_id)"
+    },
+    {
+      "name": "idx_lead_notes_lead",
+      "table": "lead_notes",
+      "definition": "CREATE INDEX idx_lead_notes_lead ON public.lead_notes USING btree (lead_id)"
+    },
+    {
+      "name": "lead_notes_pkey",
+      "table": "lead_notes",
+      "definition": "CREATE UNIQUE INDEX lead_notes_pkey ON public.lead_notes USING btree (id)"
+    },
+    {
+      "name": "idx_leads_phone",
+      "table": "leads",
+      "definition": "CREATE INDEX idx_leads_phone ON public.leads USING btree (phone)"
+    },
+    {
+      "name": "idx_leads_project",
+      "table": "leads",
+      "definition": "CREATE INDEX idx_leads_project ON public.leads USING btree (interested_project_id)"
+    },
+    {
+      "name": "idx_leads_responsible",
+      "table": "leads",
+      "definition": "CREATE INDEX idx_leads_responsible ON public.leads USING btree (responsible_user_id)"
+    },
+    {
+      "name": "idx_leads_status",
+      "table": "leads",
+      "definition": "CREATE INDEX idx_leads_status ON public.leads USING btree (status)"
+    },
+    {
+      "name": "leads_pkey",
+      "table": "leads",
+      "definition": "CREATE UNIQUE INDEX leads_pkey ON public.leads USING btree (id)"
+    },
+    {
+      "name": "idx_hotspots_building",
+      "table": "map_hotspots",
+      "definition": "CREATE INDEX idx_hotspots_building ON public.map_hotspots USING btree (target_building_id)"
+    },
+    {
+      "name": "idx_hotspots_floor",
+      "table": "map_hotspots",
+      "definition": "CREATE INDEX idx_hotspots_floor ON public.map_hotspots USING btree (target_floor_id)"
+    },
+    {
+      "name": "idx_hotspots_section",
+      "table": "map_hotspots",
+      "definition": "CREATE INDEX idx_hotspots_section ON public.map_hotspots USING btree (target_section_id)"
+    },
+    {
+      "name": "idx_hotspots_unit",
+      "table": "map_hotspots",
+      "definition": "CREATE INDEX idx_hotspots_unit ON public.map_hotspots USING btree (target_unit_id)"
+    },
+    {
+      "name": "idx_map_hotspots_map",
+      "table": "map_hotspots",
+      "definition": "CREATE INDEX idx_map_hotspots_map ON public.map_hotspots USING btree (visual_map_id)"
+    },
+    {
+      "name": "map_hotspots_pkey",
+      "table": "map_hotspots",
+      "definition": "CREATE UNIQUE INDEX map_hotspots_pkey ON public.map_hotspots USING btree (id)"
+    },
+    {
+      "name": "idx_payments_author",
+      "table": "payments",
+      "definition": "CREATE INDEX idx_payments_author ON public.payments USING btree (created_by_user_id)"
+    },
+    {
+      "name": "idx_payments_date",
+      "table": "payments",
+      "definition": "CREATE INDEX idx_payments_date ON public.payments USING btree (payment_date)"
+    },
+    {
+      "name": "idx_payments_deal",
+      "table": "payments",
+      "definition": "CREATE INDEX idx_payments_deal ON public.payments USING btree (deal_id)"
+    },
+    {
+      "name": "idx_payments_schedule",
+      "table": "payments",
+      "definition": "CREATE INDEX idx_payments_schedule ON public.payments USING btree (schedule_id)"
+    },
+    {
+      "name": "payments_pkey",
+      "table": "payments",
+      "definition": "CREATE UNIQUE INDEX payments_pkey ON public.payments USING btree (id)"
+    },
+    {
+      "name": "projects_code_key",
+      "table": "projects",
+      "definition": "CREATE UNIQUE INDEX projects_code_key ON public.projects USING btree (code)"
+    },
+    {
+      "name": "projects_pkey",
+      "table": "projects",
+      "definition": "CREATE UNIQUE INDEX projects_pkey ON public.projects USING btree (id)"
+    },
+    {
+      "name": "idx_sections_building",
+      "table": "sections",
+      "definition": "CREATE INDEX idx_sections_building ON public.sections USING btree (building_id)"
+    },
+    {
+      "name": "sections_building_id_code_key",
+      "table": "sections",
+      "definition": "CREATE UNIQUE INDEX sections_building_id_code_key ON public.sections USING btree (building_id, code)"
+    },
+    {
+      "name": "sections_pkey",
+      "table": "sections",
+      "definition": "CREATE UNIQUE INDEX sections_pkey ON public.sections USING btree (id)"
+    },
+    {
+      "name": "idx_units_floor",
+      "table": "units",
+      "definition": "CREATE INDEX idx_units_floor ON public.units USING btree (floor_id)"
+    },
+    {
+      "name": "idx_units_layout",
+      "table": "units",
+      "definition": "CREATE INDEX idx_units_layout ON public.units USING btree (layout_type_id)"
+    },
+    {
+      "name": "idx_units_status",
+      "table": "units",
+      "definition": "CREATE INDEX idx_units_status ON public.units USING btree (status)"
+    },
+    {
+      "name": "units_floor_id_unit_number_key",
+      "table": "units",
+      "definition": "CREATE UNIQUE INDEX units_floor_id_unit_number_key ON public.units USING btree (floor_id, unit_number)"
+    },
+    {
+      "name": "units_pkey",
+      "table": "units",
+      "definition": "CREATE UNIQUE INDEX units_pkey ON public.units USING btree (id)"
+    },
+    {
+      "name": "users_email_key",
+      "table": "users",
+      "definition": "CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)"
+    },
+    {
+      "name": "users_pkey",
+      "table": "users",
+      "definition": "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)"
+    },
+    {
+      "name": "idx_visual_maps_building",
+      "table": "visual_maps",
+      "definition": "CREATE INDEX idx_visual_maps_building ON public.visual_maps USING btree (building_id)"
+    },
+    {
+      "name": "idx_visual_maps_floor",
+      "table": "visual_maps",
+      "definition": "CREATE INDEX idx_visual_maps_floor ON public.visual_maps USING btree (floor_id)"
+    },
+    {
+      "name": "idx_visual_maps_project",
+      "table": "visual_maps",
+      "definition": "CREATE INDEX idx_visual_maps_project ON public.visual_maps USING btree (project_id)"
+    },
+    {
+      "name": "idx_visual_maps_section",
+      "table": "visual_maps",
+      "definition": "CREATE INDEX idx_visual_maps_section ON public.visual_maps USING btree (section_id)"
+    },
+    {
+      "name": "visual_maps_pkey",
+      "table": "visual_maps",
+      "definition": "CREATE UNIQUE INDEX visual_maps_pkey ON public.visual_maps USING btree (id)"
+    }
+  ],
+  "triggers": null,
+  "functions": null,
+  "constraints": [
+    {
+      "kind": "p",
+      "name": "buildings_pkey",
+      "table": "buildings",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "u",
+      "name": "buildings_project_id_code_key",
+      "table": "buildings",
+      "definition": "UNIQUE (project_id, code)"
+    },
+    {
+      "kind": "f",
+      "name": "buildings_project_id_fkey",
+      "table": "buildings",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "c",
+      "name": "company_settings_company_name_check",
+      "table": "company_settings",
+      "definition": "CHECK (length(TRIM(BOTH FROM company_name)) > 0)"
+    },
+    {
+      "kind": "c",
+      "name": "company_settings_default_currency_check",
+      "table": "company_settings",
+      "definition": "CHECK (default_currency = ANY (ARRAY['TJS'::text, 'USD'::text, 'RUB'::text]))"
+    },
+    {
+      "kind": "p",
+      "name": "company_settings_pkey",
+      "table": "company_settings",
+      "definition": "PRIMARY KEY (singleton)"
+    },
+    {
+      "kind": "c",
+      "name": "company_settings_singleton_check",
+      "table": "company_settings",
+      "definition": "CHECK (singleton)"
+    },
+    {
+      "kind": "c",
+      "name": "deal_payment_schedules_amount_minor_check",
+      "table": "deal_payment_schedules",
+      "definition": "CHECK (amount_minor > 0)"
+    },
+    {
+      "kind": "f",
+      "name": "deal_payment_schedules_deal_id_fkey",
+      "table": "deal_payment_schedules",
+      "definition": "FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "p",
+      "name": "deal_payment_schedules_pkey",
+      "table": "deal_payment_schedules",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "c",
+      "name": "deal_payment_schedules_status_check",
+      "table": "deal_payment_schedules",
+      "definition": "CHECK (status = ANY (ARRAY['UPCOMING'::text, 'DUE'::text, 'PARTIAL'::text, 'PAID'::text, 'OVERDUE'::text]))"
+    },
+    {
+      "kind": "c",
+      "name": "deals_barter_amount_minor_check",
+      "table": "deals",
+      "definition": "CHECK (barter_amount_minor >= 0)"
+    },
+    {
+      "kind": "c",
+      "name": "deals_base_price_minor_check",
+      "table": "deals",
+      "definition": "CHECK (base_price_minor >= 0)"
+    },
+    {
+      "kind": "u",
+      "name": "deals_contract_number_key",
+      "table": "deals",
+      "definition": "UNIQUE (contract_number)"
+    },
+    {
+      "kind": "c",
+      "name": "deals_discount_minor_check",
+      "table": "deals",
+      "definition": "CHECK (discount_minor >= 0)"
+    },
+    {
+      "kind": "c",
+      "name": "deals_final_price_minor_check",
+      "table": "deals",
+      "definition": "CHECK (final_price_minor >= 0)"
+    },
+    {
+      "kind": "f",
+      "name": "deals_lead_id_fkey",
+      "table": "deals",
+      "definition": "FOREIGN KEY (lead_id) REFERENCES leads(id)"
+    },
+    {
+      "kind": "c",
+      "name": "deals_payment_type_check",
+      "table": "deals",
+      "definition": "CHECK (payment_type = ANY (ARRAY['FULL'::text, 'INSTALLMENT'::text, 'BARTER'::text, 'PARTIAL_BARTER'::text]))"
+    },
+    {
+      "kind": "p",
+      "name": "deals_pkey",
+      "table": "deals",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "f",
+      "name": "deals_responsible_user_id_fkey",
+      "table": "deals",
+      "definition": "FOREIGN KEY (responsible_user_id) REFERENCES users(id)"
+    },
+    {
+      "kind": "c",
+      "name": "deals_status_check",
+      "table": "deals",
+      "definition": "CHECK (status = ANY (ARRAY['DRAFT'::text, 'RESERVED'::text, 'SIGNED'::text, 'CANCELLED'::text]))"
+    },
+    {
+      "kind": "f",
+      "name": "deals_unit_id_fkey",
+      "table": "deals",
+      "definition": "FOREIGN KEY (unit_id) REFERENCES units(id)"
+    },
+    {
+      "kind": "p",
+      "name": "floors_pkey",
+      "table": "floors",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "f",
+      "name": "floors_section_id_fkey",
+      "table": "floors",
+      "definition": "FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "u",
+      "name": "floors_section_id_floor_number_key",
+      "table": "floors",
+      "definition": "UNIQUE (section_id, floor_number)"
+    },
+    {
+      "kind": "c",
+      "name": "layout_types_area_m2_x100_check",
+      "table": "layout_types",
+      "definition": "CHECK (area_m2_x100 > 0)"
+    },
+    {
+      "kind": "c",
+      "name": "layout_types_default_price_per_m2_minor_check",
+      "table": "layout_types",
+      "definition": "CHECK (default_price_per_m2_minor >= 0)"
+    },
+    {
+      "kind": "p",
+      "name": "layout_types_pkey",
+      "table": "layout_types",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "u",
+      "name": "layout_types_project_id_code_key",
+      "table": "layout_types",
+      "definition": "UNIQUE (project_id, code)"
+    },
+    {
+      "kind": "f",
+      "name": "layout_types_project_id_fkey",
+      "table": "layout_types",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "c",
+      "name": "layout_types_rooms_check",
+      "table": "layout_types",
+      "definition": "CHECK (rooms >= 0)"
+    },
+    {
+      "kind": "f",
+      "name": "lead_notes_author_user_id_fkey",
+      "table": "lead_notes",
+      "definition": "FOREIGN KEY (author_user_id) REFERENCES users(id)"
+    },
+    {
+      "kind": "f",
+      "name": "lead_notes_lead_id_fkey",
+      "table": "lead_notes",
+      "definition": "FOREIGN KEY (lead_id) REFERENCES leads(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "p",
+      "name": "lead_notes_pkey",
+      "table": "lead_notes",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "f",
+      "name": "leads_interested_project_id_fkey",
+      "table": "leads",
+      "definition": "FOREIGN KEY (interested_project_id) REFERENCES projects(id)"
+    },
+    {
+      "kind": "p",
+      "name": "leads_pkey",
+      "table": "leads",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "f",
+      "name": "leads_responsible_user_id_fkey",
+      "table": "leads",
+      "definition": "FOREIGN KEY (responsible_user_id) REFERENCES users(id)"
+    },
+    {
+      "kind": "c",
+      "name": "leads_status_check",
+      "table": "leads",
+      "definition": "CHECK (status = ANY (ARRAY['NEW'::text, 'IN_PROGRESS'::text, 'NEGOTIATION'::text, 'WON'::text, 'LOST'::text]))"
+    },
+    {
+      "kind": "c",
+      "name": "map_hotspots_check",
+      "table": "map_hotspots",
+      "definition": "CHECK ((x_pct + width_pct) <= 100::double precision)"
+    },
+    {
+      "kind": "c",
+      "name": "map_hotspots_check1",
+      "table": "map_hotspots",
+      "definition": "CHECK ((y_pct + height_pct) <= 100::double precision)"
+    },
+    {
+      "kind": "c",
+      "name": "map_hotspots_height_pct_check",
+      "table": "map_hotspots",
+      "definition": "CHECK (height_pct > 0::double precision AND height_pct <= 100::double precision)"
+    },
+    {
+      "kind": "p",
+      "name": "map_hotspots_pkey",
+      "table": "map_hotspots",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "f",
+      "name": "map_hotspots_target_building_id_fkey",
+      "table": "map_hotspots",
+      "definition": "FOREIGN KEY (target_building_id) REFERENCES buildings(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "f",
+      "name": "map_hotspots_target_floor_id_fkey",
+      "table": "map_hotspots",
+      "definition": "FOREIGN KEY (target_floor_id) REFERENCES floors(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "f",
+      "name": "map_hotspots_target_section_id_fkey",
+      "table": "map_hotspots",
+      "definition": "FOREIGN KEY (target_section_id) REFERENCES sections(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "f",
+      "name": "map_hotspots_target_unit_id_fkey",
+      "table": "map_hotspots",
+      "definition": "FOREIGN KEY (target_unit_id) REFERENCES units(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "f",
+      "name": "map_hotspots_visual_map_id_fkey",
+      "table": "map_hotspots",
+      "definition": "FOREIGN KEY (visual_map_id) REFERENCES visual_maps(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "c",
+      "name": "map_hotspots_width_pct_check",
+      "table": "map_hotspots",
+      "definition": "CHECK (width_pct > 0::double precision AND width_pct <= 100::double precision)"
+    },
+    {
+      "kind": "c",
+      "name": "map_hotspots_x_pct_check",
+      "table": "map_hotspots",
+      "definition": "CHECK (x_pct >= 0::double precision AND x_pct <= 100::double precision)"
+    },
+    {
+      "kind": "c",
+      "name": "map_hotspots_y_pct_check",
+      "table": "map_hotspots",
+      "definition": "CHECK (y_pct >= 0::double precision AND y_pct <= 100::double precision)"
+    },
+    {
+      "kind": "c",
+      "name": "payments_amount_minor_check",
+      "table": "payments",
+      "definition": "CHECK (amount_minor > 0)"
+    },
+    {
+      "kind": "f",
+      "name": "payments_created_by_user_id_fkey",
+      "table": "payments",
+      "definition": "FOREIGN KEY (created_by_user_id) REFERENCES users(id)"
+    },
+    {
+      "kind": "f",
+      "name": "payments_deal_id_fkey",
+      "table": "payments",
+      "definition": "FOREIGN KEY (deal_id) REFERENCES deals(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "c",
+      "name": "payments_method_check",
+      "table": "payments",
+      "definition": "CHECK (method = ANY (ARRAY['CASH'::text, 'BANK_TRANSFER'::text, 'CARD'::text, 'OTHER'::text]))"
+    },
+    {
+      "kind": "p",
+      "name": "payments_pkey",
+      "table": "payments",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "f",
+      "name": "payments_schedule_id_fkey",
+      "table": "payments",
+      "definition": "FOREIGN KEY (schedule_id) REFERENCES deal_payment_schedules(id) ON DELETE SET NULL"
+    },
+    {
+      "kind": "u",
+      "name": "projects_code_key",
+      "table": "projects",
+      "definition": "UNIQUE (code)"
+    },
+    {
+      "kind": "c",
+      "name": "projects_currency_check",
+      "table": "projects",
+      "definition": "CHECK (currency = ANY (ARRAY['TJS'::text, 'USD'::text, 'RUB'::text]))"
+    },
+    {
+      "kind": "p",
+      "name": "projects_pkey",
+      "table": "projects",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "u",
+      "name": "sections_building_id_code_key",
+      "table": "sections",
+      "definition": "UNIQUE (building_id, code)"
+    },
+    {
+      "kind": "f",
+      "name": "sections_building_id_fkey",
+      "table": "sections",
+      "definition": "FOREIGN KEY (building_id) REFERENCES buildings(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "p",
+      "name": "sections_pkey",
+      "table": "sections",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "c",
+      "name": "units_area_m2_x100_check",
+      "table": "units",
+      "definition": "CHECK (area_m2_x100 > 0)"
+    },
+    {
+      "kind": "f",
+      "name": "units_floor_id_fkey",
+      "table": "units",
+      "definition": "FOREIGN KEY (floor_id) REFERENCES floors(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "u",
+      "name": "units_floor_id_unit_number_key",
+      "table": "units",
+      "definition": "UNIQUE (floor_id, unit_number)"
+    },
+    {
+      "kind": "f",
+      "name": "units_layout_type_id_fkey",
+      "table": "units",
+      "definition": "FOREIGN KEY (layout_type_id) REFERENCES layout_types(id) ON DELETE SET NULL"
+    },
+    {
+      "kind": "p",
+      "name": "units_pkey",
+      "table": "units",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "c",
+      "name": "units_price_per_m2_minor_check",
+      "table": "units",
+      "definition": "CHECK (price_per_m2_minor >= 0)"
+    },
+    {
+      "kind": "c",
+      "name": "units_rooms_check",
+      "table": "units",
+      "definition": "CHECK (rooms >= 0)"
+    },
+    {
+      "kind": "c",
+      "name": "units_status_check",
+      "table": "units",
+      "definition": "CHECK (status = ANY (ARRAY['AVAILABLE'::text, 'RESERVED'::text, 'SOLD'::text, 'BLOCKED'::text]))"
+    },
+    {
+      "kind": "c",
+      "name": "users_email_check",
+      "table": "users",
+      "definition": "CHECK (email = lower(email))"
+    },
+    {
+      "kind": "u",
+      "name": "users_email_key",
+      "table": "users",
+      "definition": "UNIQUE (email)"
+    },
+    {
+      "kind": "c",
+      "name": "users_is_active_check",
+      "table": "users",
+      "definition": "CHECK (is_active = ANY (ARRAY[0, 1]))"
+    },
+    {
+      "kind": "c",
+      "name": "users_permissions_check",
+      "table": "users",
+      "definition": "CHECK (jsonb_typeof(permissions) = 'array'::text)"
+    },
+    {
+      "kind": "p",
+      "name": "users_pkey",
+      "table": "users",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "c",
+      "name": "users_role_check",
+      "table": "users",
+      "definition": "CHECK (role = ANY (ARRAY['ADMIN'::text, 'DIRECTOR'::text, 'SALES_MANAGER'::text, 'FINANCE_MANAGER'::text, 'MANAGER'::text, 'WAREHOUSE_MANAGER'::text]))"
+    },
+    {
+      "kind": "f",
+      "name": "visual_maps_building_id_fkey",
+      "table": "visual_maps",
+      "definition": "FOREIGN KEY (building_id) REFERENCES buildings(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "f",
+      "name": "visual_maps_floor_id_fkey",
+      "table": "visual_maps",
+      "definition": "FOREIGN KEY (floor_id) REFERENCES floors(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "c",
+      "name": "visual_maps_kind_check",
+      "table": "visual_maps",
+      "definition": "CHECK (kind = ANY (ARRAY['GENPLAN'::text, 'FACADE'::text, 'FLOORPLAN'::text]))"
+    },
+    {
+      "kind": "p",
+      "name": "visual_maps_pkey",
+      "table": "visual_maps",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "kind": "f",
+      "name": "visual_maps_project_id_fkey",
+      "table": "visual_maps",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
+    },
+    {
+      "kind": "f",
+      "name": "visual_maps_section_id_fkey",
+      "table": "visual_maps",
+      "definition": "FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE CASCADE"
+    }
+  ]
+}
