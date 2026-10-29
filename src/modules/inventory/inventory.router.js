@@ -3,10 +3,24 @@ import { InventoryRepository } from './inventory.repository.js';
 import { AlternativeUnitsService } from './alternativeUnits.service.js';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+import { validateBuildingAreas } from './buildingAreas.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 
 const router = express.Router();
 router.use(protect);
+
+router.patch('/projects/:projectId/buildings/:buildingId/areas', async (req, res, next) => {
+  try {
+    // Editing the project's design areas requires an actual management role,
+    // including when a user has general inventory access through the permission matrix.
+    if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) throw new AppError('Доступ только администратору или директору', 403);
+    const projectId = parseRequiredBigInt(req.params.projectId, 'projectId');
+    const buildingId = parseRequiredBigInt(req.params.buildingId, 'buildingId');
+    const areas = validateBuildingAreas(req.body);
+    const building = await InventoryRepository.updateBuildingAreas(projectId, buildingId, areas);
+    res.status(200).json({ status: 'success', data: { building } });
+  } catch (error) { next(error); }
+});
 
 router.get('/projects/:projectId/stats', async (req, res, next) => {
   try {

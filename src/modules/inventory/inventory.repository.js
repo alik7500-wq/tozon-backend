@@ -1,7 +1,17 @@
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
 import { DealsRepository } from '../deals/deals.repository.js';
+import { AppError } from '../../shared/errors/errorHandler.js';
 
 export class InventoryRepository {
+  static async updateBuildingAreas(projectId, buildingId, areas) {
+    const { data, error } = await getServiceDB().from('buildings')
+      .update({ ...areas, updated_at: new Date().toISOString() })
+      .eq('project_id', projectId).eq('id', buildingId).is('archived_at', null)
+      .select().maybeSingle();
+    if (error) throw error;
+    if (!data) throw new AppError('Блок не найден в выбранном объекте', 404);
+    return data;
+  }
   static async getProjectStats(projectId) {
     let stats = { total_units: 0, available_units: 0, reserved_units: 0, sold_units: 0, blocked_units: 0, avg_price_per_m2_minor: 0, total_area_x100: 0 };
     try {
@@ -169,10 +179,11 @@ export class InventoryRepository {
 
   static async getChessboard(projectId, filters = {}) {
     const db = getDB();
-    const { data: buildings } = await db.from('buildings').select(`
+    const { data: buildings, error } = await db.from('buildings').select(`
       *,
       sections (*, floors (*, units (*, layout_types(*))))
     `).eq('project_id', projectId).order('sort_order');
+    if (error) throw error;
     return buildings || [];
   }
 
