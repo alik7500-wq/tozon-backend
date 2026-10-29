@@ -16,6 +16,7 @@ router.get('/:id/images/:index',async(req,res)=>{
   } catch {res.status(404).json({message:'Фото недоступно. Создайте новую сессию.'});}
 });
 router.get('/:id',run(req=>passportBridge.status(req.params.id,req.user)));
+router.post('/:id/send',rateLimit({windowMs:60000,limit:5,keyGenerator:req=>String(req.user.id)}),run(req=>passportBridge.sendLink(req.params.id,req.user,req.body?.url,getFinanceBot().api)));
 router.post('/:id/approve',run(req=>passportBridge.approve(req.params.id,req.user)));
 router.post('/:id/consume',run(req=>passportBridge.consume(req.params.id,req.user)));
 router.delete('/:id',run(req=>passportBridge.cancel(req.params.id,req.user)));

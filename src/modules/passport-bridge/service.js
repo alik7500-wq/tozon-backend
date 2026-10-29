@@ -14,12 +14,22 @@ export class PassportBridge {
   constructor({db, users=UsersRepository, analyze=AIDocumentRecognitionService.analyzePassportImages.bind(AIDocumentRecognitionService)}={}) { this.database=db; this.users=users; this.analyze=analyze; }
   get db() { return this.database || getServiceDB(); }
   async cleanup() { check(await this.db.from('telegram_passport_sessions').delete().lt('expires_at',new Date().toISOString())); }
+  async binding(userId, {allowFinance=true}={}) {
+    const existing=check(await this.db.from('telegram_passport_bindings').select('*').eq('user_id',userId).maybeSingle());
+    if(existing) return existing;
+    if(!allowFinance) return null;
+    // Only an administrator-approved, unambiguous CRM link is trusted for first use.
+    const finance=check(await this.db.from('telegram_finance_subscribers').select('telegram_id,display_name').eq('crm_user_id',userId).eq('status','APPROVED').limit(2));
+    if(finance.length!==1) return null;
+    return check(await this.db.from('telegram_passport_bindings').insert({user_id:userId,telegram_id:finance[0].telegram_id,telegram_name:finance[0].display_name||''}).select().single());
+  }
   async create(user) {
     if(!canScan(user)) throw new Error('PASSPORT_ACCESS_DENIED');
     await this.cleanup();
+    const linked=await this.binding(user.id);
     const token=crypto.randomBytes(24).toString('hex');
-    const session=check(await this.db.from('telegram_passport_sessions').insert({user_id:user.id,token_hash:hash(token),expires_at:new Date(Date.now()+15*60000).toISOString()}).select('id,expires_at').single());
-    return {...session,url:`https://t.me/TozonFinanceBot?start=passport_${token}`};
+    const session=check(await this.db.from('telegram_passport_sessions').insert({user_id:user.id,token_hash:hash(token),...(linked?{telegram_id:linked.telegram_id,telegram_name:linked.telegram_name,status:'UPLOAD'}:{}),expires_at:new Date(Date.now()+15*60000).toISOString()}).select('id,expires_at,status,telegram_name').single());
+    return {...session,linked:Boolean(linked),url:`https://t.me/TozonFinanceBot?start=passport_${token}`};
   }
   async owned(id,user) {
     if(!canScan(user)) throw new Error('PASSPORT_ACCESS_DENIED');
@@ -29,7 +39,19 @@ export class PassportBridge {
   }
   async patch(s,fields,status=s.status) { return check(await this.db.from('telegram_passport_sessions').update(fields).eq('id',s.id).eq('status',status).select().maybeSingle()); }
   async status(id,user) { const s=await this.owned(id,user); return {id:s.id,status:s.status,telegram_name:s.telegram_name,result:s.status==='READY'?s.result:null,image_count:s.status==='READY'?s.file_ids.length:0}; }
-  async approve(id,user) { const s=await this.owned(id,user); return Boolean(await this.patch(s,{status:'UPLOAD'},'PAIRING')); }
+  async approve(id,user) {
+    const s=await this.owned(id,user);
+    if(s.status!=='PAIRING'||!s.telegram_id)return false;
+    check(await this.db.from('telegram_passport_bindings').upsert({user_id:user.id,telegram_id:s.telegram_id,telegram_name:s.telegram_name||'',verified_at:new Date().toISOString()},{onConflict:'user_id'}));
+    return Boolean(await this.patch(s,{status:'UPLOAD'},'PAIRING'));
+  }
+  async sendLink(id,user,url,api) {
+    const s=await this.owned(id,user),linked=await this.binding(user.id,{allowFinance:false});
+    const token=/^https:\/\/t\.me\/TozonFinanceBot\?start=passport_([a-f0-9]{48})$/.exec(String(url||''))?.[1];
+    if(!token||hash(token)!==s.token_hash||s.status!=='UPLOAD'||!linked||linked.telegram_id!==s.telegram_id)throw new Error('PASSPORT_LINK_DENIED');
+    await api.call('sendMessage',{chat_id:linked.telegram_id,text:'📷 Сканирование паспорта для открытого договора в CRM. Отправьте фото паспорта в этот чат, затем нажмите «Распознать паспорт».',reply_markup:{inline_keyboard:[[{text:'Открыть сканирование',url}]]}});
+    return true;
+  }
   async consume(id,user) { const s=await this.owned(id,user); return Boolean(await this.patch(s,{status:'CONSUMED',result:null,file_ids:[]},'READY')); }
   async cancel(id,user) { const s=await this.owned(id,user); check(await this.db.from('telegram_passport_sessions').delete().eq('id',s.id).eq('user_id',user.id)); }
   async downloadPhoto(fileId,api) {
@@ -55,8 +77,18 @@ export class PassportBridge {
     const send=(text,buttons)=>api.call('sendMessage',{chat_id:sender.id,text,...(buttons?{reply_markup:{inline_keyboard:buttons}}:{})});
     let s;
     if(token) {
-      s=check(await this.db.from('telegram_passport_sessions').update({status:'PAIRING',telegram_id:String(sender.id),telegram_name:[sender.first_name,sender.last_name].filter(Boolean).join(' ').slice(0,100)}).eq('token_hash',hash(token)).eq('status','PENDING').gt('expires_at',new Date().toISOString()).select().maybeSingle());
-      await send(s?'Подтвердите подключение этого Telegram в открытом окне CRM. Доступ к кассам не предоставляется.':'Ссылка истекла или уже использована. Создайте новую в CRM.'); return true;
+      s=check(await this.db.from('telegram_passport_sessions').select('*').eq('token_hash',hash(token)).gt('expires_at',new Date().toISOString()).maybeSingle());
+      if(!s){await send('Ссылка истекла. Создайте новую в CRM.');return true;}
+      if(!canScan(await this.users.findById(s.user_id))){await send('Доступ к сканированию закрыт.');return true;}
+      if(s.telegram_id&&s.telegram_id!==String(sender.id)){await send('Эта ссылка предназначена другому менеджеру.');return true;}
+      if(s.status==='UPLOAD'&&s.telegram_id===String(sender.id)){
+        await send('📷 Отправьте фото паспорта в этот чат. Если документ двусторонний — отправьте обе стороны.');return true;
+      }
+      if(s.status==='PENDING'){
+        s=await this.patch(s,{status:'PAIRING',telegram_id:String(sender.id),telegram_name:[sender.first_name,sender.last_name].filter(Boolean).join(' ').slice(0,100)});
+        await send(s?'Подтвердите первое подключение Telegram в CRM. В следующий раз повторять это не потребуется.':'Ссылка уже используется.');return true;
+      }
+      await send(s.status==='PAIRING'?'Подтвердите первое подключение в CRM.':'Эта сессия уже используется. Вернитесь к текущему шагу сканирования.');return true;
     }
     if(!explicit&&!m.photo) return false;
     let q=this.db.from('telegram_passport_sessions').select('*').eq('telegram_id',String(sender.id)).gt('expires_at',new Date().toISOString());

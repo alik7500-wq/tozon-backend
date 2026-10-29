@@ -75,3 +75,28 @@ it('serves previews only to the session owner before consumption',async()=>{
  bridge.owned.mockResolvedValue({status:'CONSUMED',file_ids:[]});
  await expect(bridge.image('s',{id:12},0,api)).rejects.toThrow('PHOTO_UNAVAILABLE');
 });
+
+it('sends a scan link only to the verified manager and validates the exact session token',async()=>{
+ const {createHash}=await import('node:crypto');
+ const token='a'.repeat(48),url=`https://t.me/TozonFinanceBot?start=passport_${token}`;
+ const bridge=new PassportBridge(),api={call:vi.fn()};
+ bridge.owned=vi.fn().mockResolvedValue({status:'UPLOAD',telegram_id:'7',token_hash:createHash('sha256').update(token).digest('hex')});
+ bridge.binding=vi.fn().mockResolvedValue({telegram_id:'7'});
+ expect(await bridge.sendLink('session',{id:12},url,api)).toBe(true);
+ expect(api.call).toHaveBeenCalledWith('sendMessage',expect.objectContaining({chat_id:'7'}));
+ api.call.mockClear();
+ await expect(bridge.sendLink('session',{id:12},url+'0',api)).rejects.toThrow('PASSPORT_LINK_DENIED');
+ bridge.binding.mockResolvedValue({telegram_id:'99'});
+ await expect(bridge.sendLink('session',{id:12},url,api)).rejects.toThrow('PASSPORT_LINK_DENIED');
+ expect(api.call).not.toHaveBeenCalled();
+});
+
+it('does not let another Telegram account claim a session prepared for a registered manager',async()=>{
+ const s={id:'s',user_id:12,telegram_id:'7',status:'UPLOAD'};
+ const q={select:()=>q,eq:()=>q,gt:()=>q,maybeSingle:async()=>({data:s})};
+ const bridge=new PassportBridge({db:{from:()=>q},users:{findById:async()=>({id:12,is_active:1,role:'SALES_MANAGER'})}}),api={call:vi.fn()};
+ bridge.patch=vi.fn();
+ await bridge.handle({message:{from:{id:99},chat:{id:99,type:'private'},text:'/start passport_'+'a'.repeat(48)}},api);
+ expect(bridge.patch).not.toHaveBeenCalled();
+ expect(api.call.mock.calls[0][1].text).toContain('другому менеджеру');
+});
