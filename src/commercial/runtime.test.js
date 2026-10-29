@@ -21,3 +21,10 @@ it('accepts test-only server keys and a separate JWT secret without leaking valu
  const key='sb_secret_example';const jwt='x'.repeat(64);
  expect(commercialRuntimeConfig({...env,SUPABASE_SERVICE_ROLE_KEY:key,JWT_SECRET:jwt}).ready).toBe(true);
 });
+
+it('allows opted-in AI credentials while keeping other integrations blocked',()=>{
+ const configured={...env,SUPABASE_SERVICE_ROLE_KEY:'sb_secret_example',JWT_SECRET:'x'.repeat(64),OPENAI_API_KEY:'test-placeholder'};
+ expect(()=>commercialRuntimeConfig(configured)).toThrow('INTEGRATION_DISABLED');
+ expect(commercialRuntimeConfig({...configured,COMMERCIAL_AI_ENABLED:'true'}).ready).toBe(true);
+ expect(()=>commercialRuntimeConfig({...configured,COMMERCIAL_AI_ENABLED:'true',PAYOM_API_TOKEN:'test-placeholder'})).toThrow('INTEGRATION_DISABLED');
+});

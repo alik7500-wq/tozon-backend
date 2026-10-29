@@ -10,7 +10,7 @@ export function commercialRuntimeConfig(env) {
  for(const [key,value] of Object.entries(env)) {
   if(typeof value!=='string')continue;
   if(/URL|KEY|SECRET|TOKEN|HOST/.test(key) && protectedRefs.some(ref=>value.includes(ref)))throw new Error('COMMERCIAL_PRODUCTION_REFERENCE_FORBIDDEN');
-  if(value && externalSecrets.test(key))throw new Error('COMMERCIAL_EXTERNAL_INTEGRATION_DISABLED');
+  if(value && externalSecrets.test(key) && !(key==='OPENAI_API_KEY' && env.COMMERCIAL_AI_ENABLED==='true'))throw new Error('COMMERCIAL_EXTERNAL_INTEGRATION_DISABLED');
  }
  const serviceKey=env.SUPABASE_SERVICE_ROLE_KEY?.trim();
  const missing=[];
