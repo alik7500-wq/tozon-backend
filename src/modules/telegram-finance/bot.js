@@ -1,3 +1,4 @@
+import { passportBridge } from '../passport-bridge/service.js';
 import {syncSheets} from './sheets-sync.js';
 import crypto from 'node:crypto';
 import { buildReport, renderReport, periodFor, validDay, localDay, dailyDue, splitMessage } from './report.js';
@@ -48,7 +49,7 @@ export class TelegramAPI {
 }
 
 export class FinanceBot {
-  constructor(repo, api, { clock = () => new Date(), logger = console } = {}) { this.repo = repo; this.api = api; this.clock = clock; this.logger = logger; this.worker = crypto.randomUUID(); this.running = false; this.busy = false; this.lastRequests = new Map(); }
+  constructor(repo, api, { clock = () => new Date(), logger = console, passport = passportBridge } = {}) { this.repo = repo; this.api = api; this.passport = passport; this.clock = clock; this.logger = logger; this.worker = crypto.randomUUID(); this.running = false; this.busy = false; this.lastRequests = new Map(); }
   async report(user, view = 'summary', period = 'today', custom) {
     const { from, to } = custom || periodFor(period, this.clock());
     // Recheck access immediately before reading financial information.
@@ -66,6 +67,7 @@ export class FinanceBot {
     const sender = callback?.from || message?.from;
     if (!sender || sender.is_bot || message?.chat?.type !== 'private' || String(message.chat.id) !== String(sender.id)) return;
     if (callback) await this.api.call('answerCallbackQuery', { callback_query_id: callback.id });
+    if (await this.passport.handle(update, this.api)) return;
     const text = message.text || '';
     if (!callback && /^\/start(?:\s|$)/.test(text)) await this.repo.register(sender);
     const user = await this.repo.find(sender.id);
@@ -146,6 +148,10 @@ export class FinanceBot {
           this.diagnostics = { pending_updates: info.pending_update_count || 0, webhook_registered: Boolean(info.url), last_error_at: info.last_error_date || null, delivery_error: message ? (/\b[45]\d\d\b/.exec(message)?.[0] || (/timed out/i.test(message) ? 'TIMEOUT' : /SSL|TLS|certificate/i.test(message) ? 'TLS' : 'DELIVERY_ERROR')) : null };
           this.diagnosticsAt = this.clock().getTime();
         } catch { /* Do not block report processing on diagnostics. */ }
+      }
+      if (!this.passportCleanupAt || Date.now()-this.passportCleanupAt>60000) {
+        this.passportCleanupAt=Date.now();
+        try { await this.passport.cleanup(); } catch { /* Schema may not be installed yet. No passport data is exposed. */ }
       }
       try { await this.daily(); } catch { this.logger.warn('Telegram finance daily report unavailable'); }
       try { await syncSheets(this.repo); } catch { this.logger.warn('Telegram sheets sync unavailable'); }

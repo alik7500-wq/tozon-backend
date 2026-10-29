@@ -1,3 +1,4 @@
+import passportBridgeRouter from '../passport-bridge/router.js';
 import express from 'express';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
@@ -30,6 +31,7 @@ const passportScannerLimiter = rateLimit({
 
 // Protected routes
 router.use(protect);
+router.use('/passport/telegram', passportBridgeRouter);
 router.use(restrictTo('ADMIN', 'DIRECTOR', 'SALES_MANAGER', 'FINANCE_MANAGER'));
 
 router.post(

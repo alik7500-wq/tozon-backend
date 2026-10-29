@@ -19,7 +19,7 @@ router.post('/webhook', rateLimit({ windowMs: 60000, limit: 120 }), async (req, 
     const u = req.body;
     if (!Number.isSafeInteger(u.update_id) || u.update_id < 0) throw new AppError('Invalid update', 400);
     // Store only fields needed for commands; callback message text may contain finance.
-    const cleanMessage = m => m && ({ from: m.from, chat: { id: m.chat?.id, type: m.chat?.type }, text: m.text });
+    const cleanMessage = m => m && ({ from: m.from, chat: { id: m.chat?.id, type: m.chat?.type }, text: m.text, photo: m.photo?.slice(-1).map(p => ({file_id:p.file_id,file_size:p.file_size})) });
     const clean = { update_id: u.update_id };
     if (u.message) clean.message = cleanMessage(u.message);
     if (u.callback_query) clean.callback_query = { id: u.callback_query.id, from: u.callback_query.from, data: u.callback_query.data, message: { chat: { id: u.callback_query.message?.chat?.id, type: u.callback_query.message?.chat?.type } } };

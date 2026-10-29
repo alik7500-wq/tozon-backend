@@ -105,6 +105,9 @@ export const authorizeSectionRequest = async req => {
   else if (path.startsWith('/api/document-settings')) {
     key = /\/render\//.test(path) ? 'contracts.view' : 'settings.view';
     if (/\/render\//.test(path)) allowed = hasSection(user, 'contracts.view'); // document rendering is read-only
+  } else if (path.startsWith('/api/documents/passport/telegram')) {
+    key = 'deals.view';
+    allowed = hasAny(user, ['leads.view','deals.view'], true);
   } else if (path.startsWith('/api/documents')) key = 'leads.view';
   else if (path.startsWith('/api/contracts')) key = 'contracts.view';
   else if (path.startsWith('/api/sms') || path.startsWith('/api/automation')) {
