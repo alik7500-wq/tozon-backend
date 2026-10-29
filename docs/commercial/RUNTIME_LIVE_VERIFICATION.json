@@ -1,0 +1,37 @@
+{
+  "date": "2026-10-29",
+  "workspace": "tea-da2pspoae00c73cmljg0",
+  "api": {
+    "id": "srv-dbhgs3e1egvs73fhojgg",
+    "url": "https://tozon-crm-commercial-test-api.onrender.com",
+    "deploy": "dep-dbhgs4e1egvs73fhokrg",
+    "commit": "51876ceb17235ed1be2054e1faa8437c23194a86",
+    "status": "live",
+    "plan": "free",
+    "region": "frankfurt",
+    "autoDeploy": false
+  },
+  "frontend": {
+    "id": "srv-dbhgs7fb9u1s73er8rl0",
+    "url": "https://tozon-crm-commercial-test.onrender.com/",
+    "deploy": "dep-dbhgs7nb9u1s73er8sdg",
+    "commit": "9037de86e96edce2977cc50c5efe1be5c4ebf8a1",
+    "status": "live",
+    "autoDeploy": false
+  },
+  "checks": {
+    "healthHttp": 200,
+    "projectRef": "yaolkwbnhnacxxjpgiyu",
+    "crmReady": false,
+    "missing": [
+      "SUPABASE_SERVICE_ROLE_KEY"
+    ],
+    "frontendHttp": 200,
+    "browserSetupMessage": true,
+    "businessLoginHttp": 503,
+    "productionOriginHttp": 403,
+    "testOriginCors": "https://tozon-crm-commercial-test.onrender.com"
+  },
+  "newSecretsInReport": false,
+  "productionChanged": false
+}

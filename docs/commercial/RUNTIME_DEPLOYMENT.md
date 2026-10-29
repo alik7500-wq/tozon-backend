@@ -1,4 +1,4 @@
-# Isolated test application deployment — prepared, not published
+# Isolated test application deployment — live setup mode
 
 Date: 2026-10-29.
 
@@ -6,12 +6,31 @@ Date: 2026-10-29.
 
 | Component | Repository | Branch | Status |
 | --- | --- | --- | --- |
-| API | https://github.com/alik7500-wq/tozon-backend | commercial/isolated-installation | Local changes prepared |
-| UI | https://github.com/alik7500-wq/tozon-crm | commercial/isolated-test-runtime | Local commit 6a2e4be |
+| API | https://github.com/alik7500-wq/tozon-backend | commercial/isolated-installation | Published; deployed commit 51876ceb17235ed1be2054e1faa8437c23194a86 |
+| UI | https://github.com/alik7500-wq/tozon-crm | commercial/isolated-test-runtime | Published; deployed commit 9037de86e96edce2977cc50c5efe1be5c4ebf8a1 |
 
 Both existing repositories are public. Publishing these commits would expose the new implementation and schema definitions publicly. No customer rows or production credentials are included in the prepared changes. The tracked `.env` files are removed from the new branch tips; older repository history is not changed.
 
-Frontend push was rejected by automatic approval review: deployment preparation was not considered sufficient authorization to disclose code to that specific GitHub destination. No alternate publishing channel was used. Explicit user approval is required before retrying that publication. No new Render services have been created.
+The user explicitly approved publication to both public repositories and separate test deployment. Shell Git push lacked credentials; the authenticated GitHub connector published the changes. Returned Git tree hashes exactly matched the locally reviewed trees. No main branch or production service was updated.
+
+## Deployed resources
+
+| Component | Render service | Public URL | Deploy |
+| --- | --- | --- | --- |
+| API | srv-dbhgs3e1egvs73fhojgg | https://tozon-crm-commercial-test-api.onrender.com | dep-dbhgs4e1egvs73fhokrg |
+| UI | srv-dbhgs7fb9u1s73er8rl0 | https://tozon-crm-commercial-test.onrender.com/ | dep-dbhgs7nb9u1s73er8sdg |
+
+Both deploys reached `live`. API uses Free compute in Frankfurt; the UI is a static site. Automatic deploy is disabled on both services. A separate random JWT secret was generated and stored only in the new API service's environment; it was not written to source or this report.
+
+Live checks:
+
+- UI HTTP 200; rendered browser page displays the test environment and setup message.
+- API `/api/health`: HTTP 200, `status: setup_required`, `crmReady: false`, missing only `SUPABASE_SERVICE_ROLE_KEY`.
+- Requests from the dedicated UI origin receive its exact CORS allow-origin; production UI origin is denied with HTTP 403.
+- Business login route returns HTTP 503 without connecting to production or exposing application routes.
+- Runtime logs confirm `npm run commercial:start` and the isolated server listening; no legacy production startup was invoked.
+
+**The web services are live, but database-backed CRM operation and login are not ready.** The server key cannot be retrieved using the available Supabase connector, and the connected local browser is unavailable. The user must add the isolated project's Secret key (`sb_secret_...`) directly in the new API service Environment panel as `SUPABASE_SERVICE_ROLE_KEY` and choose Save and deploy. Do not paste it into chat or use a production key. API dashboard: https://dashboard.render.com/web/srv-dbhgs3e1egvs73fhojgg .
 
 ## Runtime contract
 
@@ -45,15 +64,13 @@ The main application is mounted only after a server-role query to the isolated `
 - Built JS assets contain no production TOZON API/database URLs or POPUTKI database URL.
 - Git whitespace checks pass.
 
-The setup/ready HTTP behavior is tested locally. No deployed HTTP/browser flow or real service-role API connection has been verified yet.
+Setup mode has been verified through deployed HTTP requests and the rendered UI. A real service-role API connection, administrator login and full application flows remain unverified until the user configures the test key.
 
-## Publication and configuration after user approval
+## Remaining configuration and acceptance
 
-1. Push the two reviewed branches, never main. Use independent services and disable automatic deployments unless deliberately required.
-2. Create a separate Render Node web service on `free` and a separate static site. Check current plan availability/quotas. No paid service/cron/database is required by this proposal.
-3. Configure explicit test URLs/public key; use new secrets only. Generate the separate JWT secret through a supported secure mechanism.
-4. Add the test project's server key directly in the new API service's Render Environment panel. Do not request or paste it into chat and do not reuse production environment groups.
-5. Monitor deploy IDs to live. Verify `/api/health` accurately reports setup/ready and cross-origin denial.
-6. Provision a separate test administrator and synthetic company data; then verify login, inventory/deals/finance and relevant reports through HTTP/UI.
+1. User adds only the new test project's Secret key in the API service Environment panel as `SUPABASE_SERVICE_ROLE_KEY`, then saves and deploys. The separate JWT secret and all non-secret URLs are already configured.
+2. Monitor the new deploy to live and verify `/api/health` reports ready, with the expected isolated project ref.
+3. Provision a separate test administrator and synthetic company data; verify login, inventory/deals/finance and relevant reports through HTTP/UI.
+4. Configure Storage/templates and additional onboarding fields as needed. Keep external integrations disabled until independently configured for this environment.
 
 The rendered setup page alone must never be described as a fully functioning CRM.
