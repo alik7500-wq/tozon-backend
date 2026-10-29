@@ -1,3 +1,4 @@
+import { validateDiscountForSale } from '../discounts/discounts.repository.js';
 import { getDB, getServiceDB } from '../../db/connection.js';
 import { validateAmendment } from './amendment.validation.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
@@ -299,13 +300,15 @@ export class DealsRepository {
     if (discountPercent > rules.max_discount_percent + 0.000001) throw new AppError(`Скидка превышает лимит ${rules.max_discount_percent}% в настройках компании`, 400);
 
     // 1. Verify Unit
-    const { data: unit, error: unitErr } = await db.from('units').select('*, floors(sections(buildings(projects(code, currency))))').eq('id', data.unit_id).single();
+    const { data: unit, error: unitErr } = await db.from('units').select('*, floors(sections(buildings(projects(id, code, currency))))').eq('id', data.unit_id).single();
     if (unitErr || !unit) throw new AppError('Объект не найден', 404);
     if (unit.status !== 'AVAILABLE') throw new AppError('Объект недоступен для оформления', 409);
 
     if (['PARKING', 'COMMERCIAL'].includes(unit.unit_kind) && (!Number.isSafeInteger(Number(data.final_price_minor)) || Number(data.final_price_minor) <= 0)) {
       throw new AppError('Укажите положительную стоимость объекта', 400);
     }
+
+    const discountSnapshot = await validateDiscountForSale(data, unit);
 
     // 2. Contract Number
     const { count, error: countErr } = await db.from('deals').select('*', { count: 'exact', head: true });
@@ -342,6 +345,7 @@ export class DealsRepository {
       currency: pCur,
       base_price_minor: data.base_price_minor,
       discount_minor: data.discount_minor || 0,
+      ...(discountSnapshot ? { discount_snapshot: discountSnapshot } : {}),
       final_price_minor: data.final_price_minor,
       deal_price_per_m2_minor: computedDealPricePerM2,
       exchange_rate: data.exchange_rate !== undefined && data.exchange_rate !== null ? parseFloat(data.exchange_rate) : null,

@@ -1,3 +1,4 @@
+import discountsRouter from './modules/discounts/discounts.router.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -105,6 +106,7 @@ app.use('/api/inventory', layoutPresentationRouter);
 app.use('/api/visual-maps', visualMapsRouter);
 app.use('/api/leads', leadsRouter);
 app.use('/api/deals', dealsRouter);
+app.use('/api/discount-schemes', discountsRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/roles', rolesRouter);
