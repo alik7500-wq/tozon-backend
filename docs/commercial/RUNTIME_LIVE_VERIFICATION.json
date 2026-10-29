@@ -4,8 +4,8 @@
   "api": {
     "id": "srv-dbhgs3e1egvs73fhojgg",
     "url": "https://tozon-crm-commercial-test-api.onrender.com",
-    "deploy": "dep-dbhgs4e1egvs73fhokrg",
-    "commit": "51876ceb17235ed1be2054e1faa8437c23194a86",
+    "deploy": "dep-dbhhr761egvs73fk0atg",
+    "commit": "22980ec0a2cf3dfb7e0166f4352fd1eb0894ed14",
     "status": "live",
     "plan": "free",
     "region": "frankfurt",
@@ -22,16 +22,26 @@
   "checks": {
     "healthHttp": 200,
     "projectRef": "yaolkwbnhnacxxjpgiyu",
-    "crmReady": false,
-    "missing": [
-      "SUPABASE_SERVICE_ROLE_KEY"
-    ],
+    "crmReady": true,
+    "missing": [],
     "frontendHttp": 200,
     "browserSetupMessage": true,
     "businessLoginHttp": 503,
     "productionOriginHttp": 403,
-    "testOriginCors": "https://tozon-crm-commercial-test.onrender.com"
+    "testOriginCors": "https://tozon-crm-commercial-test.onrender.com",
+    "loginHttp": 200,
+    "passwordHashExposed": false,
+    "authenticatedRoutesPassed": 13
   },
   "newSecretsInReport": false,
-  "productionChanged": false
+  "productionChanged": false,
+  "demo": {
+    "administratorId": 3,
+    "administratorEmail": "admin@tozon-test.example",
+    "projectId": 3,
+    "units": 2,
+    "payments": 0,
+    "expenses": 0,
+    "realDataCopied": false
+  }
 }

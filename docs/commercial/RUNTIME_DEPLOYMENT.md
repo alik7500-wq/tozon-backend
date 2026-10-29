@@ -1,4 +1,4 @@
-# Isolated test application deployment — live setup mode
+# Isolated test application deployment — connected demo environment
 
 Date: 2026-10-29.
 
@@ -17,20 +17,22 @@ The user explicitly approved publication to both public repositories and separat
 
 | Component | Render service | Public URL | Deploy |
 | --- | --- | --- | --- |
-| API | srv-dbhgs3e1egvs73fhojgg | https://tozon-crm-commercial-test-api.onrender.com | dep-dbhgs4e1egvs73fhokrg |
+| API | srv-dbhgs3e1egvs73fhojgg | https://tozon-crm-commercial-test-api.onrender.com | dep-dbhhr761egvs73fk0atg |
 | UI | srv-dbhgs7fb9u1s73er8rl0 | https://tozon-crm-commercial-test.onrender.com/ | dep-dbhgs7nb9u1s73er8sdg |
 
 Both deploys reached `live`. API uses Free compute in Frankfurt; the UI is a static site. Automatic deploy is disabled on both services. A separate random JWT secret was generated and stored only in the new API service's environment; it was not written to source or this report.
 
-Live checks:
+Live checks after the user configured the isolated server key:
 
-- UI HTTP 200; rendered browser page displays the test environment and setup message.
-- API `/api/health`: HTTP 200, `status: setup_required`, `crmReady: false`, missing only `SUPABASE_SERVICE_ROLE_KEY`.
-- Requests from the dedicated UI origin receive its exact CORS allow-origin; production UI origin is denied with HTTP 403.
-- Business login route returns HTTP 503 without connecting to production or exposing application routes.
-- Runtime logs confirm `npm run commercial:start` and the isolated server listening; no legacy production startup was invoked.
+- New API deploy `dep-dbhhr761egvs73fk0atg` reached live on commit `22980ec0a2cf3dfb7e0166f4352fd1eb0894ed14`.
+- API `/api/health`: HTTP 200, `status: ready`, `crmReady: true`, expected isolated project ref, no missing variables.
+- Browser UI transitions from setup to the login form at https://tozon-crm-commercial-test.onrender.com/login . Browser sign-in itself has not been automated; credential submission was verified through the application's HTTP API.
+- Test administrator login returned HTTP 200 without a password hash in the response. Authenticated checks of identity, projects, inventory structure/statistics, dashboard, finance access/income/expenses/cashflow, construction, summary reports, users and dictionaries all returned HTTP 200 (13 checks).
+- A separate synthetic administrator `admin@tozon-test.example` (id 3), generic demo company, project (id 3), two apartments and an empty cash desk were provisioned only in the isolated database. Initial payments and expenses are zero. No production account, password, customer or financial records were copied.
+- The generated administrator password is not stored in source/reports; it is supplied only for the user's test login. The Supabase server key was entered by the user directly in Render and was never retrieved by the agent.
+- SMS, calls, automation, Telegram and inbound lead webhook integrations remain blocked by the isolated entry point.
 
-**The web services are live, but database-backed CRM operation and login are not ready.** The server key cannot be retrieved using the available Supabase connector, and the connected local browser is unavailable. The user must add the isolated project's Secret key (`sb_secret_...`) directly in the new API service Environment panel as `SUPABASE_SERVICE_ROLE_KEY` and choose Save and deploy. Do not paste it into chat or use a production key. API dashboard: https://dashboard.render.com/web/srv-dbhgs3e1egvs73fhojgg .
+This verifies initial demo access and representative API reads. Full browser/user workflows, document/media storage, every financial mutation and all roles still require acceptance tests.
 
 ## Runtime contract
 
@@ -64,13 +66,11 @@ The main application is mounted only after a server-role query to the isolated `
 - Built JS assets contain no production TOZON API/database URLs or POPUTKI database URL.
 - Git whitespace checks pass.
 
-Setup mode has been verified through deployed HTTP requests and the rendered UI. A real service-role API connection, administrator login and full application flows remain unverified until the user configures the test key.
+Setup mode has been verified through deployed HTTP requests and the rendered UI. The real service-role API connection and administrator HTTP login have now been verified. Full browser workflows and all modules remain acceptance tasks.
 
-## Remaining configuration and acceptance
+## Remaining acceptance work
 
-1. User adds only the new test project's Secret key in the API service Environment panel as `SUPABASE_SERVICE_ROLE_KEY`, then saves and deploys. The separate JWT secret and all non-secret URLs are already configured.
-2. Monitor the new deploy to live and verify `/api/health` reports ready, with the expected isolated project ref.
-3. Provision a separate test administrator and synthetic company data; verify login, inventory/deals/finance and relevant reports through HTTP/UI.
-4. Configure Storage/templates and additional onboarding fields as needed. Keep external integrations disabled until independently configured for this environment.
-
-The rendered setup page alone must never be described as a fully functioning CRM.
+1. User signs into the test site using the separate test administrator and changes its password in the user settings if desired.
+2. Verify through the interface: object/apartments, a fictitious buyer, contract, payment, expense, construction and relevant reports. Existing HTTP checks cover representative reads, not every workflow.
+3. Configure independent Storage/templates and complete onboarding fields. Keep integrations disabled until independently configured for this environment.
+4. Review all roles and financial scenarios before any commercial-client rollout. No main-branch merge or production deployment is part of this environment.
