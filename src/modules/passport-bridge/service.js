@@ -28,10 +28,24 @@ export class PassportBridge {
     return s;
   }
   async patch(s,fields,status=s.status) { return check(await this.db.from('telegram_passport_sessions').update(fields).eq('id',s.id).eq('status',status).select().maybeSingle()); }
-  async status(id,user) { const s=await this.owned(id,user); return {id:s.id,status:s.status,telegram_name:s.telegram_name,result:s.status==='READY'?s.result:null}; }
+  async status(id,user) { const s=await this.owned(id,user); return {id:s.id,status:s.status,telegram_name:s.telegram_name,result:s.status==='READY'?s.result:null,image_count:s.status==='READY'?s.file_ids.length:0}; }
   async approve(id,user) { const s=await this.owned(id,user); return Boolean(await this.patch(s,{status:'UPLOAD'},'PAIRING')); }
   async consume(id,user) { const s=await this.owned(id,user); return Boolean(await this.patch(s,{status:'CONSUMED',result:null,file_ids:[]},'READY')); }
   async cancel(id,user) { const s=await this.owned(id,user); check(await this.db.from('telegram_passport_sessions').delete().eq('id',s.id).eq('user_id',user.id)); }
+  async downloadPhoto(fileId,api) {
+    const file=await api.call('getFile',{file_id:fileId});
+    if(!file.file_path||file.file_size>10*1024*1024||!/^photos\/[a-zA-Z0-9_.\/-]+$/.test(file.file_path)) throw new Error('PHOTO_INVALID');
+    const response=await api.fetch(`https://api.telegram.org/file/bot${api.token}/${file.file_path}`,{signal:AbortSignal.timeout(15000)});
+    if(!response.ok) throw new Error('PHOTO_DOWNLOAD_FAILED');
+    const chunks=[];let size=0;
+    for await(const chunk of response.body) { size+=chunk.length;if(size>10*1024*1024)throw new Error('PHOTO_TOO_LARGE');chunks.push(chunk); }
+    return {buffer:Buffer.concat(chunks),mimeType:'image/jpeg'};
+  }
+  async image(id,user,index,api) {
+    const s=await this.owned(id,user);
+    if(s.status!=='READY'||!Number.isInteger(index)||index<0||index>=s.file_ids.length) throw new Error('PHOTO_UNAVAILABLE');
+    return this.downloadPhoto(s.file_ids[index],api);
+  }
   async handle(update,api) {
     const cb=update.callback_query, m=cb?.message||update.message, sender=cb?.from||m?.from;
     if(!sender||sender.is_bot||m?.chat?.type!=='private'||String(m.chat.id)!==String(sender.id)) return false;
@@ -67,20 +81,14 @@ export class PassportBridge {
       try {
         const images=[];
         for(const fileId of s.file_ids) {
-          const file=await api.call('getFile',{file_id:fileId});
-          if(!file.file_path||file.file_size>10*1024*1024||!/^photos\/[a-zA-Z0-9_.\/-]+$/.test(file.file_path)) throw new Error('PHOTO_INVALID');
-          const response=await api.fetch(`https://api.telegram.org/file/bot${api.token}/${file.file_path}`,{signal:AbortSignal.timeout(15000)});
-          if(!response.ok) throw new Error('PHOTO_DOWNLOAD_FAILED');
-          const chunks=[];let size=0;
-          for await(const chunk of response.body) { size+=chunk.length;if(size>10*1024*1024)throw new Error('PHOTO_TOO_LARGE');chunks.push(chunk); }
-          images.push({buffer:Buffer.concat(chunks),mimeType:'image/jpeg'});
+          images.push(await this.downloadPhoto(fileId,api));
         }
         const result=await this.analyze(images);
         await DocumentsRepository.logScanEvent({userId:s.user_id,clientId:null,eventType:'PASSPORT_AI_SCANNED',documentCountry:result.document?.country||null,documentType:result.document?.document_type||null,success:result.success,model:result.model,processingDurationMs:result.duration_ms,warningsCount:result.warnings?.length||0,conflictsCount:result.conflicts?.length||0});
         if(!result.success||!result.quality?.acceptable) throw new Error('QUALITY_REJECTED');
         const freshUser=await this.users.findById(s.user_id);
         if(!canScan(freshUser)||Date.parse(s.expires_at)<=Date.now()) throw new Error('ACCESS_REVOKED');
-        const saved=await this.patch({...s,status:'PROCESSING'},{status:'REVIEW',result,file_ids:[]});
+        const saved=await this.patch({...s,status:'PROCESSING'},{status:'REVIEW',result});
         if(saved) await send('Распознавание завершено. Передайте результат в CRM и проверьте все поля перед заполнением договора.',[[{text:'Передать в договор',callback_data:`passport:transfer:${s.id}`}]]);
       } catch { await this.patch({...s,status:'PROCESSING'},{status:'UPLOAD',result:null,file_ids:[]}); await send('Не удалось распознать. Отправьте чёткие фото заново.'); }
       return true;

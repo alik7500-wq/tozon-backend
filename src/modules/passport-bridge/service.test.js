@@ -63,3 +63,15 @@ it('transfers only a reviewed session to its CRM owner and consumes it once',asy
  expect((await bridge.status('s',owner)).result).toBeNull();
  expect(await bridge.consume('s',owner)).toBe(false);
 });
+
+it('serves previews only to the session owner before consumption',async()=>{
+ const bridge=new PassportBridge(),api={};
+ bridge.owned=vi.fn().mockResolvedValue({status:'READY',file_ids:['photo-front','photo-back']});
+ bridge.downloadPhoto=vi.fn().mockResolvedValue({buffer:Buffer.from('image'),mimeType:'image/jpeg'});
+ await bridge.image('s',{id:12},1,api);
+ expect(bridge.owned).toHaveBeenCalledWith('s',{id:12});
+ expect(bridge.downloadPhoto).toHaveBeenCalledWith('photo-back',api);
+ await expect(bridge.image('s',{id:12},2,api)).rejects.toThrow('PHOTO_UNAVAILABLE');
+ bridge.owned.mockResolvedValue({status:'CONSUMED',file_ids:[]});
+ await expect(bridge.image('s',{id:12},0,api)).rejects.toThrow('PHOTO_UNAVAILABLE');
+});
