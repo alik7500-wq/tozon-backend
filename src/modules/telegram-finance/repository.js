@@ -21,6 +21,19 @@ export class TelegramFinanceRepository {
   }
   async snapshot() { return checked(await this.db.rpc('telegram_finance_snapshot')); }
   async cashDesks() { return checked(await this.db.from('dictionaries').select('id,name,code').eq('type','CASH_DESK').eq('is_active',true).order('sort_order')); }
+  async costTargets() {
+    const projects=checked(await this.db.from('projects').select('id,name').is('archived_at',null).order('id'));
+    const buildings=checked(await this.db.from('buildings').select('id,name,project_id').is('archived_at',null).order('id'));
+    const bases=checked(await this.db.from('cost_building_bases').select('building_id,sellable_area_m2'));
+    const options=[];
+    for(const project of projects) {
+      const blocks=buildings.filter(b=>b.project_id===project.id);
+      for(const b of blocks)options.push({label:`${project.name} — ${b.name}`,mode:'DIRECT',buildings:[b.id]});
+      if(blocks.length>=2&&blocks.every(b=>bases.some(a=>a.building_id===b.id&&Number(a.sellable_area_m2)>0))) options.push({label:`${project.name} — общие расходы по площади`,mode:'SHARED',buildings:blocks.map(b=>b.id)});
+    }
+    options.push({label:'Бетон / арматура — по фактическому использованию',mode:'MATERIAL',buildings:[]});
+    return options;
+  }
   async expenseCategories() { return checked(await this.db.from('dictionaries').select('id,name').eq('type','EXPENSE_CATEGORY').eq('is_active',true).order('sort_order').order('name')); }
   async crmUsers() { return checked(await this.db.from('users').select('id,name').eq('is_active',1).order('name')); }
   async cashAccess(id, fields) { return checked(await this.db.from('telegram_finance_subscribers').update(fields).eq('telegram_id',id).select().single()); }
