@@ -239,6 +239,21 @@ export class InventoryRepository {
     return { updatedCount: unitIds.length };
   }
 
+  static async updateParkingPrice(id, totalMinor) {
+    if (!Number.isSafeInteger(totalMinor) || totalMinor <= 0 || totalMinor > 2147483647) {
+      throw new AppError('Укажите положительную цену за машино-место', 400);
+    }
+    const unit = await this.getUnitById(id);
+    if (!unit || unit.unit_kind !== 'PARKING') throw new AppError('Машино-место не найдено', 404);
+    if (unit.status !== 'AVAILABLE' || unit.active_deal) throw new AppError('Цена меняется только для свободного места', 409);
+    const { data, error } = await getDB().from('units').update({ manual_total_price_minor: totalMinor,
+      price_per_m2_minor: 0, updated_at: new Date().toISOString() })
+      .eq('id', id).eq('unit_kind', 'PARKING').eq('status', 'AVAILABLE').select().maybeSingle();
+    if (error) throw error;
+    if (!data) throw new AppError('Статус места изменился. Обновите страницу.', 409);
+    return this.getUnitById(id);
+  }
+
   static async updateUnitPrice(id, pricePerM2Minor, scope = 'UNIT', scopeOptions = {}) {
     const db = getDB();
     const now = new Date().toISOString();

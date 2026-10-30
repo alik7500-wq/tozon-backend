@@ -106,7 +106,7 @@ export class DealsRepository {
       }, 0);
 
       const areaM2 = deal.units?.area_m2_x100 ? (deal.units.area_m2_x100 / 100) : 0;
-      const computedDealPricePerM2 = deal.deal_price_per_m2_minor || (areaM2 > 0 ? Math.round(deal.final_price_minor / areaM2) : deal.units?.price_per_m2_minor);
+      const computedDealPricePerM2 = deal.deal_price_per_m2_minor ?? (areaM2 > 0 ? Math.round(deal.final_price_minor / areaM2) : deal.units?.price_per_m2_minor);
 
       const dpCoveredMinor = Math.min(paidAmountMinor, deal.down_payment_minor || 0);
       const dpRemainingMinor = Math.max(0, (deal.down_payment_minor || 0) - dpCoveredMinor);
@@ -240,7 +240,7 @@ export class DealsRepository {
     const paid_percent = deal.final_price_minor > 0 ? Number(((paid_amount_minor / deal.final_price_minor) * 100).toFixed(2)) : 0;
 
     const areaM2 = deal.units?.area_m2_x100 ? (deal.units.area_m2_x100 / 100) : 0;
-    const computedDealPricePerM2 = deal.deal_price_per_m2_minor || (areaM2 > 0 ? Math.round(deal.final_price_minor / areaM2) : deal.units?.price_per_m2_minor);
+    const computedDealPricePerM2 = deal.deal_price_per_m2_minor ?? (areaM2 > 0 ? Math.round(deal.final_price_minor / areaM2) : deal.units?.price_per_m2_minor);
 
     return {
       ...deal,
@@ -328,7 +328,7 @@ export class DealsRepository {
     }
 
     const unitAreaM2 = unit.area_m2_x100 ? (unit.area_m2_x100 / 100) : 0;
-    const computedDealPricePerM2 = data.deal_price_per_m2_minor || (unitAreaM2 > 0 ? Math.round(data.final_price_minor / unitAreaM2) : (unit.price_per_m2_minor || 0));
+    const computedDealPricePerM2 = unit.unit_kind === 'PARKING' && unit.manual_total_price_minor != null ? 0 : data.deal_price_per_m2_minor || (unitAreaM2 > 0 ? Math.round(data.final_price_minor / unitAreaM2) : (unit.price_per_m2_minor || 0));
 
     if (['INSTALLMENT','PARTIAL_BARTER'].includes(data.payment_type)) {
       const interval = Number(data.installment_interval_months ?? 1);

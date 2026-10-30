@@ -151,14 +151,16 @@ router.patch('/units/batch-price', restrictTo('ADMIN'), async (req, res, next) =
 router.patch('/units/:id/price', restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
-    const { price_per_m2_minor, scope, scopeOptions, unit_ids } = req.body;
+    const { price_per_m2_minor, manual_total_price_minor, scope, scopeOptions, unit_ids } = req.body;
     // If not ADMIN, strictly restrict scope to only the single current unit
     const effectiveScope = req.user?.role === 'ADMIN' ? (scope || 'UNIT') : 'UNIT';
     const effectiveScopeOptions = req.user?.role === 'ADMIN' 
       ? (scopeOptions || (unit_ids ? { unit_ids } : {}))
       : { unit_ids: [cleanId] };
 
-    const unit = await InventoryRepository.updateUnitPrice(cleanId, price_per_m2_minor, effectiveScope, effectiveScopeOptions);
+    const unit = manual_total_price_minor !== undefined
+      ? await InventoryRepository.updateParkingPrice(cleanId, manual_total_price_minor)
+      : await InventoryRepository.updateUnitPrice(cleanId, price_per_m2_minor, effectiveScope, effectiveScopeOptions);
     res.status(200).json({ status: 'success', data: { unit } });
   } catch (error) { next(error); }
 });

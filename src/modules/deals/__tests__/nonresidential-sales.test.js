@@ -52,3 +52,17 @@ describe('nonresidential deals use the existing accounting flow', () => {
     expect(writes).toHaveLength(0);
   });
 });
+
+it('preserves a fixed parking price without fabricating a per-square-metre snapshot', async () => {
+  database({ ...unit, area_m2_x100: null, manual_total_price_minor: 1000000, price_per_m2_minor: 0 });
+  vi.spyOn(DealsRepository, 'getDealById').mockResolvedValue({ ...deal, deal_price_per_m2_minor: 0 });
+  await DealsRepository.createDeal({ lead_id: 1, unit_id: 300, status: 'SIGNED', payment_type: 'FULL', base_price_minor: 1000000, final_price_minor: 1000000 }, 1);
+  const written = writes.find(w => w.table === 'deals').data[0];
+  expect(written.final_price_minor).toBe(1000000);
+  expect(written.deal_price_per_m2_minor).toBe(0);
+});
+it('keeps a zero per-square-metre snapshot when reading a fixed-price parking deal', async () => {
+  database({ ...unit, area_m2_x100: 2552, price_per_m2_minor: 0 }, { ...deal, deal_price_per_m2_minor: 0, final_price_minor: 1000000 });
+  expect((await DealsRepository.getDealById(55)).deal_price_per_m2_minor).toBe(0);
+  expect((await DealsRepository.findAll())[0].deal_price_per_m2_minor).toBe(0);
+});
