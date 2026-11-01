@@ -1,3 +1,4 @@
+import { accountingScope, matchesAccountingScope } from './accountingScope.js';
 import ExcelJS from 'exceljs';
 import { FinanceRepository } from './finance.repository.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
@@ -58,7 +59,7 @@ export class CashflowExcelService {
     });
 
     // Header metadata
-    sheet1.addRow(['TOZON CRM']);
+    sheet1.addRow([accountingScope(filters) === 'VG' ? 'TOZON CRM — отдельный учёт блоков В и Г' : 'TOZON CRM — учёт А/Б (без средств В/Г)']);
     sheet1.getRow(1).font = { bold: true, size: 16, color: { argb: brandBlue } };
 
     sheet1.addRow(['Сводный отчёт о движении денежных средств по кассам']);
@@ -229,7 +230,7 @@ export class CashflowExcelService {
     // Match the all-time investment card: contributions, not cash balance.
     const investors = new Map();
     let investmentTotalMinor = 0, missingInvestmentRate = 0;
-    for (const item of investmentIncome?.list || []) {
+    for (const item of (investmentIncome?.list || []).filter(item => matchesAccountingScope(item, accountingScope(filters)))) {
       if (['VOIDED', 'CANCELLED', 'REVERSED'].includes(item.status) || item.voidedAt || item.transferId) continue;
       if (item.operationType !== 'INVESTMENT' && item.category !== 'Инвестиции партнёров' && item.contract !== 'Инвестиция партнёра') continue;
       const name = (item.payerName || item.clientName || 'Инвестор не указан').trim() || 'Инвестор не указан';
