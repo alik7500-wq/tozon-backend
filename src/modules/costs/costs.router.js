@@ -1,3 +1,4 @@
+import { accountingScope } from '../finance/accountingScope.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { getServiceDB } from '../../db/connection.js';
@@ -28,12 +29,13 @@ router.use(protect);
 router.use((req, res, next) => canReadCosts(req.user) ? next() : next(new AppError('Нет доступа к себестоимости блоков', 403)));
 router.get('/state', wrap(async (req, res) => {
   const asOf = parse(z.iso.date(), req.query.as_of || new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dushanbe' }));
+  const scope = accountingScope(req.query);
   const db = getServiceDB();
   const [buildings, projects, sections, floors, units, bases, expenses, allocations, advances, materialUsages, materialPayments, stock, materials] = await Promise.all([
     all(db, 'buildings', 'id,project_id,name,archived_at'), all(db, 'projects', 'id,name,archived_at'),
     all(db, 'sections', 'id,building_id,archived_at'), all(db, 'floors', 'id,section_id,archived_at'),
     all(db, 'units', 'id,floor_id,area_m2_x100,archived_at'), keyedAll(db, 'cost_building_bases', 'building_id'),
-    all(db, 'expenses', 'id,amount_minor,currency,expense_date,category,description,reference,amount_usd,exchange_rate,operation_type,status,voided_at,transfer_id,conversion_id,conversion_expense_id'),
+    all(db, 'expenses', 'id,cash_desk_id,amount_minor,currency,expense_date,category,description,reference,amount_usd,exchange_rate,operation_type,status,voided_at,transfer_id,conversion_id,conversion_expense_id'),
     keyedAll(db, 'cost_expense_allocations', 'expense_id'), all(db, 'construction_documents', 'id,number,kind,status,expense_id,doc_date,currency,exchange_rate,project_id,work_type'),
     all(db, 'cost_material_usages'), all(db, 'cost_material_payment_links'), all(db, 'construction_stock_entries'), all(db, 'construction_materials', 'id,name,unit')
   ]);
@@ -42,15 +44,15 @@ router.get('/state', wrap(async (req, res) => {
   const floorBlocks = new Map(floors.filter(f => !f.archived_at).map(f => [f.id, sectionBlocks.get(f.section_id)]));
   const registry = {};
   for (const u of units.filter(u => !u.archived_at)) { const b = floorBlocks.get(u.floor_id); if (!b) continue; registry[b] ||= { area: 0, count: 0 }; registry[b].area += Number(u.area_m2_x100 || 0) / 100; registry[b].count++; }
-  const report = buildCostReport({ buildings, bases, registry, expenses, allocations, advances, asOf, materialUsages, materialPayments });
+  const report = buildCostReport({ buildings, bases, registry, expenses, allocations, advances, asOf, materialUsages, materialPayments, accountingScope: scope });
   const materialSources = stock.filter(s => Number(s.quantity) < 0 && Number(s.value) < 0).map(s => {
     const d = advances.find(d => d.id === s.document_id); const m = materials.find(m => m.id === s.material_id);
     return { id: s.id, document_id: s.document_id, document_number: d?.number, kind: d?.kind, posted: d?.status === 'POSTED',
       quantity: -Number(s.quantity), amount: -Number(s.value), currency: s.currency, exchange_rate: d?.exchange_rate,
       usage_date: d?.doc_date, project_id: d?.project_id, work_type: d?.work_type, material_name: m?.name, unit: m?.unit,
       linked: materialUsages.some(u => Number(u.stock_entry_id) === Number(s.id)) };
-  }).filter(s => s.posted && ['ISSUE', 'WRITE_OFF'].includes(s.kind));
-  res.json({ data: { ...report, material_sources: materialSources, projects, can_write: canWriteCosts(req.user) } });
+  }).filter(s => s.posted && ['ISSUE', 'WRITE_OFF'].includes(s.kind) && (scope === 'VG' ? Number(s.project_id) === 4 : Number(s.project_id) !== 4));
+  res.json({ data: { ...report, material_sources: materialSources, projects: projects.filter(p => scope === 'VG' ? Number(p.id) === 4 : Number(p.id) !== 4), can_write: canWriteCosts(req.user) } });
 }));
 router.use((req, res, next) => canWriteCosts(req.user) ? next() : next(new AppError('Нет права изменения себестоимости', 403)));
 const money = z.number().positive().max(1000000000000).multipleOf(0.01);
