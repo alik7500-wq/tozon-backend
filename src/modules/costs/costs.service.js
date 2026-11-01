@@ -1,3 +1,4 @@
+import { isVgDesk } from '../finance/accountingScope.js';
 // Ordinary paid expenditure + used rebar/concrete. No current FX rates.
 export const canReadCosts = user => user?.role === 'ADMIN' || user?.permissions?.includes('*') || user?.permissions?.includes('finance.costs');
 export const canWriteCosts = user => canReadCosts(user) && (user?.role === 'ADMIN' || user?.permissions?.includes('*') || user?.permissions?.includes('finance.costs.write'));
@@ -39,7 +40,17 @@ export function splitMinor(total, shares) {
   return rows.map(({ building_id, amount }) => ({ building_id, amount }));
 }
 
-export function buildCostReport({ buildings, bases, registry, expenses, allocations, advances, asOf, materialUsages = [], materialPayments = [] }) {
+export function buildCostReport({ buildings, bases, registry, expenses, allocations, advances, asOf, materialUsages = [], materialPayments = [], accountingScope = 'AB' }) {
+  const inScope = vg => accountingScope === 'VG' ? vg : !vg;
+  buildings = buildings.filter(b => inScope(Number(b.project_id) === 4));
+  const buildingIds = new Set(buildings.map(b => Number(b.id)));
+  expenses = expenses.filter(e => inScope(isVgDesk(e.cash_desk_id)));
+  const expenseIds = new Set(expenses.map(e => Number(e.id)));
+  allocations = allocations.filter(a => expenseIds.has(Number(a.expense_id)));
+  materialUsages = materialUsages.filter(u => buildingIds.has(Number(u.building_id)));
+  const usageIds = new Set(materialUsages.map(u => u.id));
+  materialPayments = materialPayments.filter(p => expenseIds.has(Number(p.expense_id)) && usageIds.has(p.usage_id));
+  advances = advances.filter(d => inScope(Number(d.project_id) === 4));
   const advanceIds = new Set(advances.filter(d => d.status === 'POSTED' && d.kind === 'ADVANCE_ISSUE').map(d => d.expense_id));
   const byExpense = new Map(allocations.map(a => [a.expense_id, a]));
   const blocks = buildings.map(b => ({ ...b, basis: bases.find(a => a.building_id === b.id) || null,
@@ -112,7 +123,7 @@ export function buildCostReport({ buildings, bases, registry, expenses, allocati
   });
   for (const b of blocks) b.paid_cost_usd_minor = b.ordinary_rko_usd_minor + b.material_paid_usd_minor;
   for (const b of blocks) b.cost_per_m2_usd = b.basis ? b.amount_usd_minor / 100 / Number(b.basis.sellable_area_m2) : null;
-  return { as_of: asOf, blocks, material_usages: materialRows, material_payment_problems: paymentProblems, rows: rows.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id),
+  return { accounting_scope: accountingScope, as_of: asOf, blocks, material_usages: materialRows, material_payment_problems: paymentProblems, rows: rows.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id),
     totals: { allocated_usd_minor: blocks.reduce((n, b) => n + b.amount_usd_minor, 0),
       unassigned_count: rows.filter(r => r.state === 'UNASSIGNED').length,
       missing_fx_count: rows.filter(r => r.state === 'MISSING_FX' || (r.state === 'UNASSIGNED' && r.usd_minor == null)).length,
