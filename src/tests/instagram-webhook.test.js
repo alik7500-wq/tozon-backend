@@ -2,6 +2,8 @@ import { createHmac } from 'node:crypto';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+vi.mock('../modules/integrations/instagram-webhook.repository.js', () => ({ persistInstagramWebhookEvent: vi.fn() }));
+import { persistInstagramWebhookEvent } from '../modules/integrations/instagram-webhook.repository.js';
 import webhookRouter from '../modules/integrations/instagram-webhook.router.js';
 
 const app = express();
@@ -10,6 +12,7 @@ const endpoint = '/api/integrations/instagram/webhook';
 afterEach(() => {
   delete process.env.META_INSTAGRAM_APP_SECRET;
   delete process.env.META_WEBHOOK_VERIFY_TOKEN;
+  vi.resetAllMocks();
 });
 
 describe('Instagram Meta webhook safety', () => {
@@ -31,12 +34,23 @@ describe('Instagram Meta webhook safety', () => {
     expect(r.status).toBe(403);
   });
 
-  it('does not acknowledge signed events before durable processing exists', async () => {
+  it('acknowledges signed events after durable storage', async () => {
     process.env.META_INSTAGRAM_APP_SECRET = 'test-secret';
-    const body = '{"object":"instagram"}';
+    const body = '{"object":"instagram","entry":[]}';
+    persistInstagramWebhookEvent.mockResolvedValue({ eventKey: 'saved' });
     const signature = createHmac('sha256', 'test-secret').update(body).digest('hex');
     const r = await request(app).post(endpoint).set('Content-Type', 'application/json').set('X-Hub-Signature-256', 'sha256=' + signature).send(body);
-    expect(r.status).toBe(503);
-    expect(r.body.code).toBe('INSTAGRAM_WEBHOOK_PROCESSOR_NOT_READY');
+    expect(r.status).toBe(200);
+    expect(persistInstagramWebhookEvent).toHaveBeenCalledOnce();
+  });
+  it('does not acknowledge events when storage fails', async () => {
+    process.env.META_INSTAGRAM_APP_SECRET = 'test-secret';
+    persistInstagramWebhookEvent.mockRejectedValue(new Error('offline'));
+    const body = '{"object":"instagram","entry":[]}';
+    const signature = createHmac('sha256', 'test-secret').update(body).digest('hex');
+    const response = await request(app).post(endpoint)
+      .set('Content-Type', 'application/json')
+      .set('X-Hub-Signature-256', 'sha256=' + signature).send(body);
+    expect(response.status).toBe(503);
   });
 });
