@@ -28,4 +28,4 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Run isolated Instagram tests
-        run: npx vitest run src/tests/instagram-integration.test.js src/tests/instagram-webhook.test.js src/tests/social-token-crypto.test.js src/tests/social-oauth-state.test.js src/tests/instagram-oauth-repository.test.js --fileParallelism=false
+        run: npx vitest run src/tests/instagram-integration.test.js src/tests/instagram-webhook.test.js src/tests/social-token-crypto.test.js src/tests/social-oauth-state.test.js src/tests/instagram-oauth-repository.test.js src/tests/instagram-meta-client.test.js --fileParallelism=false
