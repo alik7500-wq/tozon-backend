@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Router, raw } from 'express';
+import { persistInstagramWebhookEvent } from './instagram-webhook.repository.js';
 
 const router = Router();
 const webhookSecret = () => process.env.META_INSTAGRAM_APP_SECRET?.trim();
@@ -19,7 +20,7 @@ router.get('/', (req, res) => {
   res.set('Cache-Control', 'no-store').status(200).type('text/plain').send(challenge);
 });
 
-router.post('/', raw({ type: 'application/json', limit: '1mb' }), (req, res) => {
+router.post('/', raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
   const secret = webhookSecret();
   const signature = req.get('x-hub-signature-256');
   if (!secret || !Buffer.isBuffer(req.body) || !signature || !/^sha256=[a-f0-9]{64}$/i.test(signature)) {
@@ -28,8 +29,14 @@ router.post('/', raw({ type: 'application/json', limit: '1mb' }), (req, res) => 
   const expected = Buffer.from(createHmac('sha256', secret).update(req.body).digest('hex'), 'hex');
   const actual = Buffer.from(signature.slice(7), 'hex');
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return res.sendStatus(403);
-  // Do not acknowledge and drop valid events before durable storage and deduplication exist.
-  return res.status(503).json({ status: 'error', code: 'INSTAGRAM_WEBHOOK_PROCESSOR_NOT_READY' });
+  try {
+    const payload = JSON.parse(req.body.toString('utf8'));
+    if (payload?.object !== 'instagram' || !Array.isArray(payload.entry)) return res.sendStatus(400);
+    await persistInstagramWebhookEvent(payload);
+    return res.sendStatus(200);
+  } catch {
+    return res.status(503).json({ status: 'error', code: 'INSTAGRAM_WEBHOOK_STORAGE_UNAVAILABLE' });
+  }
 });
 
 export default router;
