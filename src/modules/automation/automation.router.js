@@ -88,6 +88,19 @@ let automationRules = [
 
 let dispatchLogs = [];
 
+// Read-only connection capability discovery. Never infer provider status from demo settings.
+// Only trusted CRM admins can view configuration readiness.
+router.get('/social-connections/capabilities', protect, restrictTo('ADMIN', 'DIRECTOR'), (_req, res) => {
+  const instagramReady = Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET && process.env.META_REDIRECT_URI);
+  const whatsappReady = Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET && process.env.META_WHATSAPP_CONFIG_ID);
+  res.set('Cache-Control', 'no-store');
+  return res.json({ status: 'success', data: {
+    instagram: { configured: instagramReady, connected: false, available: false },
+    whatsapp: { configured: whatsappReady, connected: false, available: false },
+    telegram: { configured: false, connected: false, available: false }
+  }});
+});
+
 // GET /api/automation/settings
 router.get('/settings', protect, (req, res) => {
   res.json({
