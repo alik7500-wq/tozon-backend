@@ -19,7 +19,7 @@ export async function saveTozonInstagramConnection({ instagramUserId, username, 
     username: username || null,
     encrypted_access_token: encryptedToken,
     token_expires_at: expiresAt,
-    granted_scopes: ['instagram_business_basic', 'instagram_business_manage_messages'],
+    granted_scopes: [], // Never claim permissions without verifying granted scopes.
     status: 'connected',
     updated_at: new Date().toISOString()
   }, { onConflict: 'instagram_user_id' });
