@@ -1,4 +1,5 @@
 import leadIntakeRouter from './modules/lead-intake/intake.router.js';
+import instagramIntegrationRouter from './modules/integrations/instagram.router.js';
 import activityRouter from './modules/activity/activity.router.js';
 import { activityMiddleware } from './modules/activity/activity.middleware.js';
 import discountsRouter from './modules/discounts/discounts.router.js';
@@ -128,6 +129,7 @@ app.use('/api/sms', smsRouter);
 app.use('/api/internal/sms', smsInternalRouter);
 app.use('/api/apartments', apartmentsRouter);
 app.use('/api/automation', automationRouter);
+app.use('/api/integrations/instagram', instagramIntegrationRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/dictionaries', dictionariesRouter);
 app.use('/api', visual3dRouter);
