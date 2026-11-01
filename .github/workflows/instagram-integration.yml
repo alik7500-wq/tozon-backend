@@ -1,0 +1,31 @@
+name: Instagram integration checks
+
+on:
+  pull_request:
+    paths:
+      - 'src/modules/integrations/**'
+      - 'src/tests/instagram-*.test.js'
+      - 'src/tests/social-*.test.js'
+      - '.github/workflows/instagram-integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  instagram-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_URL: https://example.supabase.co
+      SUPABASE_KEY: placeholder-for-import-only
+      JWT_SECRET: local-test-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Run isolated Instagram tests
+        run: npx vitest run src/tests/instagram-integration.test.js src/tests/instagram-webhook.test.js src/tests/social-token-crypto.test.js src/tests/social-oauth-state.test.js src/tests/instagram-oauth-repository.test.js --fileParallelism=false
