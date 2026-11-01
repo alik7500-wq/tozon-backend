@@ -1,0 +1,33 @@
+import { Router } from 'express';
+import { protect } from '../../middleware/auth.middleware.js';
+import { AppError } from '../../shared/errors/errorHandler.js';
+import { getServiceDB } from '../../db/connection.js';
+import { presence, recordEvent, SECTION_LABELS } from './activity.service.js';
+const router=Router();const wrap=fn=>async(req,res,next)=>{try{await fn(req,res)}catch(e){next(e)}};
+const check=r=>{if(r.error)throw new AppError('Не удалось загрузить журнал активности',503);return r.data || []};
+router.use(protect);
+router.post('/heartbeat',wrap(async(req,res)=>{
+ const section=Object.values(SECTION_LABELS).includes(req.body?.section)?req.body.section:'Обзор';
+ const db=getServiceDB();const previous=check(await db.from('crm_user_presence').select('current_section,last_seen_at').eq('user_id',req.user.id).maybeSingle());
+ await presence(req.user,{current_section:section,last_logout_at:null});
+ if(previous.current_section!==section)await recordEvent(req.user,{kind:'VIEW',resource:section,summary:`Открыт раздел «${section}»`,outcome:'SUCCESS'});
+ res.json({success:true});
+}));
+router.use((req,res,next)=>req.user.role==='ADMIN'?next():next(new AppError('Журнал активности доступен только администратору',403)));
+router.get('/',wrap(async(req,res)=>{
+ const {user_id,kind,from,to,before}=req.query;
+ if(user_id&&!/^\d{1,10}$/.test(user_id) || before&&!/^\d{1,16}$/.test(before))throw new AppError('Некорректный фильтр пользователя или страницы',400);
+ if(kind&&!['LOGIN','LOGOUT','VIEW','CREATE','UPDATE','DELETE','EXPORT'].includes(kind))throw new AppError('Некорректный тип действия',400);
+ for(const date of [from,to])if(date&&(!/^\d{4}-\d{2}-\d{2}$/.test(date)||Number.isNaN(Date.parse(date)) || new Date(date+'T00:00:00Z').toISOString().slice(0,10)!==date))throw new AppError('Некорректная дата',400);
+ if(from&&to&&from>to)throw new AppError('Начальная дата позже конечной',400);
+ const db=getServiceDB();const limit = Number(req.query.limit || 100);
+ if(!Number.isInteger(limit)||limit<1||limit>100)throw new AppError('Размер страницы должен быть от 1 до 100',400);
+ let query=db.from('crm_activity_events').select('id,user_id,actor_name,actor_role,kind,resource,entity_id,summary,http_method,http_status,outcome,changed_fields,created_at').order('id',{ascending:false}).limit(limit+1);
+ if(user_id)query=query.eq('user_id',Number(user_id));if(kind)query=query.eq('kind',kind);if(before)query=query.lt('id',before);
+ if(from)query=query.gte('created_at',`${from}T00:00:00+05:00`);if(to)query=query.lte('created_at',`${to}T23:59:59.999+05:00`);
+ const [events,users,states]=await Promise.all([query,db.from('users').select('id,name,role,is_active').order('name'),db.from('crm_user_presence').select('*')]);
+ const rows=check(events),staff=check(users),seen=check(states),now=Date.now();const today=new Date(now+5*3600000).toISOString().slice(0,10)+'T00:00:00+05:00';
+ const people=staff.map(user=>{const state=seen.find(row=>row.user_id===user.id);return {...user,...state,online:!!user.is_active && !!state?.last_seen_at && now-Date.parse(state.last_seen_at)<120000 && !state.last_logout_at};});
+ res.json({data:{users:people,online_count:people.filter(u=>u.online).length,visited_today:people.filter(u=>Date.parse(u.last_seen_at)>=Date.parse(today)).length,events:rows.slice(0,limit),next_before:rows.length>limit?String(rows[limit-1].id):null,server_time:new Date(now).toISOString()}});
+}));
+export default router;

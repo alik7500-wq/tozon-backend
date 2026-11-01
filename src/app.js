@@ -1,3 +1,5 @@
+import activityRouter from './modules/activity/activity.router.js';
+import { activityMiddleware } from './modules/activity/activity.middleware.js';
 import discountsRouter from './modules/discounts/discounts.router.js';
 import express from 'express';
 import cors from 'cors';
@@ -95,6 +97,8 @@ app.get('/api/health', (req, res) => {
 
 // Handle authenticated Telegram callbacks before the broad /api media routers.
 // The bot router has its own secret verification and CRM administrator checks.
+app.use('/api', activityMiddleware);
+app.use('/api/auth/activity', activityRouter);
 app.use('/api/telegram-finance', telegramFinanceRouter);
 app.use('/api/construction', constructionRouter);
 app.use('/api/costs', costsRouter);
