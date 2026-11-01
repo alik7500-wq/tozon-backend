@@ -4,11 +4,18 @@ import request from 'supertest';
 
 vi.mock('../middleware/auth.middleware.js', () => ({
   protect: (req, res, next) => {
-    if (req.headers.authorization !== 'Bearer test-auth') {
-      return res.status(401).json({ status: 'error' });
-    }
+    if (req.headers.authorization !== 'Bearer test-auth') return res.status(401).json({ status: 'error' });
+    req.user = { id: 1, role: req.headers['x-test-role'] || 'ADMIN' };
     next();
   }
+}));
+vi.mock('../modules/integrations/instagram-connection.repository.js', () => ({
+  getTozonInstagramConnectionStatus: vi.fn().mockResolvedValue({ connected: false, available: true }),
+  saveTozonInstagramConnection: vi.fn()
+}));
+vi.mock('../modules/integrations/instagram-oauth.repository.js', () => ({
+  saveInstagramOAuthState: vi.fn(),
+  consumeInstagramOAuthState: vi.fn().mockResolvedValue(null)
 }));
 
 import instagramRouter from '../modules/integrations/instagram.router.js';
@@ -17,30 +24,40 @@ const app = express();
 app.use(express.json());
 app.use('/api/integrations/instagram', instagramRouter);
 
-describe('Instagram integration scaffold: fail closed', () => {
+describe('Instagram integration security', () => {
   it('requires authentication for connection status', async () => {
-    const response = await request(app).get('/api/integrations/instagram/connection');
-    expect(response.status).toBe(401);
+    expect((await request(app).get('/api/integrations/instagram/connection')).status).toBe(401);
   });
 
-  it('does not falsely report a connected account', async () => {
-    const response = await request(app).get('/api/integrations/instagram/connection')
+  it('requires an administrator for connection status', async () => {
+    const r = await request(app).get('/api/integrations/instagram/connection')
+      .set('Authorization', 'Bearer test-auth').set('x-test-role', 'MANAGER');
+    expect(r.status).toBe(403);
+  });
+
+  it('reports the database status without a token', async () => {
+    const r = await request(app).get('/api/integrations/instagram/connection')
       .set('Authorization', 'Bearer test-auth');
-    expect(response.status).toBe(200);
-    expect(response.body.data.connected).toBe(false);
-    expect(response.body.data.available).toBe(false);
+    expect(r.status).toBe(200);
+    expect(r.body.data.connected).toBe(false);
+    expect(r.body.data).not.toHaveProperty('accessToken');
   });
 
-  it('does not start an unfinished OAuth flow', async () => {
-    const response = await request(app).post('/api/integrations/instagram/connect')
+  it('rejects OAuth start without configured Meta credentials', async () => {
+    const r = await request(app).post('/api/integrations/instagram/connect')
       .set('Authorization', 'Bearer test-auth');
-    expect(response.status).toBe(503);
-    expect(response.body.code).toBe('INSTAGRAM_OAUTH_NOT_READY');
+    expect(r.status).toBe(503);
+    expect(r.body.code).toBe('INSTAGRAM_OAUTH_UNAVAILABLE');
   });
 
-  it('rejects callbacks before OAuth state verification exists', async () => {
-    const response = await request(app).get('/api/integrations/instagram/callback?code=untrusted&state=untrusted');
-    expect(response.status).toBe(503);
-    expect(response.headers['cache-control']).toBe('no-store');
+  it('rejects missing OAuth callback parameters', async () => {
+    const r = await request(app).get('/api/integrations/instagram/callback');
+    expect(r.status).toBe(400);
+    expect(r.headers['cache-control']).toBe('no-store');
+  });
+
+  it('rejects an expired or unknown OAuth state', async () => {
+    const r = await request(app).get('/api/integrations/instagram/callback?code=invalid&state=invalid');
+    expect(r.status).toBe(403);
   });
 });
