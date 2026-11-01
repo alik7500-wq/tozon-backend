@@ -1,3 +1,4 @@
+import leadIntakeRouter from './modules/lead-intake/intake.router.js';
 import activityRouter from './modules/activity/activity.router.js';
 import { activityMiddleware } from './modules/activity/activity.middleware.js';
 import discountsRouter from './modules/discounts/discounts.router.js';
@@ -58,12 +59,15 @@ app.use(cors({
   origin: true,
   credentials: true,
 }));
+app.use('/api/leads/intake', express.json({ limit: '3mb' }));
 app.use(express.json());
 app.use(cookieParser());
 app.use(pino({
   redact: [
     'req.headers.authorization',
     'req.headers.cookie',
+    'res.headers["set-cookie"]',
+    'req.headers["x-lead-intake-key"]',
     'req.headers["x-telegram-bot-api-secret-token"]',
     'req.headers["x-webhook-secret"]',
     'req.body.secret',
@@ -99,6 +103,7 @@ app.get('/api/health', (req, res) => {
 // The bot router has its own secret verification and CRM administrator checks.
 app.use('/api', activityMiddleware);
 app.use('/api/auth/activity', activityRouter);
+app.use('/api/leads/intake', leadIntakeRouter);
 app.use('/api/telegram-finance', telegramFinanceRouter);
 app.use('/api/construction', constructionRouter);
 app.use('/api/costs', costsRouter);
