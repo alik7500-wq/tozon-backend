@@ -31,7 +31,7 @@ router.post('/google/:id',limitWebhook,wrap(async(req,res)=>{
 router.use(protect);
 router.use((req,res,next)=>['ADMIN','DIRECTOR'].includes(req.user?.role)?next():next(new AppError('Импорт и подключение источников доступны руководителю и администратору',403)));
 router.get('/options',wrap(async(req,res)=>{
- const db=getServiceDB();const [users,projects]=await Promise.all([db.from('users').select('id,name').eq('is_active',true).eq('is_sales_rep',true).order('name'),db.from('projects').select('id,name').order('name')]);
+ const db=getServiceDB();const [users,projects]=await Promise.all([db.from('users').select('id,name').eq('is_active',1).eq('is_sales_rep',true).order('name'),db.from('projects').select('id,name').order('name')]);
  res.json({data:{managers:dbCheck(users),projects:dbCheck(projects)}});
 }));
 const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:2*1024*1024,files:1,fields:0}});

@@ -5,7 +5,7 @@ let db;
 beforeAll(async()=>{
  db=new PGlite();
  await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;
- create table users(id integer primary key,name text,is_active boolean default true,is_sales_rep boolean default false);
+ create table users(id integer primary key,name text,is_active integer default 1,is_sales_rep boolean default false);
  create table projects(id integer primary key);
  create table leads(id serial primary key,full_name text,phone text,secondary_phone text,source text,status text,notes text,responsible_user_id integer,interested_project_id integer,assigned_at timestamptz,created_at text,updated_at text,archived_at text);
  create table lead_notes(id serial primary key,lead_id integer,author_user_id integer,body text,created_at text);
@@ -13,7 +13,8 @@ beforeAll(async()=>{
  create unique index task_open_call on tasks(lead_id,type) where status='OPEN' and type='CALL';
  create table lead_assignment_history(id serial primary key,lead_id integer,to_user_id integer,assigned_by_user_id integer,assignment_type text,reason text);
  insert into users(id,name,is_sales_rep) values(1,'Admin',false),(2,'Manager',true);insert into projects values(3);`);
- const sql=readFileSync('supabase/migrations/20261101210158_lead_intake_import_google_forms.sql','utf8');await db.exec(sql);await db.exec(sql);
+ const sql=readFileSync('supabase/migrations/20261101210158_lead_intake_import_google_forms.sql','utf8');await db.exec(sql);
+ const fix=readFileSync('supabase/migrations/20261101211750_fix_lead_intake_employee_active_flag.sql','utf8');await db.exec(fix);await db.exec(fix);
 },30000);
 afterAll(async()=>db?.close());
 async function intake(key,phone='900123456',extra={},settings={source:'WEBINAR',campaign:'Webinar',manager_id:2,project_id:3}){
@@ -48,4 +49,10 @@ it('external source uses server configuration and fails after deactivation',asyn
 it('private intake tables and RPCs are unavailable to browser roles',async()=>{
  const r=(await db.query("select has_table_privilege('anon','crm_lead_integrations','SELECT') a,has_table_privilege('authenticated','crm_lead_inquiries','SELECT') b,has_function_privilege('anon','crm_intake_lead(text,text,jsonb,jsonb,integer,uuid)','EXECUTE') c,has_table_privilege('service_role','crm_lead_inquiries','DELETE') d")).rows[0];expect(r).toEqual({a:false,b:false,c:false,d:false});
  expect((await db.query("select count(*)::int n from pg_class where relname in('crm_lead_integrations','crm_lead_inquiries') and relrowsecurity")).rows[0].n).toBe(2);
+});
+
+it('rejects deactivated integer-flag managers without creating a lead',async()=>{
+ await db.exec("insert into users(id,name,is_active,is_sales_rep) values(9,'Inactive',0,true)");
+ await expect(intake('inactive-manager','900000099',{}, {source:'WEBINAR',campaign:'Event',manager_id:9})).rejects.toThrow('Manager unavailable');
+ expect((await db.query("select count(*)::int n from leads where phone='+992900000099'")).rows[0].n).toBe(0);
 });
