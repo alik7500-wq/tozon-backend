@@ -1,3 +1,4 @@
+import { presence, safeActivity } from '../activity/activity.service.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { AppError } from '../../shared/errors/errorHandler.js';
@@ -12,6 +13,7 @@ const signToken = (id) => {
 
 export const createSendToken = (user, statusCode, res) => {
   const token = signToken(user.id);
+  (res.locals ||= {}).activityUser = user;
   
   const cookieOptions = {
     expires: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000), // 90 days
@@ -49,6 +51,7 @@ export const login = async (email, password, res) => {
     throw new AppError('User is deactivated', 401);
   }
 
+  await safeActivity(() => presence(user, { last_login_at: new Date().toISOString(), last_logout_at: null }));
   createSendToken(user, 200, res);
 };
 

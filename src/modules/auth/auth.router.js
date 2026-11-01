@@ -1,6 +1,7 @@
+import { presence, safeActivity } from '../activity/activity.service.js';
 import express from 'express';
 import { login, logout } from './auth.service.js';
-import { protect } from '../../middleware/auth.middleware.js';
+import { protect, protectOptional } from '../../middleware/auth.middleware.js';
 
 const router = express.Router();
 
@@ -13,7 +14,8 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
-router.post('/logout', (req, res) => {
+router.post('/logout', protectOptional, async (req, res) => {
+  if (req.user) await safeActivity(() => presence(req.user, { last_logout_at: new Date().toISOString() }));
   logout(res);
 });
 
