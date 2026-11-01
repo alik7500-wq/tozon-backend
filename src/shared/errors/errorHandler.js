@@ -17,7 +17,9 @@ export const errorHandler = (err, req, res, next) => {
 
   // Sanitize PostgreSQL driver errors into user-friendly business responses
   if (err.message && typeof err.message === 'string') {
-    if (err.message.includes('invalid input syntax for type bigint') || err.message.includes('invalid input syntax for type integer')) {
+    if (err.code === '23514' && /В и Г|В\/Г|А\/Б/.test(err.message)) {
+      statusCode = 400; status = 'fail'; message = err.message;
+    } else if (err.message.includes('invalid input syntax for type bigint') || err.message.includes('invalid input syntax for type integer')) {
       statusCode = 400;
       status = 'fail';
       message = 'Некорректный идентификатор сущности (ожидается числовое значение)';

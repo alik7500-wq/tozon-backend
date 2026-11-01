@@ -1,3 +1,4 @@
+import { accountingScope, matchesAccountingScope, dealProjectId, isVgDesk, assertSameAccountingScope } from './accountingScope.js';
 import { excludeReclassifiedTransfers, applyBarterResults } from './barterRealization.js';
 import crypto from 'crypto';
 import { isCustomerPko, isVoidedPko } from './customerPko.js';
@@ -1996,6 +1997,7 @@ export class FinanceRepository {
       err.code = 'CONVERSION_CASH_DESKS_REQUIRED';
       throw err;
     }
+    assertSameAccountingScope(fromCashDeskId, toCashDeskId);
 
     const fromDeskObj = desks.find(d => d.id === fromCashDeskId);
     const toDeskObj = desks.find(d => d.id === toCashDeskId);
@@ -2041,6 +2043,7 @@ export class FinanceRepository {
    */
   static async getCashflow(filters = {}, userAccess = null) {
     const db = getDB();
+    const scope = accountingScope(filters);
     const currentYear = Number(filters.year) || new Date().getFullYear();
     const selectedCurrency = filters.currency && filters.currency !== 'ALL' ? filters.currency : null;
     const availableYears = await this.getAvailableYears();
@@ -2049,13 +2052,13 @@ export class FinanceRepository {
       id, deal_id, amount_minor, currency, payment_date, method, settlement_method, reference, comment, payer_name, created_at,
       status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs, amount_usd, exchange_rate,
       conversion_id,
-      deals ( id, contract_number, currency, deal_date, created_at, leads ( full_name, inn ) ),
+      deals ( id, contract_number, currency, deal_date, created_at, units ( floors ( sections ( buildings ( project_id ) ) ) ), leads ( full_name, inn ) ),
       users:created_by_user_id ( name )
     `);
     if (pErr) throw pErr;
 
     const { data: expensesData, error: eErr } = await db.from('expenses').select(`
-      id, amount_minor, currency, expense_date, category, method, settlement_method, reference, recipient, description, created_at,
+      id, deal_id, deals:deals!expenses_deal_id_fkey ( units ( floors ( sections ( buildings ( project_id ) ) ) ) ), amount_minor, currency, expense_date, category, method, settlement_method, reference, recipient, description, created_at,
       exchange_rate, amount_usd, conversion_expense_id,
       status, void_reason, voided_at, voided_by, transfer_id, cash_desk_id, operation_type, amount_tjs,
       conversion_id,
@@ -2069,10 +2072,11 @@ export class FinanceRepository {
       (paymentsData || []).some(p=>Number(p.id)===Number(r.reclassified_payment_id) && p.status!=='VOIDED') &&
       (expensesData || []).some(e=>Number(e.id)===Number(r.reclassified_expense_id) && e.status!=='VOIDED')
     );
-    const cashDocuments=excludeReclassifiedTransfers(paymentsData || [],expensesData || [],realizationResults);
+    const scopedDocuments=excludeReclassifiedTransfers(paymentsData || [],expensesData || [],realizationResults);
+    const cashDocuments={payments:scopedDocuments.payments.filter(p=>matchesAccountingScope(p,scope)),expenses:scopedDocuments.expenses.filter(e=>matchesAccountingScope(e,scope))};
     // Preserve original documents for audit; their non-cash reclassification is not cashflow.
-    let activePayments = cashDocuments.payments.filter(p => p.status !== 'VOIDED');
-    let activeExpenses = cashDocuments.expenses.filter(e => e.status !== 'VOIDED');
+    let activePayments = cashDocuments.payments.filter(p => p.status !== 'VOIDED' && matchesAccountingScope(p, scope));
+    let activeExpenses = cashDocuments.expenses.filter(e => e.status !== 'VOIDED' && matchesAccountingScope(e, scope));
 
     // Серверная изоляция и контроль прав доступа: проверяем запросы к кассам
     if (userAccess && !userAccess.isAdmin) {
@@ -2244,7 +2248,7 @@ export class FinanceRepository {
     // 3. Sales & Contracts KPI (Реализованные м², скидки, ожидаемый остаток рассрочки)
     const { data: allDealsData } = await db.from('deals').select(`
       id, status, base_price_minor, discount_minor, final_price_minor, down_payment_minor, currency,
-      units ( area_m2_x100, rooms ),
+      units ( area_m2_x100, rooms, floors ( sections ( buildings ( project_id ) ) ) ),
       deal_payment_schedules ( amount_minor, paid_amount_minor, status )
     `);
 
@@ -2253,7 +2257,8 @@ export class FinanceRepository {
     let totalContractSumUsd = 0;
     let totalDiscountSumUsd = 0;
 
-    (allDealsData || []).forEach(d => {
+    const scopedDeals = (allDealsData || []).filter(d => scope === 'VG' ? dealProjectId(d) === 4 : dealProjectId(d) !== 4);
+    scopedDeals.forEach(d => {
       if (d.status !== 'CANCELLED') {
         const area = (d.units?.area_m2_x100 || 0) / 100;
         totalSoldAreaM2 += area;
@@ -2272,7 +2277,7 @@ export class FinanceRepository {
     const totalPaymentsCollectedUsd = activePayments
       .filter(p => p.deal_id || p.dealId)
       .reduce((acc, p) => acc + ((p.amount_minor || 0) / 100), 0);
-    const { data: schedData } = await db.from('deal_payment_schedules').select('paid_amount_minor');
+    const schedData = scopedDeals.filter(d => d.status !== 'CANCELLED').flatMap(d => d.deal_payment_schedules || []);
     const totalSchedPaidUsd = (schedData || []).reduce((acc, s) => acc + ((s.paid_amount_minor || 0) / 100), 0);
     const totalReceivedSumUsd = Math.max(totalPaymentsCollectedUsd, totalSchedPaidUsd);
 
@@ -2343,6 +2348,7 @@ export class FinanceRepository {
       { code: 'BANK_ACCOUNT', name: 'Расчетный счет в банке (Безналичные)' }
     ];
 
+    activeDesks = activeDesks.filter(d => scope === 'VG' ? isVgDesk(d) : !isVgDesk(d));
     const mainCashier = activeDesks.find(d => d.code === 'MAIN_CASHIER') || activeDesks[0];
 
     const resolveDeskName = (cashDeskId, rawComment, rawRecipient) => {
@@ -2785,6 +2791,7 @@ export class FinanceRepository {
     }
 
     return {
+      accountingScope: scope,
       summaryByCurrency,
       cashDesksSummary,
       availableCurrencies,
@@ -2849,6 +2856,7 @@ export class FinanceRepository {
       idempotency_key
     } = data;
 
+    assertSameAccountingScope(source_cash_desk_id, destination_cash_desk_id);
     const parseNum = (val) => {
       if (val === undefined || val === null || val === '') return null;
       const parsed = Number(String(val).replace(',', '.').trim());
@@ -2905,6 +2913,7 @@ export class FinanceRepository {
 
     const resolvedSourceId = await resolveCashDeskUuid(db, source_cash_desk_id);
     const resolvedDestId = await resolveCashDeskUuid(db, destination_cash_desk_id);
+    assertSameAccountingScope(resolvedSourceId, resolvedDestId);
 
     if (!resolvedSourceId || !resolvedDestId) {
       const err = new Error('Указанная касса для внутреннего перемещения не найдена или неактивна');
