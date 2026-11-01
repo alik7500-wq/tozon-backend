@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { protect } from '../../middleware/auth.middleware.js';
 import { createOAuthState } from './social-oauth-state.js';
 import { saveInstagramOAuthState, consumeInstagramOAuthState } from './instagram-oauth.repository.js';
-import { instagramAuthorizationUrl, exchangeInstagramAuthorizationCode, exchangeInstagramLongLivedToken, fetchInstagramProfile } from './instagram-meta.client.js';
+import { facebookBusinessInstagramAuthorizationUrl } from './facebook-business-instagram-oauth.js';
+import { exchangeFacebookBusinessCode, extendFacebookBusinessToken, resolveTozonInstagramAccount } from './facebook-business-token.client.js';
 import { saveTozonInstagramConnection, getTozonInstagramConnectionStatus } from './instagram-connection.repository.js';
 
 const router = Router();
@@ -25,7 +26,7 @@ router.post('/connect', protect, onlyAdministrator, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
     const { state } = createOAuthState();
-    const authorizationUrl = instagramAuthorizationUrl(state);
+    const authorizationUrl = facebookBusinessInstagramAuthorizationUrl(state);
     await saveInstagramOAuthState({ state, userId: req.user.id });
     return res.json({ status: 'success', data: { authorizationUrl } });
   } catch {
@@ -42,17 +43,14 @@ router.get('/callback', async (req, res) => {
   try {
     const initiated = await consumeInstagramOAuthState({ state });
     if (!initiated) return res.status(403).send('Instagram authorization expired or already used');
-    const shortLived = await exchangeInstagramAuthorizationCode(code);
-    const longLived = await exchangeInstagramLongLivedToken(shortLived.accessToken);
-    const profile = await fetchInstagramProfile(longLived.accessToken);
-    if (profile.userId !== shortLived.instagramUserId || profile.username?.toLowerCase() !== 'tozon_plaza') {
-      return res.status(403).send('This Instagram account is not authorized for TOZON CRM');
-    }
+    const shortLived = await exchangeFacebookBusinessCode(code);
+    const longLived = await extendFacebookBusinessToken(shortLived.accessToken);
+    const account = await resolveTozonInstagramAccount(longLived.accessToken);
     await saveTozonInstagramConnection({
-      instagramUserId: profile.userId,
-      username: profile.username,
-      accessToken: longLived.accessToken,
-      expiresIn: longLived.expiresIn
+      instagramUserId: account.instagramUserId,
+      username: 'tozon_plaza',
+      accessToken: account.pageAccessToken,
+      expiresIn: null
     });
     return res.status(200).type('text/plain').send('Instagram @tozon_plaza connected. Return to TOZON CRM.');
   } catch {
