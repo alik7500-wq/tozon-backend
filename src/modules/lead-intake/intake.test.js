@@ -49,3 +49,9 @@ it('Google endpoint checks per-integration secret, rejects invalid data and limi
  expect(r.status).toBe(200);expect(mocks.db.rpc).toHaveBeenCalledWith('crm_intake_lead',expect.objectContaining({p_settings:{},p_actor:null,p_integration:config.id,p_lead:{full_name:'Name',phone:'+992900123456',notes:'',submitted_at:''}}));
  config.is_active=false;expect((await request(app).post(url).set('x-lead-intake-key','correct').send({})).status).toBe(401);
 });
+
+it('loads import options with the production integer active flag',async()=>{
+ const eq=vi.fn();const query={select:()=>query,eq:(...args)=>{eq(...args);return query},order:async()=>({data:[{id:3,name:'Sales'}],error:null})};mocks.db.from.mockReturnValue(query);
+ const result=await request(app).get('/api/leads/intake/options').set('x-test-role','ADMIN');
+ expect(result.status).toBe(200);expect(result.body.data.managers).toEqual([{id:3,name:'Sales'}]);expect(eq).toHaveBeenCalledWith('is_active',1);expect(eq).toHaveBeenCalledWith('is_sales_rep',true);expect(eq).not.toHaveBeenCalledWith('is_active',true);
+});
