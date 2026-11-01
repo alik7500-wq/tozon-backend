@@ -3,7 +3,7 @@ import { protect } from '../../middleware/auth.middleware.js';
 import { createOAuthState } from './social-oauth-state.js';
 import { saveInstagramOAuthState, consumeInstagramOAuthState } from './instagram-oauth.repository.js';
 import { instagramAuthorizationUrl, exchangeInstagramAuthorizationCode, exchangeInstagramLongLivedToken, fetchInstagramProfile } from './instagram-meta.client.js';
-import { saveTozonInstagramConnection } from './instagram-connection.repository.js';
+import { saveTozonInstagramConnection, getTozonInstagramConnectionStatus } from './instagram-connection.repository.js';
 
 const router = Router();
 const onlyAdministrator = (req, res, next) => {
@@ -11,9 +11,14 @@ const onlyAdministrator = (req, res, next) => {
   next();
 };
 
-router.get('/connection', protect, onlyAdministrator, (_req, res) => {
+router.get('/connection', protect, onlyAdministrator, async (_req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.json({ status: 'success', data: { provider: 'instagram', connected: false, available: false } });
+  try {
+    const connection = await getTozonInstagramConnectionStatus();
+    return res.json({ status: 'success', data: { provider: 'instagram', ...connection } });
+  } catch {
+    return res.status(503).json({ status: 'error', code: 'INSTAGRAM_CONNECTION_STATUS_UNAVAILABLE' });
+  }
 });
 
 router.post('/connect', protect, onlyAdministrator, async (req, res) => {
