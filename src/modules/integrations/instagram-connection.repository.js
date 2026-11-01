@@ -26,3 +26,20 @@ export async function saveTozonInstagramConnection({ instagramUserId, username, 
   if (error) throw new Error('Instagram connection could not be saved');
   return { instagramUserId: String(instagramUserId), username: username || null, expiresAt };
 }
+
+export async function getTozonInstagramConnectionStatus() {
+  const { data, error } = await getServiceDB().from('tozon_instagram_connections')
+    .select('instagram_user_id,username,status,token_expires_at')
+    .eq('status', 'connected').limit(1);
+  if (error) throw new Error('Instagram connection status lookup failed');
+  const record = data?.[0];
+  if (!record) return { connected: false, available: true };
+  const expired = Boolean(record.token_expires_at && new Date(record.token_expires_at).getTime() <= Date.now());
+  return {
+    connected: !expired,
+    available: true,
+    username: record.username,
+    expiresAt: record.token_expires_at,
+    needsReconnect: expired
+  };
+}
