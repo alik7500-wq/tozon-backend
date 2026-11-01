@@ -8,28 +8,28 @@ const router = express.Router();
 // Mock store / settings for local & cloud MVP
 let automationSettings = {
   telegram: {
-    enabled: true,
-    botToken: '7182938491:AAHkL...SAMPLE_TOKEN',
-    chatId: '-100293848123',
-    status: 'CONNECTED',
-    lastTestAt: new Date().toISOString()
+    enabled: false,
+    botToken: '',
+    chatId: '',
+    status: 'NOT_CONFIGURED',
+    lastTestAt: null
   },
   whatsapp: {
-    enabled: true,
+    enabled: false,
     provider: 'Green-API / WABA',
-    instanceId: '1101829384',
-    apiToken: 'd8a9f0b1c2d3...TOKEN',
-    status: 'ACTIVE',
-    lastTestAt: new Date().toISOString()
+    instanceId: '',
+    apiToken: '',
+    status: 'NOT_CONFIGURED',
+    lastTestAt: null
   },
   sms: {
-    enabled: true,
+    enabled: false,
     provider: 'OsonSMS / Babilon-T',
-    apiKey: 'oson_live_8912384912',
+    apiKey: '',
     senderId: 'TOZON',
-    balance: '480 SMS',
-    status: 'ACTIVE',
-    lastTestAt: new Date().toISOString()
+    balance: 'Не проверен',
+    status: 'NOT_CONFIGURED',
+    lastTestAt: null
   }
 };
 
@@ -86,35 +86,20 @@ let automationRules = [
   }
 ];
 
-let dispatchLogs = [
-  {
-    id: 1,
-    channel: 'TELEGRAM',
-    recipient: 'Отдел продаж (Группа Telegram)',
-    event: 'LEAD_CREATED',
-    message: '🔥 Новый лид в CRM! Имя: Алиев Рахим, Тел: +9929110106666, Объект: ЖК TOZON PLAZA',
-    status: 'DELIVERED',
-    sentAt: new Date(Date.now() - 15 * 60000).toISOString()
-  },
-  {
-    id: 2,
-    channel: 'SMS',
-    recipient: '+992 92 777 9757',
-    event: 'PAYMENT_RECEIVED',
-    message: 'TOZON CRM: По договору 25601-2026-0004 принята оплата 10,000 USD. Спасибо!',
-    status: 'DELIVERED',
-    sentAt: new Date(Date.now() - 60 * 60000).toISOString()
-  },
-  {
-    id: 3,
-    channel: 'WHATSAPP',
-    recipient: '+992 93 555 1234',
-    event: 'PAYMENT_DUE_SOON',
-    message: 'Уважаемый(ая) Шахноза Алиева, напоминаем о сроке платежа 1,500 USD по договору 25601-2026-0002.',
-    status: 'DELIVERED',
-    sentAt: new Date(Date.now() - 180 * 60000).toISOString()
-  }
-];
+let dispatchLogs = [];
+
+// Read-only connection capability discovery. Never infer provider status from demo settings.
+// Only trusted CRM admins can view configuration readiness.
+router.get('/social-connections/capabilities', protect, restrictTo('ADMIN', 'DIRECTOR'), (_req, res) => {
+  const instagramReady = Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET && process.env.META_REDIRECT_URI);
+  const whatsappReady = Boolean(process.env.META_APP_ID && process.env.META_APP_SECRET && process.env.META_WHATSAPP_CONFIG_ID);
+  res.set('Cache-Control', 'no-store');
+  return res.json({ status: 'success', data: {
+    instagram: { configured: instagramReady, connected: false, available: false },
+    whatsapp: { configured: whatsappReady, connected: false, available: false },
+    telegram: { configured: false, connected: false, available: false }
+  }});
+});
 
 // GET /api/automation/settings
 router.get('/settings', protect, (req, res) => {
@@ -145,26 +130,12 @@ router.post('/settings', protect, (req, res) => {
   });
 });
 
-// POST /api/automation/test-send
-router.post('/test-send', protect, (req, res) => {
-  const { channel, recipient, message } = req.body;
-  
-  const newLog = {
-    id: Date.now(),
-    channel: channel || 'TELEGRAM',
-    recipient: recipient || 'Тестовый получатель',
-    event: 'MANUAL_TEST',
-    message: message || 'Тестовое уведомление из Tozon CRM',
-    status: 'DELIVERED',
-    sentAt: new Date().toISOString()
-  };
-
-  dispatchLogs.unshift(newLog);
-
-  res.json({
-    status: 'success',
-    message: `Тестовое сообщение успешно отправлено через ${channel}!`,
-    data: { log: newLog }
+// Explicitly disable the old mock send endpoint until a real provider is integrated.
+router.post('/test-send', protect, (_req, res) => {
+  return res.status(501).json({
+    status: 'error',
+    code: 'PROVIDER_NOT_CONFIGURED',
+    message: 'Реальная отправка через этот канал пока не настроена. Тестовое сообщение не отправлялось.'
   });
 });
 
