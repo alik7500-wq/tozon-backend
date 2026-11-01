@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Router, raw } from 'express';
 
 const router = Router();
-const webhookSecret = () => process.env.META_APP_SECRET?.trim();
+const webhookSecret = () => process.env.META_INSTAGRAM_APP_SECRET?.trim();
 const verifyToken = () => process.env.META_WEBHOOK_VERIFY_TOKEN?.trim();
 
 router.get('/', (req, res) => {
