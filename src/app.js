@@ -1,5 +1,6 @@
 import leadIntakeRouter from './modules/lead-intake/intake.router.js';
 import instagramIntegrationRouter from './modules/integrations/instagram.router.js';
+import instagramWebhookRouter from './modules/integrations/instagram-webhook.router.js';
 import activityRouter from './modules/activity/activity.router.js';
 import { activityMiddleware } from './modules/activity/activity.middleware.js';
 import discountsRouter from './modules/discounts/discounts.router.js';
@@ -60,6 +61,7 @@ app.use(cors({
   origin: true,
   credentials: true,
 }));
+app.use('/api/integrations/instagram/webhook', instagramWebhookRouter);
 app.use('/api/leads/intake', express.json({ limit: '3mb' }));
 app.use(express.json());
 app.use(cookieParser());
