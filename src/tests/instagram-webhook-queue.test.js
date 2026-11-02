@@ -52,6 +52,11 @@ describe('Instagram webhook queue', () => {
     await expect(runInstagramWebhookQueue()).rejects.toThrow('failure recording failed');
     expect(rpc).toHaveBeenCalledTimes(1);
   });
+  it('rejects a claim with missing event payload', async () => {
+    rpc.mockResolvedValue({ data: { id: 13, status: 'processing', attempts: 1 }, error: null });
+    await expect(runInstagramWebhookQueue()).rejects.toThrow('Invalid Instagram webhook claim payload');
+    expect(process).not.toHaveBeenCalled();
+  });
   it('rejects an invalid claim without processing customer data', async () => {
     rpc.mockResolvedValue({ data: { id: 11, payload: {}, status: 'pending', attempts: 0 }, error: null });
     await expect(runInstagramWebhookQueue()).rejects.toThrow('Invalid Instagram webhook claim state');
