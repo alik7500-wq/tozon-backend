@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { protect } from '../../middleware/auth.middleware.js';
 import { getServiceDB } from '../../db/connection.js';
+import { verifyInstagramAssignmentTenant } from './instagram-tenant-ownership.js';
 
 const router = Router();
 router.use(protect);
@@ -40,6 +41,11 @@ router.post('/:accountId/:contactId', async (req, res) => {
   if (!process.env.INSTAGRAM_TOZON_TENANT_ID) {
     return res.status(503).json({ status: 'error', code: 'INSTAGRAM_TENANT_NOT_CONFIGURED' });
   }
+  const tenantId = process.env.INSTAGRAM_TOZON_TENANT_ID;
+  const ownershipVerified = await verifyInstagramAssignmentTenant({
+    db, tenantId, accountId, managerId, actorId: req.user.id
+  });
+  if (!ownershipVerified) return res.status(403).json({ status: 'error', code: 'INSTAGRAM_TENANT_OWNERSHIP_DENIED' });
   const { error } = await db.from('tozon_instagram_conversation_assignments').upsert({
     instagram_account_id: accountId, contact_id: contactId,
     tenant_id: process.env.INSTAGRAM_TOZON_TENANT_ID,
