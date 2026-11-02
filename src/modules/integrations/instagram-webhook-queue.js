@@ -12,6 +12,9 @@ export async function runInstagramWebhookQueue({ limit = 20 } = {}) {
     const { data, error } = await db.rpc('claim_tozon_instagram_webhook_event');
     if (error) throw new Error('Instagram webhook queue claim failed');
     if (!data) break;
+    if (data.status !== 'processing' || !Number.isInteger(data.attempts) || data.attempts < 1 || data.attempts > 5) {
+      throw new Error('Invalid Instagram webhook claim state');
+    }
     try {
       await processInstagramWebhookEvent(data);
       processed++;
