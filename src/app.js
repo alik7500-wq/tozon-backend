@@ -3,6 +3,7 @@ import instagramIntegrationRouter from './modules/integrations/instagram.router.
 import instagramWebhookRouter from './modules/integrations/instagram-webhook.router.js';
 import instagramInboxRouter from './modules/integrations/instagram-inbox.router.js';
 import instagramSendRouter from './modules/integrations/instagram-send.router.js';
+import instagramAssignmentsRouter from './modules/integrations/instagram-assignments.router.js';
 import activityRouter from './modules/activity/activity.router.js';
 import { activityMiddleware } from './modules/activity/activity.middleware.js';
 import discountsRouter from './modules/discounts/discounts.router.js';
@@ -136,6 +137,7 @@ app.use('/api/automation', automationRouter);
 app.use('/api/integrations/instagram', instagramIntegrationRouter);
 app.use('/api/integrations/instagram/inbox', instagramInboxRouter);
 app.use('/api/integrations/instagram/send', instagramSendRouter);
+app.use('/api/integrations/instagram/assignments', instagramAssignmentsRouter);
 app.use('/api/upload', uploadRouter);
 app.use('/api/dictionaries', dictionariesRouter);
 app.use('/api', visual3dRouter);
