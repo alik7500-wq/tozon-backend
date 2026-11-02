@@ -21,6 +21,14 @@ describe('Instagram webhook queue', () => {
     expect(await runInstagramWebhookQueue()).toEqual({ processed: 0, failed: 1 });
     expect(update).toHaveBeenCalledWith({ status: 'failed', last_error: 'Processing failed' });
   });
+  it('stops a batch after failure to avoid immediate reclaims', async () => {
+    rpc.mockResolvedValue({ data: { id: 2, payload: {} }, error: null });
+    process.mockRejectedValue(new Error('temporary failure'));
+    const eq = vi.fn().mockResolvedValue({ error: null });
+    from.mockReturnValue({ update: () => ({ eq }) });
+    expect(await runInstagramWebhookQueue({ limit: 20 })).toEqual({ processed: 0, failed: 1 });
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
   it('rejects unbounded batch size', async () => {
     await expect(runInstagramWebhookQueue({ limit: 101 })).rejects.toThrow(RangeError);
   });

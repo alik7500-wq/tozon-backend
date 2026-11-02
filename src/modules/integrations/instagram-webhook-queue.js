@@ -20,6 +20,8 @@ export async function runInstagramWebhookQueue({ limit = 20 } = {}) {
       const { error: updateError } = await db.from('tozon_instagram_webhook_events')
         .update({ status: 'failed', last_error: 'Processing failed' }).eq('id', data.id);
       if (updateError) throw new Error('Instagram webhook failure recording failed');
+      // Stop this batch after a failure to avoid immediate same-tick retries.
+      break;
     }
   }
   return { processed, failed };
