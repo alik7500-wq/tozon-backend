@@ -20,3 +20,8 @@ revoke all on sequence public.tozon_instagram_conversation_assignments_id_seq fr
 -- No anon/authenticated policies. Only trusted server-side service role may query.
 grant select, insert, update, delete on public.tozon_instagram_conversation_assignments to service_role;
 grant usage, select on sequence public.tozon_instagram_conversation_assignments_id_seq to service_role;
+
+-- Future AVJ multi-tenant rollout must first create an authoritative tenant registry,
+-- map every CRM user and Instagram connection to exactly one tenant, and verify
+-- tenant ownership server-side. The tenant_id field here is NOT proof of ownership.
+-- Do not enable INSTAGRAM_MANAGER_ACCESS_ENABLED based on this table alone.
