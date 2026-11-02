@@ -13,7 +13,8 @@ create table if not exists public.avj_tenant_users (
 create table if not exists public.avj_tenant_instagram_accounts (
   tenant_id text not null references public.avj_tenants(id),
   instagram_account_id text not null unique check (instagram_account_id ~ '^[0-9]{5,30}$'),
-  primary key (tenant_id, instagram_account_id)
+  primary key (tenant_id, instagram_account_id),
+  unique (tenant_id, instagram_account_id)
 );
 -- Verified against production users.id (integer). Tenant ownership remains unresolved; REVIEW ONLY.
 -- REVIEW ONLY: do not apply to production before tenant mapping and authorization review.
@@ -27,7 +28,13 @@ create table if not exists public.tozon_instagram_conversation_assignments (
   assigned_by_user_id integer not null references public.users(id),
   assigned_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (instagram_account_id, contact_id)
+  unique (instagram_account_id, contact_id),
+  foreign key (tenant_id, instagram_account_id)
+    references public.avj_tenant_instagram_accounts(tenant_id, instagram_account_id),
+  foreign key (tenant_id, assigned_user_id)
+    references public.avj_tenant_users(tenant_id, user_id),
+  foreign key (tenant_id, assigned_by_user_id)
+    references public.avj_tenant_users(tenant_id, user_id)
 );
 create index if not exists tozon_ig_assignments_manager_idx
   on public.tozon_instagram_conversation_assignments (tenant_id, assigned_user_id);
