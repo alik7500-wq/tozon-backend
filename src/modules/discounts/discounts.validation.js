@@ -37,9 +37,11 @@ export function validateSchemeSale(scheme, data, unit, today) {
   if (!Number.isSafeInteger(final) || final <= 0 || final > base) fail('Цена со скидкой должна быть положительной и не превышать базовую цену квартиры');
   const discount = base-final;
   if (Number(data.base_price_minor)!==base || Number(data.discount_minor)!==discount || Number(data.final_price_minor)!==final) fail('Цена не соответствует выбранной схеме скидок');
-  const full = rule.payment_percent === 100;
+  const down = Number(data.down_payment_minor);
+  if (!Number.isSafeInteger(down) || down < Math.round(final*rule.payment_percent/100) || down > final) fail('Первоначальный взнос ниже выбранной ступени скидки или превышает стоимость квартиры');
+  const full = down === final;
+  const months = Number(data.installment_months);
   if (full ? data.payment_type !== 'FULL' : !['INSTALLMENT','PARTIAL_BARTER'].includes(data.payment_type)) fail('Тип оплаты не соответствует условию скидки');
-  if (Number(data.installment_months)!==rule.months || Number(data.installment_interval_months ?? 1)!==1) fail('Срок рассрочки не соответствует условию скидки');
-  if (Number(data.down_payment_minor)!==Math.round(final*rule.payment_percent/100)) fail('Первоначальный взнос не соответствует условию скидки');
-  return { scheme_id: scheme.id, scheme_name: scheme.name, scheme_updated_at: scheme.updated_at, ...rule, base_price_minor: base, discount_minor: discount, final_price_minor: final };
+  if ((full ? months !== 0 : !Number.isInteger(months) || months < 1 || months > rule.months) || Number(data.installment_interval_months ?? 1)!==1) fail('Срок рассрочки не соответствует условию скидки');
+  return { scheme_id: scheme.id, scheme_name: scheme.name, scheme_updated_at: scheme.updated_at, ...rule, agreed_down_payment_minor: down, agreed_installment_months: months, base_price_minor: base, discount_minor: discount, final_price_minor: final };
 }

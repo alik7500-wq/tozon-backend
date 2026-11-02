@@ -19,3 +19,13 @@ it('uses explicit price per square metre without stacking percentage',()=>{
  for(const price of [-1,0,650.001,'invalid']) expect(()=>validateScheme({name:'test',project_id:3,rules:[{...rule,price_per_m2:price}]})).toThrow();
  expect(()=>validateSchemeSale({...scheme,rules:[{...rule,price_per_m2:750}]},input,unit,'2026-10-28')).toThrow();
 });
+it('allows the actual client deposit above the tier minimum and a shorter term',()=>{
+ const data={...sale(rules[3]),down_payment_minor:1500000,installment_months:24};
+ expect(validateSchemeSale(scheme,data,unit,'2026-10-28')).toMatchObject({payment_percent:30,agreed_down_payment_minor:1500000,agreed_installment_months:24});
+ for(const patch of [{down_payment_minor:1},{down_payment_minor:data.final_price_minor+1},{down_payment_minor:100.5},{installment_months:31},{installment_months:0}])expect(()=>validateSchemeSale(scheme,{...data,...patch},unit,'2026-10-28')).toThrow();
+});
+it('permits paying a selected tier in full only with FULL type and zero installments',()=>{
+ const data=sale(rules[3]);data.down_payment_minor=data.final_price_minor;data.payment_type='FULL';data.installment_months=0;
+ expect(validateSchemeSale(scheme,data,unit,'2026-10-28')).toMatchObject({agreed_installment_months:0});
+ expect(()=>validateSchemeSale(scheme,{...data,payment_type:'INSTALLMENT'},unit,'2026-10-28')).toThrow();
+});
