@@ -21,4 +21,22 @@ describe('Instagram inbox', () => {
     const response = await request(app).get('/inbox/conversations');
     expect(response.status).toBe(503);
   });
+  it('rejects invalid account and contact IDs', async () => {
+    const response = await request(app).get('/inbox/conversations/invalid/12345/messages');
+    expect(response.status).toBe(400);
+    expect(from).not.toHaveBeenCalled();
+  });
+  it('returns conversation messages scoped to the requested account and contact', async () => {
+    const limit = vi.fn().mockResolvedValue({ data: [{ message_id: 'm1', text_content: 'Hi' }], error: null });
+    const order = vi.fn().mockReturnValue({ limit });
+    const or = vi.fn().mockReturnValue({ order });
+    const eq = vi.fn().mockReturnValue({ or });
+    from.mockReturnValue({ select: () => ({ eq }) });
+    const response = await request(app).get('/inbox/conversations/17841447499018452/123456789/messages');
+    expect(response.status).toBe(200);
+    expect(response.body.data).toHaveLength(1);
+    expect(eq).toHaveBeenCalledWith('instagram_account_id', '17841447499018452');
+    expect(or).toHaveBeenCalledWith('sender_id.eq.123456789,recipient_id.eq.123456789');
+  });
+
 });
