@@ -1,12 +1,13 @@
+-- Verified against production users.id (integer). Tenant ownership remains unresolved; REVIEW ONLY.
 -- REVIEW ONLY: do not apply to production before tenant mapping and authorization review.
 -- A single Instagram account/contact pair may have one active manager assignment.
 create table if not exists public.tozon_instagram_conversation_assignments (
   id bigint generated always as identity primary key,
   instagram_account_id text not null check (instagram_account_id ~ '^[0-9]{5,30}$'),
   contact_id text not null check (contact_id ~ '^[0-9]{5,30}$'),
-  tenant_id text not null,
-  assigned_user_id bigint not null,
-  assigned_by_user_id bigint not null,
+  tenant_id text not null check (length(trim(tenant_id)) > 0),
+  assigned_user_id integer not null references public.users(id),
+  assigned_by_user_id integer not null references public.users(id),
   assigned_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (instagram_account_id, contact_id)
