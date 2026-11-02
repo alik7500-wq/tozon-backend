@@ -49,7 +49,7 @@ export class TelegramAPI {
 }
 
 export class FinanceBot {
-  constructor(repo, api, { clock = () => new Date(), logger = console, passport = passportBridge } = {}) { this.repo = repo; this.api = api; this.passport = passport; this.clock = clock; this.logger = logger; this.worker = crypto.randomUUID(); this.running = false; this.busy = false; this.lastRequests = new Map(); }
+  constructor(repo, api, { clock = () => new Date(), logger = console, passport = passportBridge, sync = syncSheets, maxConcurrentChats = 4 } = {}) { this.repo = repo; this.api = api; this.passport = passport; this.sync = sync; this.maxConcurrentChats = maxConcurrentChats; this.inFlight = new Map(); this.stopping = false; this.performance = { processed: 0, last_queue_wait_ms: null, last_processing_ms: null }; this.clock = clock; this.logger = logger; this.worker = crypto.randomUUID(); this.running = false; this.busy = false; this.lastRequests = new Map(); }
   async report(user, view = 'summary', period = 'today', custom) {
     const { from, to } = custom || periodFor(period, this.clock());
     // Recheck access immediately before reading financial information.
@@ -84,9 +84,9 @@ export class FinanceBot {
       return;
     }
     if(await cashCommand(this,user,command,Boolean(callback)))return;
-    const last = this.lastRequests.get(sender.id) || 0;
-    if (this.clock().getTime() - last < 2000) return;
-    this.lastRequests.set(sender.id, this.clock().getTime());
+    const last = this.lastRequests.get(sender.id);
+    if (last?.command===command && this.clock().getTime()-last.at<2000) return;
+    this.lastRequests.set(sender.id, {command,at:this.clock().getTime()});
     if (this.lastRequests.size > 100) this.lastRequests.clear();
     if (command === 'help' || /^\/help$/.test(command)) {
       await this.api.send(sender.id, 'Отчёты ежедневно в 22:00 по Худжанду.\nПКО: /pko · РКО: /rko_list · Добавить РКО: /rko · Отмена ввода: /cancel\nЗа дату: /report 2026-10-11\nЗа период: /report 2026-10-01 2026-10-11\nСегодня: /today · Вчера: /yesterday · Месяц: /month\nКассовые операции доступны только по назначенной кассе; Акмалхону — по всем.', keyboard(roleFor(user)));
@@ -136,43 +136,78 @@ export class FinanceBot {
       }
     }
   }
+  async processUpdate(item) {
+    const started = this.clock().getTime();
+    const queued = Date.parse(item.created_at);
+    this.performance.last_queue_wait_ms = Number.isFinite(queued) ? Math.max(0, started-queued) : null;
+    const update = item.payload;
+    try { await this.handle(update); }
+    catch {
+      this.logger.warn('Telegram finance update failed');
+      const chat = update.callback_query?.message?.chat || update.message?.chat;
+      if (chat?.type === 'private') {
+        try { await this.api.send(chat.id, 'Запрос временно недоступен. Повторите позже.'); } catch { /* redacted */ }
+      }
+    }
+    await this.repo.updateStatus(item.update_id, 'DONE');
+    this.performance.processed++;
+    this.performance.last_processing_ms = Math.max(0, this.clock().getTime()-started);
+  }
+  async maintenance() {
+    if (!this.diagnosticsAt || this.clock().getTime()-this.diagnosticsAt>30000) {
+      this.diagnosticsAt=this.clock().getTime();
+      try {
+        const info=await this.api.call('getWebhookInfo');
+        const message=info.last_error_message||'';
+        this.diagnostics={pending_updates:info.pending_update_count||0,webhook_registered:Boolean(info.url),last_error_at:info.last_error_date||null,delivery_error:message?(/\b[45]\d\d\b/.exec(message)?.[0]||(/timed out/i.test(message)?'TIMEOUT':/SSL|TLS|certificate/i.test(message)?'TLS':'DELIVERY_ERROR')):null};
+      } catch { /* Diagnostics must not delay user messages. */ }
+    }
+    if (!this.passportCleanupAt || this.clock().getTime()-this.passportCleanupAt>60000) {
+      this.passportCleanupAt=this.clock().getTime();
+      try { await this.passport.cleanup(); } catch { /* Retry maintenance later. */ }
+    }
+    try { await this.daily(); } catch { this.logger.warn('Telegram finance daily report unavailable'); }
+    try { await this.sync(this.repo); } catch { this.logger.warn('Telegram sheets sync unavailable'); }
+  }
   async tick() {
-    if (this.busy) return;
-    this.busy = true;
+    if(this.stopping)return;
+    // A webhook received while dispatching must be handled on the next microtask,
+    // not discarded until the five-second safety poll.
+    if(this.busy){this.wakeAgain=true;return;}
+    this.busy=true;
+    this.dispatchIdle=new Promise(resolve=>{this.resolveDispatchIdle=resolve;});
     try {
-      if (!await this.repo.claimLease(this.worker)) return;
-      if (!this.diagnosticsAt || this.clock().getTime() - this.diagnosticsAt > 30000) {
-        try {
-          const info = await this.api.call('getWebhookInfo');
-          const message = info.last_error_message || '';
-          this.diagnostics = { pending_updates: info.pending_update_count || 0, webhook_registered: Boolean(info.url), last_error_at: info.last_error_date || null, delivery_error: message ? (/\b[45]\d\d\b/.exec(message)?.[0] || (/timed out/i.test(message) ? 'TIMEOUT' : /SSL|TLS|certificate/i.test(message) ? 'TLS' : 'DELIVERY_ERROR')) : null };
-          this.diagnosticsAt = this.clock().getTime();
-        } catch { /* Do not block report processing on diagnostics. */ }
+      if(!await this.repo.claimLease(this.worker))return;
+      const updates=await this.repo.pending();
+      for(const item of updates) {
+        if(this.stopping)break;
+        const u=item.payload;
+        const chat=u.callback_query?.message?.chat||u.message?.chat;
+        const key=chat?.id!=null?String(chat.id):`invalid:${item.update_id}`;
+        if(this.inFlight.has(key))continue;
+        if(this.inFlight.size>=this.maxConcurrentChats)break;
+        // Compare-and-set also prevents duplicate work during a replica handover.
+        if(!await this.repo.claimUpdate(item.update_id))continue;
+        const task=Promise.resolve().then(()=>this.processUpdate(item))
+          .catch(()=>this.logger.warn('Telegram update completion unavailable'))
+          .finally(()=>{
+            this.inFlight.delete(key);
+            if(!this.stopping)void this.tick();
+          });
+        this.inFlight.set(key,task);
       }
-      if (!this.passportCleanupAt || Date.now()-this.passportCleanupAt>60000) {
-        this.passportCleanupAt=Date.now();
-        try { await this.passport.cleanup(); } catch { /* Schema may not be installed yet. No passport data is exposed. */ }
+      // Independent background work has its own busy guard and never occupies a
+      // conversation slot. The periodic tick renews the global worker lease.
+      if(!this.maintenanceTask && (this.maintenanceAt==null||this.clock().getTime()-this.maintenanceAt>=5000)) {
+        this.maintenanceAt=this.clock().getTime();
+        this.maintenanceTask=this.maintenance().catch(()=>this.logger.warn('Telegram background maintenance unavailable')).finally(()=>{this.maintenanceTask=null;});
       }
-      try { await this.daily(); } catch { this.logger.warn('Telegram finance daily report unavailable'); }
-      try { await syncSheets(this.repo); } catch { this.logger.warn('Telegram sheets sync unavailable'); }
-      const updates = await this.repo.pending();
-      for (const item of updates) {
-        const update = item.payload;
-        // Lease renewal prevents a slow report from overlapping a replacement worker.
-        if (!await this.repo.claimLease(this.worker)) return;
-        await this.repo.updateStatus(item.update_id, 'PROCESSING');
-        try { await this.handle(update); }
-        catch {
-          this.logger.warn('Telegram finance update failed');
-          const chat = update.callback_query?.message?.chat || update.message?.chat;
-          if (chat?.type === 'private') {
-            try { await this.api.send(chat.id, 'Отчёт временно недоступен. Повторите запрос позже.'); } catch { /* redacted */ }
-          }
-        }
-        await this.repo.updateStatus(item.update_id, 'DONE');
-      }
-    } catch { this.logger.warn('Telegram finance worker temporarily unavailable'); }
-    finally { this.busy = false; }
+    } catch {this.logger.warn('Telegram finance dispatcher temporarily unavailable');}
+    finally {
+      this.busy=false;
+      this.resolveDispatchIdle?.();
+      if(this.wakeAgain&&!this.stopping){this.wakeAgain=false;queueMicrotask(()=>{void this.tick();});}
+    }
   }
   async start() {
     const bot = await this.api.call('getMe');
@@ -189,5 +224,5 @@ export class FinanceBot {
     this.timer = setInterval(() => { if (this.running) void this.tick(); }, 5000);
     this.timer.unref();
   }
-  async stop() { this.running = false; clearInterval(this.timer); if (!this.busy) await this.repo.release(this.worker); }
+  async stop() { this.stopping=true; this.running=false; clearInterval(this.timer); await this.dispatchIdle; await Promise.allSettled([...this.inFlight.values(),...(this.maintenanceTask?[this.maintenanceTask]:[])]); await this.repo.release(this.worker); }
 }

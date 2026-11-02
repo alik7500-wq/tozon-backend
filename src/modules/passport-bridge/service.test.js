@@ -122,3 +122,15 @@ it.each([0,1])('offers recognition only after two photos (previously %s)',async 
  if(count===0){expect(payload.reply_markup).toBeUndefined();expect(payload.text).toContain('вторую страницу');}
  else expect(payload.reply_markup.inline_keyboard[0][0].callback_data).toBe('passport:scan:s');
 });
+it('uses current joined CRM permissions to acknowledge the first page without an extra user fetch or AI call',async()=>{
+ const s={id:'s',user_id:12,status:'UPLOAD',file_ids:[],scan_user:{id:12,is_active:1,role:'SALES_MANAGER'}};
+ const q={select:vi.fn(()=>q),eq:()=>q,gt:()=>q,in:()=>q,order:()=>q,limit:()=>q,maybeSingle:async()=>({data:s})};
+ const users={findById:vi.fn()},analyze=vi.fn(),api={call:vi.fn()};
+ const bridge=new PassportBridge({db:{from:()=>q},users,analyze});bridge.patch=vi.fn().mockResolvedValue(s);bridge.downloadPhoto=vi.fn();
+ await bridge.handle({message:{from:{id:7},chat:{id:7,type:'private'},photo:[{file_id:'front'}]}},api);
+ expect(users.findById).not.toHaveBeenCalled();expect(analyze).not.toHaveBeenCalled();expect(bridge.downloadPhoto).not.toHaveBeenCalled();
+ expect(api.call.mock.calls[0][1].text).toContain('вторую страницу');
+ s.scan_user.is_active=0;api.call.mockClear();bridge.patch.mockClear();
+ await bridge.handle({message:{from:{id:7},chat:{id:7,type:'private'},photo:[{file_id:'front'}]}},api);
+ expect(api.call.mock.calls[0][1].text).toContain('отозван');
+});

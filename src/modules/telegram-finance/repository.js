@@ -66,7 +66,8 @@ export class TelegramFinanceRepository {
     if (result.error?.code === '23505') return;
     checked(result);
   }
-  async pending() { return checked(await this.db.from('telegram_finance_updates').select('update_id,payload').eq('status', 'PENDING').order('update_id').limit(20)); }
+  async pending() { return checked(await this.db.from('telegram_finance_updates').select('update_id,payload,created_at').eq('status', 'PENDING').order('update_id').limit(100)); }
+  async claimUpdate(id) { return Boolean(checked(await this.db.from('telegram_finance_updates').update({status:'PROCESSING'}).eq('update_id',id).eq('status','PENDING').select('update_id').maybeSingle())); }
   async updateStatus(id, status) { return checked(await this.db.from('telegram_finance_updates').update({ status, ...(status === 'DONE' ? {payload: {}} : {}) }).eq('update_id', id)); }
   async claimLease(worker) { return checked(await this.db.rpc('telegram_finance_claim_worker', { p_worker: worker })); }
   async state() { return checked(await this.db.from('telegram_finance_state').select('*').eq('id', 1).single()); }

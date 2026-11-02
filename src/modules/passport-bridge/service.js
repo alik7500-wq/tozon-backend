@@ -91,12 +91,12 @@ export class PassportBridge {
       await send(s.status==='PAIRING'?'Подтвердите первое подключение в CRM.':'Эта сессия уже используется. Вернитесь к текущему шагу сканирования.');return true;
     }
     if(!explicit&&!m.photo) return false;
-    let q=this.db.from('telegram_passport_sessions').select('*').eq('telegram_id',String(sender.id)).gt('expires_at',new Date().toISOString());
+    let q=this.db.from('telegram_passport_sessions').select('*,scan_user:users(id,role,permissions,is_active)').eq('telegram_id',String(sender.id)).gt('expires_at',new Date().toISOString());
     if(explicit) q=q.eq('id',command.split(':')[2]);
     else q=q.in('status',['PAIRING','UPLOAD','REVIEW']).order('created_at',{ascending:false}).limit(1);
     s=check(await q.maybeSingle());
     if(!s) { if(explicit) await send('Сессия недоступна. Откройте сканирование из CRM.'); return explicit; }
-    const user=await this.users.findById(s.user_id);
+    const user=s.scan_user || await this.users.findById(s.user_id);
     if(!canScan(user)) { await this.patch(s,{status:'CANCELLED',result:null,file_ids:[]}); await send('Доступ к распознаванию отозван.'); return true; }
     if(m.photo&&!cb) {
       if(s.status!=='UPLOAD') { await send('Сначала подтвердите подключение в CRM.'); return true; }
@@ -119,10 +119,7 @@ export class PassportBridge {
       if(!await this.patch(s,{status:'PROCESSING'})) return true;
       await send('Распознаю паспорт. Результат потребуется проверить.');
       try {
-        const images=[];
-        for(const fileId of s.file_ids) {
-          images.push(await this.downloadPhoto(fileId,api));
-        }
+        const images=await Promise.all(s.file_ids.map(fileId=>this.downloadPhoto(fileId,api)));
         const result=await this.analyze(images);
         await DocumentsRepository.logScanEvent({userId:s.user_id,clientId:null,eventType:'PASSPORT_AI_SCANNED',documentCountry:result.document?.country||null,documentType:result.document?.document_type||null,success:result.success,model:result.model,processingDurationMs:result.duration_ms,warningsCount:result.warnings?.length||0,conflictsCount:result.conflicts?.length||0});
         if(!result.success||!result.quality?.acceptable) throw new Error('QUALITY_REJECTED');
