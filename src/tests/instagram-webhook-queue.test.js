@@ -29,6 +29,20 @@ describe('Instagram webhook queue', () => {
     expect(await runInstagramWebhookQueue({ limit: 20 })).toEqual({ processed: 0, failed: 1 });
     expect(rpc).toHaveBeenCalledTimes(1);
   });
+  it('stops without processing when the atomic database claim fails', async () => {
+    rpc.mockResolvedValue({ data: null, error: { message: 'database unavailable' } });
+    await expect(runInstagramWebhookQueue()).rejects.toThrow('queue claim failed');
+    expect(process).not.toHaveBeenCalled();
+    expect(from).not.toHaveBeenCalled();
+  });
+  it('surfaces failure when event status cannot be recorded', async () => {
+    rpc.mockResolvedValue({ data: { id: 9, payload: {} }, error: null });
+    process.mockRejectedValue(new Error('temporary error'));
+    const eq = vi.fn().mockResolvedValue({ error: { message: 'database unavailable' } });
+    from.mockReturnValue({ update: () => ({ eq }) });
+    await expect(runInstagramWebhookQueue()).rejects.toThrow('failure recording failed');
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
   it('rejects unbounded batch size', async () => {
     await expect(runInstagramWebhookQueue({ limit: 101 })).rejects.toThrow(RangeError);
   });
