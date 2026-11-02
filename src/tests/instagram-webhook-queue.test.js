@@ -52,6 +52,18 @@ describe('Instagram webhook queue', () => {
     await expect(runInstagramWebhookQueue()).rejects.toThrow('failure recording failed');
     expect(rpc).toHaveBeenCalledTimes(1);
   });
+  it('keeps a failed event available for later recovery after a worker crash', async () => {
+    rpc.mockResolvedValueOnce({ data: { id: 21, payload: {}, status: 'processing', attempts: 2 }, error: null });
+    process.mockRejectedValue(new Error('worker interrupted'));
+    const last = vi.fn().mockResolvedValue({ error: null, count: 1 });
+    const middle = vi.fn().mockReturnValue({ eq: last });
+    const first = vi.fn().mockReturnValue({ eq: middle });
+    const update = vi.fn().mockReturnValue({ eq: first });
+    from.mockReturnValue({ update });
+    expect(await runInstagramWebhookQueue({ limit: 1 })).toEqual({ processed: 0, failed: 1 });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', next_attempt_at: expect.any(String) }), { count: 'exact' });
+    expect(last).toHaveBeenCalledWith('attempts', 2);
+  });
   it('rejects a claim with missing event payload', async () => {
     rpc.mockResolvedValue({ data: { id: 13, status: 'processing', attempts: 1 }, error: null });
     await expect(runInstagramWebhookQueue()).rejects.toThrow('Invalid Instagram webhook claim payload');
