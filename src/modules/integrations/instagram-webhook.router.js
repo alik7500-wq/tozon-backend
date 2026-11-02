@@ -32,6 +32,10 @@ router.post('/', raw({ type: 'application/json', limit: '1mb' }), async (req, re
   try {
     const payload = JSON.parse(req.body.toString('utf8'));
     if (payload?.object !== 'instagram' || !Array.isArray(payload.entry)) return res.sendStatus(400);
+    // Reject unexpected accounts before storing any customer data.
+    const accountId = process.env.INSTAGRAM_INBOX_ACCOUNT_ID;
+    if (!/^[0-9]{5,30}$/.test(accountId || '')) return res.sendStatus(503);
+    if (payload.entry.some(entry => String(entry?.id || '') !== accountId)) return res.sendStatus(403);
     await persistInstagramWebhookEvent(payload);
     return res.sendStatus(200);
   } catch {
