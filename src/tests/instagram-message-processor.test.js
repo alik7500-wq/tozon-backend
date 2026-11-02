@@ -15,6 +15,15 @@ describe('Instagram message processor', () => {
     expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ message_id: 'mid-1', text_content: 'hello' }), { onConflict: 'message_id', ignoreDuplicates: true });
     expect(eq).toHaveBeenCalledWith('id', 42);
   });
+  it('does not store messages belonging to another Instagram account', async () => {
+    const upsert = vi.fn();
+    const eq = vi.fn().mockResolvedValue({ error: null });
+    from.mockImplementation(table => table === 'tozon_instagram_messages' ? { upsert } : { update: () => ({ eq }) });
+    const result = await processInstagramWebhookEvent({ id: 8, payload: { object: 'instagram', entry: [{ id: '99999999999', messaging: [{ sender: { id: '12345678901' }, recipient: { id: '99999999999' }, message: { mid: 'other-mid' } }] }] } });
+    expect(result.processedMessages).toBe(0);
+    expect(upsert).not.toHaveBeenCalled();
+    expect(eq).toHaveBeenCalledWith('id', 8);
+  });
   it('does not mark events processed if TOZON account is not configured', async () => {
     delete process.env.INSTAGRAM_INBOX_ACCOUNT_ID;
     await expect(processInstagramWebhookEvent({ id: 7, payload: { object: 'instagram', entry: [] } })).rejects.toThrow('configuration missing');
