@@ -21,7 +21,7 @@ describe('Instagram webhook queue', () => {
     const update = vi.fn().mockReturnValue({ eq });
     from.mockReturnValue({ update });
     expect(await runInstagramWebhookQueue()).toEqual({ processed: 0, failed: 1 });
-    expect(update).toHaveBeenCalledWith({ status: 'failed', last_error: 'Processing failed' }, { count: 'exact' });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ status: 'failed', last_error: 'Processing failed', next_attempt_at: expect.any(String) }), { count: 'exact' });
     expect(eq).toHaveBeenCalledWith('id', 2);
     expect(middle).toHaveBeenCalledWith('status', 'processing');
     expect(last).toHaveBeenCalledWith('attempts', 1);

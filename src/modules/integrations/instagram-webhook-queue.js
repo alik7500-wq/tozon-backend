@@ -21,8 +21,10 @@ export async function runInstagramWebhookQueue({ limit = 20 } = {}) {
       processed++;
     } catch {
       failed++;
+      const retryDelaySeconds = Math.min(60 * (2 ** (data.attempts - 1)), 900);
+      const nextAttemptAt = new Date(Date.now() + retryDelaySeconds * 1000).toISOString();
       const { error: updateError, count: updatedCount } = await db.from('tozon_instagram_webhook_events')
-        .update({ status: 'failed', last_error: 'Processing failed' }, { count: 'exact' })
+        .update({ status: 'failed', last_error: 'Processing failed', next_attempt_at: nextAttemptAt }, { count: 'exact' })
         .eq('id', data.id)
         .eq('status', 'processing')
         .eq('attempts', data.attempts);
