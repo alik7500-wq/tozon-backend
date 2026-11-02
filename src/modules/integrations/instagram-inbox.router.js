@@ -16,7 +16,7 @@ router.use((req, res, next) => {
   next();
 });
 
-// Read-only until tenant-aware access controls and assignment rules are implemented.
+// Read-only TOZON account; managers require separate assignment rules before access.
 router.get('/conversations', async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   const { data, error } = await getServiceDB().from('tozon_instagram_messages')
@@ -25,8 +25,11 @@ router.get('/conversations', async (_req, res) => {
     .order('received_at', { ascending: false }).limit(500);
   if (error) return res.status(503).json({ status: 'error', code: 'INSTAGRAM_MESSAGES_UNAVAILABLE' });
   const conversations = new Map();
+  const accountId = process.env.INSTAGRAM_INBOX_ACCOUNT_ID;
   for (const message of data || []) {
+    if (message.instagram_account_id !== accountId) continue;
     const contactId = message.is_echo ? message.recipient_id : message.sender_id;
+    if (typeof contactId !== 'string' || !/^[0-9]{5,30}$/.test(contactId)) continue;
     const key = message.instagram_account_id + ':' + contactId;
     if (!conversations.has(key)) conversations.set(key, {
       instagramAccountId: message.instagram_account_id,
