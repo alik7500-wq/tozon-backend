@@ -35,7 +35,7 @@ describe('Instagram inbox', () => {
   });
   it('rejects invalid account and contact IDs', async () => {
     const response = await request(app).get('/inbox/conversations/invalid/12345/messages');
-    expect(response.status).toBe(403);
+    expect(response.status).toBe(400);
     expect(from).not.toHaveBeenCalled();
   });
   it('returns conversation messages scoped to the requested account and contact', async () => {

@@ -41,10 +41,10 @@ router.get('/conversations', async (_req, res) => {
 router.get('/conversations/:accountId/:contactId/messages', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const { accountId, contactId } = req.params;
-  if (accountId !== process.env.INSTAGRAM_INBOX_ACCOUNT_ID) return res.sendStatus(403);
   if (!/^[0-9]{5,30}$/.test(accountId) || !/^[0-9]{5,30}$/.test(contactId)) {
     return res.status(400).json({ status: 'error', code: 'INVALID_INSTAGRAM_IDENTIFIERS' });
   }
+  if (accountId !== process.env.INSTAGRAM_INBOX_ACCOUNT_ID) return res.sendStatus(403);
   const { data, error } = await getServiceDB().from('tozon_instagram_messages')
     .select('message_id,sender_id,recipient_id,message_timestamp,text_content,is_echo,has_attachments,received_at')
     .eq('instagram_account_id', accountId)
