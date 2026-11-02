@@ -29,6 +29,10 @@ describe('Instagram message processor', () => {
     await expect(processInstagramWebhookEvent({ id: 7, payload: { object: 'instagram', entry: [] } })).rejects.toThrow('configuration missing');
     expect(from).not.toHaveBeenCalled();
   });
+  it('rejects an event without a valid processing lease', async () => {
+    await expect(processInstagramWebhookEvent({ id: 12, status: 'pending', attempts: 0, payload: {} })).rejects.toThrow('Stored webhook event required');
+    expect(from).not.toHaveBeenCalled();
+  });
   it('never marks event processed when message storage fails', async () => {
     const update = vi.fn();
     from.mockImplementation(table => table === 'tozon_instagram_messages' ? { upsert: vi.fn().mockResolvedValue({ error: { message: 'offline' } }) } : { update });

@@ -3,7 +3,7 @@ import { extractInstagramMessages } from './instagram-message-normalizer.js';
 
 // Replay-safe: Meta message.mid is the unique key. Process only stored signed events.
 export async function processInstagramWebhookEvent(eventRow) {
-  if (!eventRow?.id || !eventRow?.payload) throw new TypeError('Stored webhook event required');
+  if (!eventRow?.id || !eventRow?.payload || eventRow.status !== 'processing' || !Number.isInteger(eventRow.attempts)) throw new TypeError('Stored webhook event required');
   const db = getServiceDB();
   const messages = extractInstagramMessages(eventRow.payload);
   const expectedAccountId = process.env.INSTAGRAM_INBOX_ACCOUNT_ID;
@@ -25,9 +25,11 @@ export async function processInstagramWebhookEvent(eventRow) {
     if (error) throw new Error('Instagram message persistence failed');
     saved++;
   }
-  const { error } = await db.from('tozon_instagram_webhook_events')
-    .update({ status: 'processed', processed_at: new Date().toISOString(), last_error: null })
-    .eq('id', eventRow.id);
-  if (error) throw new Error('Instagram webhook completion update failed');
+  const { error, count } = await db.from('tozon_instagram_webhook_events')
+    .update({ status: 'processed', processed_at: new Date().toISOString(), last_error: null }, { count: 'exact' })
+    .eq('id', eventRow.id)
+    .eq('status', 'processing')
+    .eq('attempts', eventRow.attempts);
+  if (error || count !== 1) throw new Error('Instagram webhook completion update failed');
   return { processedMessages: saved };
 }
