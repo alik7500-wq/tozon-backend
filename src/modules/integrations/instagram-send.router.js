@@ -3,6 +3,7 @@ import { protect } from '../../middleware/auth.middleware.js';
 import { getServiceDB } from '../../db/connection.js';
 import { decryptSocialToken } from './social-token-crypto.js';
 import { sendInstagramDirectMessage } from './instagram-message-send.client.js';
+import { canAccessInstagramConversation } from './instagram-access.policy.js';
 
 // Mounted behind a disabled-by-default feature gate; do not enable before Meta verification.
 const router = Router();
@@ -13,7 +14,7 @@ router.post('/:accountId/:contactId', async (req, res) => {
   if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return res.sendStatus(403);
   const { accountId, contactId } = req.params;
   const text = req.body?.text;
-  if (accountId !== process.env.INSTAGRAM_INBOX_ACCOUNT_ID) return res.sendStatus(403);
+  if (!canAccessInstagramConversation({ user: req.user, accountId, contactId })) return res.sendStatus(403);
   if (!/^\d{5,30}$/.test(contactId) || typeof text !== 'string' || !text.trim() || text.length > 1000) return res.sendStatus(400);
   try {
     const db = getServiceDB();
