@@ -15,6 +15,11 @@ describe('Instagram message processor', () => {
     expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ message_id: 'mid-1', text_content: 'hello' }), { onConflict: 'message_id', ignoreDuplicates: true });
     expect(eq).toHaveBeenCalledWith('id', 42);
   });
+  it('does not mark events processed if TOZON account is not configured', async () => {
+    delete process.env.INSTAGRAM_INBOX_ACCOUNT_ID;
+    await expect(processInstagramWebhookEvent({ id: 7, payload: { object: 'instagram', entry: [] } })).rejects.toThrow('configuration missing');
+    expect(from).not.toHaveBeenCalled();
+  });
   it('never marks event processed when message storage fails', async () => {
     const update = vi.fn();
     from.mockImplementation(table => table === 'tozon_instagram_messages' ? { upsert: vi.fn().mockResolvedValue({ error: { message: 'offline' } }) } : { update });

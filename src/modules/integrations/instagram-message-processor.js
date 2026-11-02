@@ -7,10 +7,11 @@ export async function processInstagramWebhookEvent(eventRow) {
   const db = getServiceDB();
   const messages = extractInstagramMessages(eventRow.payload);
   const expectedAccountId = process.env.INSTAGRAM_INBOX_ACCOUNT_ID;
+  if (!/^[0-9]{5,30}$/.test(expectedAccountId || '')) throw new Error('Instagram account configuration missing');
   // TOZON-only: never persist messages belonging to a different Instagram business account.
   let saved = 0;
   for (const message of messages) {
-    if (!/^[0-9]{5,30}$/.test(expectedAccountId || '') || message.instagramAccountId !== expectedAccountId) continue;
+    if (message.instagramAccountId !== expectedAccountId) continue;
     const { error } = await db.from('tozon_instagram_messages').upsert({
       message_id: message.messageId,
       instagram_account_id: message.instagramAccountId,
