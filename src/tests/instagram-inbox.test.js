@@ -8,7 +8,7 @@ import router from '../modules/integrations/instagram-inbox.router.js';
 const app = express();
 app.use('/inbox', router);
 describe('Instagram inbox', () => {
-  beforeEach(() => { vi.resetAllMocks(); process.env.INSTAGRAM_INBOX_READ_ENABLED = 'true'; });
+  beforeEach(() => { vi.resetAllMocks(); process.env.INSTAGRAM_INBOX_READ_ENABLED = 'true'; process.env.INSTAGRAM_INBOX_ACCOUNT_ID = '17841447499018452'; });
   it('fails closed when inbox feature is not explicitly enabled', async () => {
     delete process.env.INSTAGRAM_INBOX_READ_ENABLED;
     const response = await request(app).get('/inbox/conversations');
@@ -18,19 +18,24 @@ describe('Instagram inbox', () => {
   });
   it('returns grouped conversations without raw webhook payload', async () => {
     const limit = vi.fn().mockResolvedValue({ data: [{ instagram_account_id: 'business', sender_id: 'customer', recipient_id: 'business', text_content: 'Hello', is_echo: false, received_at: '2026-11-02T00:00:00Z' }], error: null });
-    from.mockReturnValue({ select: () => ({ order: () => ({ limit }) }) });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ order: () => ({ limit }) }) }) });
     const response = await request(app).get('/inbox/conversations');
     expect(response.status).toBe(200);
     expect(response.body.data[0].contactId).toBe('customer');
   });
   it('fails closed when database is unavailable', async () => {
-    from.mockReturnValue({ select: () => ({ order: () => ({ limit: vi.fn().mockResolvedValue({ error: { message: 'offline' } }) }) }) });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ order: () => ({ limit: vi.fn().mockResolvedValue({ error: { message: 'offline' } }) }) }) }) });
     const response = await request(app).get('/inbox/conversations');
     expect(response.status).toBe(503);
   });
+  it('rejects other Instagram business accounts before querying database', async () => {
+    const response = await request(app).get('/inbox/conversations/17841447499018453/123456789/messages');
+    expect(response.status).toBe(403);
+    expect(from).not.toHaveBeenCalled();
+  });
   it('rejects invalid account and contact IDs', async () => {
     const response = await request(app).get('/inbox/conversations/invalid/12345/messages');
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(403);
     expect(from).not.toHaveBeenCalled();
   });
   it('returns conversation messages scoped to the requested account and contact', async () => {

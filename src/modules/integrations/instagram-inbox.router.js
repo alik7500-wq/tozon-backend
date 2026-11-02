@@ -6,7 +6,7 @@ const router = Router();
 router.use(protect);
 // Fail closed until account-to-tenant authorization is implemented and reviewed.
 router.use((_req, res, next) => {
-  if (process.env.INSTAGRAM_INBOX_READ_ENABLED !== 'true') {
+  if (process.env.INSTAGRAM_INBOX_READ_ENABLED !== 'true' || !/^[0-9]{5,30}$/.test(process.env.INSTAGRAM_INBOX_ACCOUNT_ID || '')) {
     return res.status(503).json({ status: 'error', code: 'INSTAGRAM_INBOX_NOT_ENABLED' });
   }
   next();
@@ -21,6 +21,7 @@ router.get('/conversations', async (_req, res) => {
   res.set('Cache-Control', 'no-store');
   const { data, error } = await getServiceDB().from('tozon_instagram_messages')
     .select('instagram_account_id,sender_id,recipient_id,message_timestamp,text_content,is_echo,received_at')
+    .eq('instagram_account_id', process.env.INSTAGRAM_INBOX_ACCOUNT_ID)
     .order('received_at', { ascending: false }).limit(500);
   if (error) return res.status(503).json({ status: 'error', code: 'INSTAGRAM_MESSAGES_UNAVAILABLE' });
   const conversations = new Map();
@@ -40,6 +41,7 @@ router.get('/conversations', async (_req, res) => {
 router.get('/conversations/:accountId/:contactId/messages', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const { accountId, contactId } = req.params;
+  if (accountId !== process.env.INSTAGRAM_INBOX_ACCOUNT_ID) return res.sendStatus(403);
   if (!/^[0-9]{5,30}$/.test(accountId) || !/^[0-9]{5,30}$/.test(contactId)) {
     return res.status(400).json({ status: 'error', code: 'INVALID_INSTAGRAM_IDENTIFIERS' });
   }
