@@ -8,6 +8,17 @@ describe('Instagram worker lifecycle', () => {
     expect(worker.started).toBe(false);
     expect(schedule).not.toHaveBeenCalled();
   });
+  it('pauses polling after a failed batch', async () => {
+    let callback;
+    const run = vi.fn().mockResolvedValue({ processed: 0, failed: 1 });
+    const schedule = fn => { callback = fn; return 1; };
+    const worker = startInstagramWebhookWorker({ enabled: true, schedule, run });
+    await Promise.resolve();
+    await Promise.resolve();
+    callback();
+    expect(run).toHaveBeenCalledTimes(1);
+    worker.stop();
+  });
   it('prevents overlapping runs and stops timer', async () => {
     let callback;
     let release;

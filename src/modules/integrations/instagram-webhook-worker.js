@@ -6,12 +6,15 @@ export function startInstagramWebhookWorker({ enabled = process.env.INSTAGRAM_WE
   if (!Number.isInteger(intervalMs) || intervalMs < 5000) throw new RangeError('Invalid Instagram worker interval');
   let running = false;
   let stopped = false;
+  let retryAfter = 0;
   const tick = async () => {
-    if (running || stopped) return;
+    if (running || stopped || Date.now() < retryAfter) return;
     running = true;
     try {
-      await run({ limit: 20 });
+      const result = await run({ limit: 20 });
+      if (result?.failed > 0) retryAfter = Date.now() + 60000;
     } catch {
+      retryAfter = Date.now() + 60000;
       console.error('INSTAGRAM_WEBHOOK_WORKER_ERROR');
     } finally {
       running = false;
