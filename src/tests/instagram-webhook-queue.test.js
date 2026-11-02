@@ -15,16 +15,23 @@ describe('Instagram webhook queue', () => {
   it('records failure without exposing customer payload', async () => {
     rpc.mockResolvedValueOnce({ data: { id: 2, payload: {}, status: 'processing', attempts: 1 }, error: null }).mockResolvedValueOnce({ data: null, error: null });
     process.mockRejectedValue(new Error('private customer data'));
-    const eq = vi.fn().mockResolvedValue({ error: null });
+    const last = vi.fn().mockResolvedValue({ error: null, count: 1 });
+    const middle = vi.fn().mockReturnValue({ eq: last });
+    const eq = vi.fn().mockReturnValue({ eq: middle });
     const update = vi.fn().mockReturnValue({ eq });
     from.mockReturnValue({ update });
     expect(await runInstagramWebhookQueue()).toEqual({ processed: 0, failed: 1 });
-    expect(update).toHaveBeenCalledWith({ status: 'failed', last_error: 'Processing failed' });
+    expect(update).toHaveBeenCalledWith({ status: 'failed', last_error: 'Processing failed' }, { count: 'exact' });
+    expect(eq).toHaveBeenCalledWith('id', 2);
+    expect(middle).toHaveBeenCalledWith('status', 'processing');
+    expect(last).toHaveBeenCalledWith('attempts', 1);
   });
   it('stops a batch after failure to avoid immediate reclaims', async () => {
     rpc.mockResolvedValue({ data: { id: 2, payload: {}, status: 'processing', attempts: 1 }, error: null });
     process.mockRejectedValue(new Error('temporary failure'));
-    const eq = vi.fn().mockResolvedValue({ error: null });
+    const last = vi.fn().mockResolvedValue({ error: null, count: 1 });
+    const middle = vi.fn().mockReturnValue({ eq: last });
+    const eq = vi.fn().mockReturnValue({ eq: middle });
     from.mockReturnValue({ update: () => ({ eq }) });
     expect(await runInstagramWebhookQueue({ limit: 20 })).toEqual({ processed: 0, failed: 1 });
     expect(rpc).toHaveBeenCalledTimes(1);
@@ -38,7 +45,9 @@ describe('Instagram webhook queue', () => {
   it('surfaces failure when event status cannot be recorded', async () => {
     rpc.mockResolvedValue({ data: { id: 9, payload: {}, status: 'processing', attempts: 1 }, error: null });
     process.mockRejectedValue(new Error('temporary error'));
-    const eq = vi.fn().mockResolvedValue({ error: { message: 'database unavailable' } });
+    const last = vi.fn().mockResolvedValue({ error: { message: 'database unavailable' }, count: null });
+    const middle = vi.fn().mockReturnValue({ eq: last });
+    const eq = vi.fn().mockReturnValue({ eq: middle });
     from.mockReturnValue({ update: () => ({ eq }) });
     await expect(runInstagramWebhookQueue()).rejects.toThrow('failure recording failed');
     expect(rpc).toHaveBeenCalledTimes(1);
