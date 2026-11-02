@@ -47,7 +47,8 @@ router.get('/callback', async (req, res) => {
     const shortLived = await exchangeFacebookBusinessCode(code);
     const longLived = await extendFacebookBusinessToken(shortLived.accessToken);
     const account = await resolveTozonInstagramAccount(longLived.accessToken);
-    const permissions = await inspectInstagramMessagingPermission({ userAccessToken: longLived.accessToken });
+    // Inspect the exact Page token used by the send endpoint, not a different user token.
+    const permissions = await inspectInstagramMessagingPermission({ userAccessToken: account.pageAccessToken });
     await saveTozonInstagramConnection({
       instagramUserId: account.instagramUserId,
       username: 'tozon_plaza',
