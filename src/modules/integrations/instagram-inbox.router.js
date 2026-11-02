@@ -4,6 +4,13 @@ import { getServiceDB } from '../../db/connection.js';
 
 const router = Router();
 router.use(protect);
+// Fail closed until account-to-tenant authorization is implemented and reviewed.
+router.use((_req, res, next) => {
+  if (process.env.INSTAGRAM_INBOX_READ_ENABLED !== 'true') {
+    return res.status(503).json({ status: 'error', code: 'INSTAGRAM_INBOX_NOT_ENABLED' });
+  }
+  next();
+});
 router.use((req, res, next) => {
   if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return res.sendStatus(403);
   next();

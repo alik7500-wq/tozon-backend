@@ -8,7 +8,14 @@ import router from '../modules/integrations/instagram-inbox.router.js';
 const app = express();
 app.use('/inbox', router);
 describe('Instagram inbox', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => { vi.resetAllMocks(); process.env.INSTAGRAM_INBOX_READ_ENABLED = 'true'; });
+  it('fails closed when inbox feature is not explicitly enabled', async () => {
+    delete process.env.INSTAGRAM_INBOX_READ_ENABLED;
+    const response = await request(app).get('/inbox/conversations');
+    expect(response.status).toBe(503);
+    expect(response.body.code).toBe('INSTAGRAM_INBOX_NOT_ENABLED');
+    expect(from).not.toHaveBeenCalled();
+  });
   it('returns grouped conversations without raw webhook payload', async () => {
     const limit = vi.fn().mockResolvedValue({ data: [{ instagram_account_id: 'business', sender_id: 'customer', recipient_id: 'business', text_content: 'Hello', is_echo: false, received_at: '2026-11-02T00:00:00Z' }], error: null });
     from.mockReturnValue({ select: () => ({ order: () => ({ limit }) }) });
