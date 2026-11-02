@@ -4,7 +4,7 @@ import { getServiceDB } from '../../db/connection.js';
 import { decryptSocialToken } from './social-token-crypto.js';
 import { sendInstagramDirectMessage } from './instagram-message-send.client.js';
 
-// Not mounted in production. Separate feature gate required before activation.
+// Mounted behind a disabled-by-default feature gate; do not enable before Meta verification.
 const router = Router();
 router.use(protect);
 router.post('/:accountId/:contactId', async (req, res) => {
@@ -24,10 +24,17 @@ router.post('/:accountId/:contactId', async (req, res) => {
     if (error || !connection?.encrypted_access_token || !connection.granted_scopes?.includes('instagram_manage_messages') ||
         (connection.token_expires_at && Date.parse(connection.token_expires_at) <= Date.now())) return res.sendStatus(503);
     const { data: inbound, error: readError } = await db.from('tozon_instagram_messages')
-      .select('received_at').eq('instagram_account_id', accountId).eq('sender_id', contactId)
+      .select('received_at,message_timestamp').eq('instagram_account_id', accountId).eq('sender_id', contactId)
       .eq('is_echo', false).order('received_at', { ascending: false }).limit(1);
     if (readError) return res.sendStatus(503);
-    const lastReceived = Date.parse(inbound?.[0]?.received_at || '');
+    const record = inbound?.[0];
+    const ingestedAt = Date.parse(record?.received_at || '');
+    const rawTimestamp = Number(record?.message_timestamp);
+    // Fail closed: use the older of the Meta event time and ingestion time.
+    // Never extend the reply window because a webhook was delivered late.
+    const eventAt = Number.isFinite(rawTimestamp) && rawTimestamp > 0
+      ? (rawTimestamp < 1e11 ? rawTimestamp * 1000 : rawTimestamp) : NaN;
+    const lastReceived = Math.min(ingestedAt, eventAt);
     if (!Number.isFinite(lastReceived) || lastReceived > Date.now() || Date.now() - lastReceived >= 86400000) return res.sendStatus(409);
     const { messageId } = await sendInstagramDirectMessage({
       pageAccessToken: decryptSocialToken(connection.encrypted_access_token), recipientId: contactId, text
