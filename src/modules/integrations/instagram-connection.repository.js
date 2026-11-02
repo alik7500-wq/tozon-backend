@@ -1,7 +1,7 @@
 import { getServiceDB } from '../../db/connection.js';
 import { encryptSocialToken } from './social-token-crypto.js';
 
-export async function saveTozonInstagramConnection({ instagramUserId, username, accessToken, expiresIn }) {
+export async function saveTozonInstagramConnection({ instagramUserId, username, accessToken, expiresIn, grantedScopes = [] }) {
   if (!instagramUserId || !accessToken) throw new TypeError('Instagram account and token are required');
   const expiresAt = Number.isFinite(expiresIn) && expiresIn > 0
     ? new Date(Date.now() + expiresIn * 1000).toISOString() : null;
@@ -19,7 +19,7 @@ export async function saveTozonInstagramConnection({ instagramUserId, username, 
     username: username || null,
     encrypted_access_token: encryptedToken,
     token_expires_at: expiresAt,
-    granted_scopes: [], // Never claim permissions without verifying granted scopes.
+    granted_scopes: Array.isArray(grantedScopes) ? grantedScopes.filter(scope => typeof scope === 'string') : [], // Verified by Meta token inspection.
     status: 'connected',
     updated_at: new Date().toISOString()
   }, { onConflict: 'instagram_user_id' });
