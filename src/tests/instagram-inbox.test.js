@@ -17,11 +17,11 @@ describe('Instagram inbox', () => {
     expect(from).not.toHaveBeenCalled();
   });
   it('returns grouped conversations without raw webhook payload', async () => {
-    const limit = vi.fn().mockResolvedValue({ data: [{ instagram_account_id: 'business', sender_id: 'customer', recipient_id: 'business', text_content: 'Hello', is_echo: false, received_at: '2026-11-02T00:00:00Z' }], error: null });
+    const limit = vi.fn().mockResolvedValue({ data: [{ instagram_account_id: '17841447499018452', sender_id: '123456789', recipient_id: '17841447499018452', text_content: 'Hello', is_echo: false, received_at: '2026-11-02T00:00:00Z' }], error: null });
     from.mockReturnValue({ select: () => ({ eq: () => ({ order: () => ({ limit }) }) }) });
     const response = await request(app).get('/inbox/conversations');
     expect(response.status).toBe(200);
-    expect(response.body.data[0].contactId).toBe('customer');
+    expect(response.body.data[0].contactId).toBe('123456789');
   });
   it('fails closed when database is unavailable', async () => {
     from.mockReturnValue({ select: () => ({ eq: () => ({ order: () => ({ limit: vi.fn().mockResolvedValue({ error: { message: 'offline' } }) }) }) }) });
