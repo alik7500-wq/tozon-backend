@@ -4,6 +4,7 @@ import { createOAuthState } from './social-oauth-state.js';
 import { saveInstagramOAuthState, consumeInstagramOAuthState } from './instagram-oauth.repository.js';
 import { facebookBusinessInstagramAuthorizationUrl } from './facebook-business-instagram-oauth.js';
 import { exchangeFacebookBusinessCode, extendFacebookBusinessToken, resolveTozonInstagramAccount } from './facebook-business-token.client.js';
+import { inspectInstagramMessagingPermission } from './instagram-permissions.client.js';
 import { saveTozonInstagramConnection, getTozonInstagramConnectionStatus } from './instagram-connection.repository.js';
 
 const router = Router();
@@ -46,11 +47,13 @@ router.get('/callback', async (req, res) => {
     const shortLived = await exchangeFacebookBusinessCode(code);
     const longLived = await extendFacebookBusinessToken(shortLived.accessToken);
     const account = await resolveTozonInstagramAccount(longLived.accessToken);
+    const permissions = await inspectInstagramMessagingPermission({ userAccessToken: longLived.accessToken });
     await saveTozonInstagramConnection({
       instagramUserId: account.instagramUserId,
       username: 'tozon_plaza',
       accessToken: account.pageAccessToken,
-      expiresIn: null
+      expiresIn: null,
+      grantedScopes: permissions.grantedScopes
     });
     return res.status(200).type('text/plain').send('Instagram @tozon_plaza connected. Return to TOZON CRM.');
   } catch {
