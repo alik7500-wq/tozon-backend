@@ -29,8 +29,13 @@ router.post('/', raw({ type: 'application/json', limit: '1mb' }), async (req, re
   const expected = Buffer.from(createHmac('sha256', secret).update(req.body).digest('hex'), 'hex');
   const actual = Buffer.from(signature.slice(7), 'hex');
   if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return res.sendStatus(403);
+  let payload;
   try {
-    const payload = JSON.parse(req.body.toString('utf8'));
+    payload = JSON.parse(req.body.toString('utf8'));
+  } catch {
+    return res.sendStatus(400);
+  }
+  try {
     if (payload?.object !== 'instagram' || !Array.isArray(payload.entry)) return res.sendStatus(400);
     // Reject unexpected accounts before storing any customer data.
     const accountId = process.env.INSTAGRAM_INBOX_ACCOUNT_ID;

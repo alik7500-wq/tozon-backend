@@ -45,6 +45,17 @@ describe('Instagram Meta webhook safety', () => {
     expect(r.status).toBe(200);
     expect(persistInstagramWebhookEvent).toHaveBeenCalledOnce();
   });
+  it('rejects malformed signed JSON without writing to the database', async () => {
+    process.env.META_INSTAGRAM_APP_SECRET = 'test-secret';
+    process.env.INSTAGRAM_INBOX_ACCOUNT_ID = '17841447499018452';
+    const body = '{"object":"instagram",';
+    const signature = createHmac('sha256', 'test-secret').update(body).digest('hex');
+    const response = await request(app).post(endpoint)
+      .set('Content-Type', 'application/json')
+      .set('X-Hub-Signature-256', 'sha256=' + signature).send(body);
+    expect(response.status).toBe(400);
+    expect(persistInstagramWebhookEvent).not.toHaveBeenCalled();
+  });
   it('does not acknowledge events when storage fails', async () => {
     process.env.META_INSTAGRAM_APP_SECRET = 'test-secret';
     process.env.INSTAGRAM_INBOX_ACCOUNT_ID = '17841447499018452';
