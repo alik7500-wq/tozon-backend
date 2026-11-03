@@ -27,7 +27,7 @@ describe('Instagram conversation assignments', () => {
   });
   it('denies non-administrators', async () => {
     process.env.INSTAGRAM_ASSIGNMENTS_ENABLED = 'true';
-    protect.mockImplementation((req, _res, next) => { req.user = { id: 2, role: 'MANAGER' }; next(); });
+    protect.mockImplementation((req, _res, next) => { req.user = { id: 2, role: 'SALES_MANAGER' }; next(); });
     const response = await request(app).post(path).send({ managerId: 2 });
     expect(response.status).toBe(403);
     expect(from).not.toHaveBeenCalled();
@@ -40,14 +40,21 @@ describe('Instagram conversation assignments', () => {
   });
   it('rejects inactive managers', async () => {
     process.env.INSTAGRAM_ASSIGNMENTS_ENABLED = 'true';
-    from.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: 2, role: 'MANAGER', is_active: 0 }, error: null }) }) }) });
+    from.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: 2, role: 'SALES_MANAGER', is_active: 0 }, error: null }) }) }) });
     const response = await request(app).post(path).send({ managerId: 2 });
     expect(response.status).toBe(422);
+  });
+  it('rejects other active staff roles', async () => {
+    process.env.INSTAGRAM_ASSIGNMENTS_ENABLED = 'true';
+    from.mockReturnValue({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: 2, role: 'FINANCE_MANAGER', is_active: 1 }, error: null }) }) }) });
+    const response = await request(app).post(path).send({ managerId: 2 });
+    expect(response.status).toBe(422);
+    expect(response.body.code).toBe('INVALID_MANAGER');
   });
   it('requires configured tenant before saving an assignment', async () => {
     process.env.INSTAGRAM_ASSIGNMENTS_ENABLED = 'true';
     from.mockImplementation(table => table === 'users'
-      ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: 2, role: 'MANAGER', is_active: 1 }, error: null }) }) }) }
+      ? { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { id: 2, role: 'SALES_MANAGER', is_active: 1 }, error: null }) }) }) }
       : { select: () => ({ eq: () => ({ eq: () => ({ limit: async () => ({ data: [{ message_id: 'm1' }], error: null }) }) }) }) });
     const response = await request(app).post(path).send({ managerId: 2 });
     expect(response.status).toBe(503);
