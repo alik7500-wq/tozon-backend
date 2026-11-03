@@ -61,6 +61,8 @@ app.use(cors({
   origin: true,
   credentials: true,
 }));
+// Preserve exact signed bytes before the global JSON parser.
+app.use('/api/integrations/instagram/webhook', instagramIngestGatedRouter);
 app.use('/api/leads/intake', express.json({ limit: '3mb' }));
 app.use(express.json());
 app.use(cookieParser());
@@ -97,8 +99,6 @@ app.get('/api/integrations/instagram/webhook', (req, res) => {
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return res.sendStatus(403);
   return res.status(200).type('text/plain').send(challenge);
 });
-app.use('/api/integrations/instagram/webhook', instagramIngestGatedRouter);
-
 // Routes
 app.get('/', (req, res) => {
   res.status(200).send('API is running');
