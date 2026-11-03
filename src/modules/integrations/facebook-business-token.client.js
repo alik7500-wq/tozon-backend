@@ -16,7 +16,10 @@ async function graphGet(path, params) {
     // Only diagnostic numeric fields: never expose tokens, authorization codes, request URLs or Meta messages.
     const metaCode = Number.isInteger(body?.error?.code) ? body.error.code : null;
     const metaSubcode = Number.isInteger(body?.error?.error_subcode) ? body.error.error_subcode : null;
-    console.error('[instagram-meta] Graph API failed', { endpoint: path, httpStatus: response.status, metaCode, metaSubcode });
+    const allowedTypes = new Set(['OAuthException', 'GraphMethodException', 'FacebookApiException', 'Exception']);
+    const metaType = allowedTypes.has(body?.error?.type) ? body.error.type : 'unknown';
+    const transient = body?.error?.is_transient === true;
+    console.error('[instagram-meta] Graph API failed', { endpoint: path, httpStatus: response.status, metaCode, metaSubcode, metaType, transient });
     throw new Error('Meta Graph API request failed');
   }
   return body;
