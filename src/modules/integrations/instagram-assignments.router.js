@@ -28,7 +28,7 @@ router.post('/:accountId/:contactId', async (req, res) => {
   const { data: user, error: userError } = await db.from('users')
     .select('id,role,is_active').eq('id', managerId).maybeSingle();
   if (userError) return res.status(503).json({ status: 'error', code: 'USERS_UNAVAILABLE' });
-  if (!user || user.role !== 'MANAGER' || user.is_active !== 1) {
+  if (!user || user.role !== 'SALES_MANAGER' || user.is_active !== 1) {
     return res.status(422).json({ status: 'error', code: 'INVALID_MANAGER' });
   }
   const { data: messages, error: messagesError } = await db.from('tozon_instagram_messages')
