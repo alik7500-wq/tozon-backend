@@ -21,6 +21,8 @@ router.get('/', (req, res) => {
 });
 
 router.post('/', raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
+  // Verification GET can be deployed independently; never ingest messages until explicitly enabled.
+  if (process.env.INSTAGRAM_WEBHOOK_INGEST_ENABLED !== 'true') return res.sendStatus(503);
   const secret = webhookSecret();
   const signature = req.get('x-hub-signature-256');
   if (!secret || !Buffer.isBuffer(req.body) || !signature || !/^sha256=[a-f0-9]{64}$/i.test(signature)) {
