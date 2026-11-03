@@ -13,6 +13,7 @@ afterEach(() => {
   delete process.env.META_INSTAGRAM_APP_SECRET;
   delete process.env.META_WEBHOOK_VERIFY_TOKEN;
   delete process.env.INSTAGRAM_INBOX_ACCOUNT_ID;
+  delete process.env.INSTAGRAM_WEBHOOK_INGEST_ENABLED;
   vi.resetAllMocks();
 });
 
@@ -29,8 +30,18 @@ describe('Instagram Meta webhook safety', () => {
     expect(r.text).toBe('123');
   });
 
+  it('keeps POST ingestion disabled even with a signed event', async () => {
+    process.env.META_INSTAGRAM_APP_SECRET = 'test-secret';
+    const body = '{"object":"instagram","entry":[]}';
+    const signature = createHmac('sha256', 'test-secret').update(body).digest('hex');
+    const response = await request(app).post(endpoint).set('Content-Type', 'application/json')
+      .set('X-Hub-Signature-256', 'sha256=' + signature).send(body);
+    expect(response.status).toBe(503);
+    expect(persistInstagramWebhookEvent).not.toHaveBeenCalled();
+  });
   it('rejects an invalid webhook signature', async () => {
     process.env.META_INSTAGRAM_APP_SECRET = 'test-secret';
+    process.env.INSTAGRAM_WEBHOOK_INGEST_ENABLED = 'true';
     const r = await request(app).post(endpoint).set('Content-Type', 'application/json').set('X-Hub-Signature-256', 'sha256=' + '0'.repeat(64)).send('{"object":"instagram"}');
     expect(r.status).toBe(403);
   });
@@ -38,6 +49,7 @@ describe('Instagram Meta webhook safety', () => {
   it('acknowledges signed events after durable storage', async () => {
     process.env.META_INSTAGRAM_APP_SECRET = 'test-secret';
     process.env.INSTAGRAM_INBOX_ACCOUNT_ID = '17841447499018452';
+    process.env.INSTAGRAM_WEBHOOK_INGEST_ENABLED = 'true';
     const body = '{"object":"instagram","entry":[]}';
     persistInstagramWebhookEvent.mockResolvedValue({ eventKey: 'saved' });
     const signature = createHmac('sha256', 'test-secret').update(body).digest('hex');
@@ -48,6 +60,7 @@ describe('Instagram Meta webhook safety', () => {
   it('rejects malformed signed JSON without writing to the database', async () => {
     process.env.META_INSTAGRAM_APP_SECRET = 'test-secret';
     process.env.INSTAGRAM_INBOX_ACCOUNT_ID = '17841447499018452';
+    process.env.INSTAGRAM_WEBHOOK_INGEST_ENABLED = 'true';
     const body = '{"object":"instagram",';
     const signature = createHmac('sha256', 'test-secret').update(body).digest('hex');
     const response = await request(app).post(endpoint)
@@ -59,6 +72,7 @@ describe('Instagram Meta webhook safety', () => {
   it('does not acknowledge events when storage fails', async () => {
     process.env.META_INSTAGRAM_APP_SECRET = 'test-secret';
     process.env.INSTAGRAM_INBOX_ACCOUNT_ID = '17841447499018452';
+    process.env.INSTAGRAM_WEBHOOK_INGEST_ENABLED = 'true';
     persistInstagramWebhookEvent.mockRejectedValue(new Error('offline'));
     const body = '{"object":"instagram","entry":[]}';
     const signature = createHmac('sha256', 'test-secret').update(body).digest('hex');
