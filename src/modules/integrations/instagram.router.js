@@ -8,6 +8,7 @@ import { inspectInstagramMessagingPermission } from './instagram-permissions.cli
 import { saveTozonInstagramConnection, getTozonInstagramConnectionStatus } from './instagram-connection.repository.js';
 
 const router = Router();
+const oauthEnabled = () => process.env.INSTAGRAM_OAUTH_ENABLED === 'true';
 const onlyAdministrator = (req, res, next) => {
   if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return res.sendStatus(403);
   next();
@@ -25,6 +26,7 @@ router.get('/connection', protect, onlyAdministrator, async (_req, res) => {
 
 router.post('/connect', protect, onlyAdministrator, async (req, res) => {
   res.set('Cache-Control', 'no-store');
+  if (!oauthEnabled()) return res.status(503).json({ status: 'error', code: 'INSTAGRAM_OAUTH_DISABLED' });
   try {
     const { state } = createOAuthState();
     const authorizationUrl = facebookBusinessInstagramAuthorizationUrl(state);
@@ -37,6 +39,7 @@ router.post('/connect', protect, onlyAdministrator, async (req, res) => {
 
 router.get('/callback', async (req, res) => {
   res.set('Cache-Control', 'no-store');
+  if (!oauthEnabled()) return res.status(503).type('text/plain').send('Instagram connection is not enabled');
   const { code, state } = req.query;
   if (typeof code !== 'string' || typeof state !== 'string' || !code || !state) {
     return res.status(400).send('Instagram authorization was not completed');
