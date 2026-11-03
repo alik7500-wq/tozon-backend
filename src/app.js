@@ -3,6 +3,7 @@ import activityRouter from './modules/activity/activity.router.js';
 import { activityMiddleware } from './modules/activity/activity.middleware.js';
 import discountsRouter from './modules/discounts/discounts.router.js';
 import express from 'express';
+import { timingSafeEqual } from 'node:crypto';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -80,6 +81,22 @@ app.use(pino({
 
 // Static files for uploads
 app.use('/uploads', express.static(uploadDir));
+
+// Verification-only Meta callback. Inbound Instagram events remain disabled.
+app.get('/api/integrations/instagram/webhook', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const token = process.env.META_WEBHOOK_VERIFY_TOKEN?.trim();
+  const supplied = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  if (!token || req.query['hub.mode'] !== 'subscribe' ||
+      typeof supplied !== 'string' || typeof challenge !== 'string' ||
+      challenge.length > 512) return res.sendStatus(403);
+  const actual = Buffer.from(supplied);
+  const expected = Buffer.from(token);
+  if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return res.sendStatus(403);
+  return res.status(200).type('text/plain').send(challenge);
+});
+app.post('/api/integrations/instagram/webhook', (_req, res) => res.sendStatus(503));
 
 // Routes
 app.get('/', (req, res) => {
