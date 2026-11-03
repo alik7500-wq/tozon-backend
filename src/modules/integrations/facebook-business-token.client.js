@@ -23,8 +23,11 @@ async function graphGet(path, params) {
     const transient = body?.error?.is_transient === true;
     // Classify Meta's explanation without logging its raw message, codes, tokens or URLs.
     const explanation = String(body?.error?.message || '').toLowerCase();
+    // An error mentioning app_secret is NOT proof the secret is wrong.
+    // Classify only explicit invalid-secret messages; keep other cases distinct.
     const diagnostic = /redirect.uri|redirect_uri|redirect uri/.test(explanation) ? 'REDIRECT_URI_MISMATCH'
-      : /app.secret|app_secret|client.secret|client_secret/.test(explanation) ? 'APP_SECRET_INVALID'
+      : /(?:invalid|incorrect|wrong|mismatch|does not match|not valid|could not be verified|cannot be verified|failed to verify)[^.!\\n]{0,90}(?:app.secret|app_secret|client.secret|client_secret)|(?:app.secret|app_secret|client.secret|client_secret)[^.!\\n]{0,90}(?:invalid|incorrect|wrong|mismatch|does not match|not valid|could not be verified|cannot be verified|failed to verify)/.test(explanation) ? 'APP_SECRET_REJECTED'
+      : /(?:app.secret|app_secret|client.secret|client_secret)/.test(explanation) ? 'APP_SECRET_PARAMETER_RELATED'
       : /invalid.*(verification code|authorization code|code)|code.*(expired|used|invalid)/.test(explanation) ? 'AUTHORIZATION_CODE_INVALID'
       : /unsupported.*(method|request)|method.*not.*supported/.test(explanation) ? 'HTTP_METHOD_UNSUPPORTED'
       : /permission|scope|access/.test(explanation) ? 'PERMISSION_OR_ACCESS'
