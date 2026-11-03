@@ -52,6 +52,8 @@ router.get('/callback', async (req, res) => {
     const account = await resolveTozonInstagramAccount(longLived.accessToken);
     // Inspect the exact Page token used by the send endpoint, not a different user token.
     const permissions = await inspectInstagramMessagingPermission({ userAccessToken: account.pageAccessToken });
+    // Never mark Direct as connected when Meta has not granted messaging access.
+    if (!permissions.messagingAllowed) return res.status(403).type('text/plain').send('Instagram messaging permission has not been granted in Meta.');
     await saveTozonInstagramConnection({
       instagramUserId: account.instagramUserId,
       username: 'tozon_plaza',
