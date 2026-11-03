@@ -12,7 +12,13 @@ async function graphGet(path, params) {
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
   const body = await response.json().catch(() => null);
-  if (!response.ok || !body || body.error) throw new Error('Meta Graph API request failed');
+  if (!response.ok || !body || body.error) {
+    // Only diagnostic numeric fields: never expose tokens, authorization codes, request URLs or Meta messages.
+    const metaCode = Number.isInteger(body?.error?.code) ? body.error.code : null;
+    const metaSubcode = Number.isInteger(body?.error?.error_subcode) ? body.error.error_subcode : null;
+    console.error('[instagram-meta] Graph API failed', { endpoint: path, httpStatus: response.status, metaCode, metaSubcode });
+    throw new Error('Meta Graph API request failed');
+  }
   return body;
 }
 export async function exchangeFacebookBusinessCode(code) {
