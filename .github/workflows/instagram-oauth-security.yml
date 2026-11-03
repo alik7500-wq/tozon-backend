@@ -1,0 +1,30 @@
+name: Instagram OAuth security checks
+on:
+  pull_request:
+    paths:
+      - 'src/modules/integrations/**'
+      - 'src/tests/instagram-*.test.js'
+      - 'src/tests/facebook-business-instagram-oauth.test.js'
+      - '.github/workflows/instagram-oauth-security.yml'
+  push:
+    branches:
+      - feature/avj-instagram-oauth
+    paths:
+      - 'src/modules/integrations/**'
+      - 'src/tests/instagram-*.test.js'
+      - '.github/workflows/instagram-oauth-security.yml'
+jobs:
+  security-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Verify isolated Instagram OAuth and webhook
+        run: npx vitest run --fileParallelism=false src/tests/instagram-oauth-rollout.test.js src/tests/facebook-business-instagram-oauth.test.js src/tests/social-oauth-state.test.js src/tests/instagram-ingest-gated-production.test.js
