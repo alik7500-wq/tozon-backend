@@ -79,7 +79,7 @@ app.use(pino({
     'req.body.token'
   ],
   autoLogging: {
-    ignore: (req) => req.url === '/api/health',
+    ignore: (req) => req.url === '/api/health' || req.url?.startsWith('/api/integrations/instagram/callback') || req.url?.startsWith('/api/integrations/instagram/webhook'),
   }
 }));
 
