@@ -10,13 +10,16 @@ function config() {
 async function graphGet(path, params) {
   const url = new URL(graph + path);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-  // Meta OAuth credentials and one-time codes must not appear in request URLs or proxy logs.
-  const response = await fetch(graph + path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: url.searchParams,
-    signal: AbortSignal.timeout(10000),
-  });
+  // Token exchanges use POST to keep OAuth codes and app secrets out of URL logs.
+  // Graph resource reads retain GET semantics.
+  const response = path === '/oauth/access_token'
+    ? await fetch(graph + path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: url.searchParams,
+        signal: AbortSignal.timeout(10000),
+      })
+    : await fetch(url, { signal: AbortSignal.timeout(10000) });
   const body = await response.json().catch(() => null);
   if (!response.ok || !body || body.error) {
     // Only diagnostic numeric fields: never expose tokens, authorization codes, request URLs or Meta messages.
