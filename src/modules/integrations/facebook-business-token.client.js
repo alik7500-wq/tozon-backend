@@ -21,7 +21,16 @@ async function graphGet(path, params) {
     const allowedTypes = new Set(['OAuthException', 'GraphMethodException', 'FacebookApiException', 'Exception']);
     const metaType = allowedTypes.has(body?.error?.type) ? body.error.type : 'unknown';
     const transient = body?.error?.is_transient === true;
-    console.error('[instagram-meta] Graph API failed', { endpoint: path, httpStatus: response.status, metaCode, metaSubcode, metaType, transient });
+    // Classify Meta's explanation without logging its raw message, codes, tokens or URLs.
+    const explanation = String(body?.error?.message || '').toLowerCase();
+    const diagnostic = /redirect.uri|redirect_uri|redirect uri/.test(explanation) ? 'REDIRECT_URI_MISMATCH'
+      : /app.secret|app_secret|client.secret|client_secret/.test(explanation) ? 'APP_SECRET_INVALID'
+      : /invalid.*(verification code|authorization code|code)|code.*(expired|used|invalid)/.test(explanation) ? 'AUTHORIZATION_CODE_INVALID'
+      : /unsupported.*(method|request)|method.*not.*supported/.test(explanation) ? 'HTTP_METHOD_UNSUPPORTED'
+      : /permission|scope|access/.test(explanation) ? 'PERMISSION_OR_ACCESS'
+      : /temporar|try again|unavailable/.test(explanation) ? 'META_TEMPORARY_FAILURE'
+      : 'UNCLASSIFIED';
+    console.error('[instagram-meta] Graph API failed', { endpoint: path, httpStatus: response.status, metaCode, metaSubcode, metaType, transient, diagnostic });
     throw new Error('Meta Graph API request failed');
   }
   return body;
