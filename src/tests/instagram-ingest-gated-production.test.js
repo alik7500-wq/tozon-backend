@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import express from 'express';
 import request from 'supertest';
 
-const upsert = vi.fn();
+const { upsert } = vi.hoisted(() => ({ upsert: vi.fn() }));
 vi.mock('../db/connection.js', () => ({ getServiceDB: () => ({ from: () => ({ upsert }) }) }));
 import webhookRouter from '../modules/integrations/instagram-ingest-gated.router.js';
 
