@@ -51,6 +51,14 @@ export const authorizeSectionRequest = async req => {
       throw new AppError('Нет доступа к отдельной функции', 403);
     }
   }
+  // Instagram OAuth is limited to administrator/director by its own router.
+  // Permit only these exact routes through the section matrix; do not grant broad integration access.
+  if ((path === '/api/integrations/instagram/connection' && read ||
+       path === '/api/integrations/instagram/connect' && req.method === 'POST') &&
+      ['ADMIN', 'DIRECTOR'].includes(user.role)) {
+    req.sectionAccessGranted = true;
+    return;
+  }
   if (path.startsWith('/api/discount-schemes')) {
     if (read) allowed = hasAny(user, ['deals.view','settings.view']);
     else key = 'settings.view';
