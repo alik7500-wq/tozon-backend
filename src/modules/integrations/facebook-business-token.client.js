@@ -53,7 +53,20 @@ export async function extendFacebookBusinessToken(accessToken) {
 }
 export async function resolveTozonInstagramAccount(accessToken) {
   const result = await graphGet('/me/accounts', { fields: 'id,name,access_token,instagram_business_account', access_token: accessToken, limit: '100' });
-  const matches = (result.data || []).filter(p => String(p.instagram_business_account?.id) === '17841447499018452');
-  if (matches.length !== 1 || !matches[0].access_token) throw new Error('Expected TOZON Instagram page is unavailable');
+  const pages = Array.isArray(result.data) ? result.data : [];
+  const matches = pages.filter(p => String(p.instagram_business_account?.id) === '17841447499018452');
+  if (matches.length !== 1 || !matches[0].access_token) {
+    // No Page IDs, names or tokens in logs. Distinguish a missing Page grant
+    // from a missing IG link so the operator can fix the correct Meta asset.
+    const diagnostic = pages.length === 0 ? 'NO_FACEBOOK_PAGES_GRANTED'
+      : matches.length === 0 ? 'TARGET_INSTAGRAM_NOT_LINKED_TO_GRANTED_PAGE'
+      : matches.length > 1 ? 'DUPLICATE_TARGET_INSTAGRAM_LINK'
+      : 'PAGE_ACCESS_TOKEN_MISSING';
+    console.error('[instagram-meta] Instagram account resolution failed', {
+      diagnostic, grantedPageCount: pages.length,
+      linkedInstagramCount: pages.filter(p => p.instagram_business_account?.id).length
+    });
+    throw new Error('Expected TOZON Instagram page is unavailable');
+  }
   return { instagramUserId: '17841447499018452', pageId: String(matches[0].id), pageAccessToken: matches[0].access_token };
 }
