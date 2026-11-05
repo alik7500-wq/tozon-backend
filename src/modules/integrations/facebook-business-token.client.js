@@ -42,7 +42,25 @@ async function graphGet(path, params) {
       : /(?:app.secret|app_secret|client.secret|client_secret).{0,90}(?:match|same as|equal|identical|client token)/.test(explanation) ? 'SECRET_RELATIONSHIP'
       : /(?:app.secret|app_secret|client.secret|client_secret).{0,90}(?:invalid|wrong|incorrect|rejected)/.test(explanation) ? 'SECRET_REJECTED'
       : 'OTHER_SECRET_REFERENCE';
-    console.error('[instagram-meta] Graph API failed', { endpoint: path, httpStatus: response.status, metaCode, metaSubcode, metaType, transient, diagnostic, secretIssue });
+    // Fixed booleans expose Meta's error *category*, not its free-form message.
+    // Useful when Meta uses unexpected wording (e.g. "appsecret_proof" or
+    // "client_secret" in a generic error). Never log the explanation itself.
+    const metaHints = {
+      appSecret: /app[_ ]?secret|client[_ ]?secret/i.test(explanation),
+      appsecretProof: /appsecret[_ ]?proof/i.test(explanation),
+      appId: /app[_ ]?id|client[_ ]?id/i.test(explanation),
+      redirectUri: /redirect[_ ]?uri|redirect uri/i.test(explanation),
+      code: /(?:verification|authorization|auth) code/i.test(explanation),
+      missing: /missing|not provided|not supplied|required/i.test(explanation),
+      invalid: /invalid|not valid|incorrect|wrong/i.test(explanation),
+      verification: /verif|validat|authenticat/i.test(explanation),
+      permission: /permission|scope/i.test(explanation),
+      unsupported: /unsupported|not supported/i.test(explanation),
+      expired: /expired|already used/i.test(explanation),
+      token: /(?:access|client|user) token/i.test(explanation),
+      parameter: /parameter|param/i.test(explanation)
+    };
+    console.error('[instagram-meta] Graph API failed', { endpoint: path, httpStatus: response.status, metaCode, metaSubcode, metaType, transient, diagnostic, secretIssue, metaHints });
     throw new Error('Meta Graph API request failed');
   }
   return body;
