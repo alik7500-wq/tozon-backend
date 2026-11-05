@@ -36,7 +36,8 @@ async function graphGet(path, params) {
     // Meta code 1 often contains a parameter-specific explanation. Emit only
     // fixed categories, never Meta's raw error text or credential values.
     const secretContext = /app.secret|app_secret|client.secret|client_secret/.test(explanation);
-    const secretIssue = !secretContext ? 'NOT_MENTIONED'
+    const secretIssue = /(?:error|failed|failure|unable|could not|cannot) (?:in |of )?(?:validating|verifying|authenticate|authenticating|validate|verify)[^.!\\n]{0,100}(?:app.secret|app_secret|client.secret|client_secret)|(?:app.secret|app_secret|client.secret|client_secret)[^.!\\n]{0,100}(?:could not be validated|cannot be validated|verification failed)/.test(explanation) ? 'META_CANNOT_VALIDATE_CLIENT_SECRET'
+      : !secretContext ? 'NOT_MENTIONED'
       : /(?:must be|is) (?:a |an )?(?:string|valid string)|parameter.*(?:missing|required)|missing.*parameter|parameter.*required/.test(explanation) ? 'MISSING_OR_INVALID_PARAMETER'
       : /(?:app.secret|app_secret|client.secret|client_secret).{0,90}(?:must|should|needs to|required)/.test(explanation) ? 'PARAMETER_REQUIREMENT'
       : /(?:app.secret|app_secret|client.secret|client_secret).{0,90}(?:match|same as|equal|identical|client token)/.test(explanation) ? 'SECRET_RELATIONSHIP'
@@ -60,6 +61,9 @@ async function graphGet(path, params) {
       token: /(?:access|client|user) token/i.test(explanation),
       parameter: /parameter|param/i.test(explanation)
     };
+    // This classification is intentionally independent of raw Meta text.
+    // A failed client-secret verification is a credential/configuration problem,
+    // not evidence that the selected Instagram account is wrong.
     console.error('[instagram-meta] Graph API failed', { endpoint: path, httpStatus: response.status, metaCode, metaSubcode, metaType, transient, diagnostic, secretIssue, metaHints });
     throw new Error('Meta Graph API request failed');
   }
