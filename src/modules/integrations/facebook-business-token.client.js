@@ -33,7 +33,16 @@ async function graphGet(path, params) {
       : /permission|scope|access/.test(explanation) ? 'PERMISSION_OR_ACCESS'
       : /temporar|try again|unavailable/.test(explanation) ? 'META_TEMPORARY_FAILURE'
       : 'UNCLASSIFIED';
-    console.error('[instagram-meta] Graph API failed', { endpoint: path, httpStatus: response.status, metaCode, metaSubcode, metaType, transient, diagnostic });
+    // Meta code 1 often contains a parameter-specific explanation. Emit only
+    // fixed categories, never Meta's raw error text or credential values.
+    const secretContext = /app.secret|app_secret|client.secret|client_secret/.test(explanation);
+    const secretIssue = !secretContext ? 'NOT_MENTIONED'
+      : /(?:must be|is) (?:a |an )?(?:string|valid string)|parameter.*(?:missing|required)|missing.*parameter|parameter.*required/.test(explanation) ? 'MISSING_OR_INVALID_PARAMETER'
+      : /(?:app.secret|app_secret|client.secret|client_secret).{0,90}(?:must|should|needs to|required)/.test(explanation) ? 'PARAMETER_REQUIREMENT'
+      : /(?:app.secret|app_secret|client.secret|client_secret).{0,90}(?:match|same as|equal|identical|client token)/.test(explanation) ? 'SECRET_RELATIONSHIP'
+      : /(?:app.secret|app_secret|client.secret|client_secret).{0,90}(?:invalid|wrong|incorrect|rejected)/.test(explanation) ? 'SECRET_REJECTED'
+      : 'OTHER_SECRET_REFERENCE';
+    console.error('[instagram-meta] Graph API failed', { endpoint: path, httpStatus: response.status, metaCode, metaSubcode, metaType, transient, diagnostic, secretIssue });
     throw new Error('Meta Graph API request failed');
   }
   return body;
