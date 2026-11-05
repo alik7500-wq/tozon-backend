@@ -11,7 +11,7 @@ export function facebookBusinessInstagramAuthorizationUrl(state) {
   url.searchParams.set('client_id', appId);
   url.searchParams.set('redirect_uri', redirect);
   url.searchParams.set('response_type', 'code');
-  url.searchParams.set('config_id', '29138384382458786');
+  url.searchParams.set('config_id', '1881770219479925');
   url.searchParams.set('state', state);
   return url.toString();
 }
