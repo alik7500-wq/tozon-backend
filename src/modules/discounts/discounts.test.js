@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {validateScheme,validateSchemeSale} from './discounts.validation.js';
+import {validateScheme,validateSchemeSale,discountRuleKey} from './discounts.validation.js';
 const rules=[{payment_percent:0,discount_percent:0,months:30},{payment_percent:5,discount_percent:2.86,months:30},{payment_percent:15,discount_percent:7.14,months:30},{payment_percent:30,discount_percent:11.43,months:30},{payment_percent:50,discount_percent:17.14,months:30},{payment_percent:100,discount_percent:21.43,months:0}];
 const scheme={id:'test',project_id:3,name:'Плаза',updated_at:'version',is_active:true,rules};
 const unit={unit_kind:'APARTMENT',area_m2_x100:4322,price_per_m2_minor:70000,floors:{sections:{buildings:{projects:{id:3}}}}};
@@ -28,4 +28,21 @@ it('permits paying a selected tier in full only with FULL type and zero installm
  const data=sale(rules[3]);data.down_payment_minor=data.final_price_minor;data.payment_type='FULL';data.installment_months=0;
  expect(validateSchemeSale(scheme,data,unit,'2026-10-28')).toMatchObject({agreed_installment_months:0});
  expect(()=>validateSchemeSale(scheme,{...data,payment_type:'INSTALLMENT'},unit,'2026-10-28')).toThrow();
+});
+
+const zeroOffers=[{payment_percent:0,discount_percent:0,price_per_m2:700,months:40},{payment_percent:0,discount_percent:8.57,price_per_m2:640,months:36}];
+it('saves distinct offers with the same deposit, including equal prices with different terms',()=>{
+ const rules=[...zeroOffers,{...zeroOffers[1],months:24}];
+ expect(validateScheme({name:'Офферы',project_id:3,rules}).rules).toEqual(rules);
+ expect(()=>validateScheme({name:'Офферы',project_id:3,rules:[zeroOffers[0],zeroOffers[0]]})).toThrow('одинаковые');
+});
+it.each(zeroOffers)('validates and snapshots the exact zero deposit offer at $price_per_m2 for $months months',rule=>{
+ const final=Math.round(unit.area_m2_x100*rule.price_per_m2);
+ const data={...sale(rule),discount_rule_key:discountRuleKey(rule),final_price_minor:final,discount_minor:3025400-final};
+ const current={...scheme,rules:zeroOffers};
+ expect(validateSchemeSale(current,data,unit,'2026-11-09')).toMatchObject({...rule,rule_key:discountRuleKey(rule),final_price_minor:final});
+ expect(validateSchemeSale({...current,rules:[...zeroOffers].reverse()},data,unit,'2026-11-09').price_per_m2).toBe(rule.price_per_m2);
+ expect(()=>validateSchemeSale(current,{...data,discount_rule_key:undefined},unit,'2026-11-09')).toThrow('несколько офферов');
+ expect(()=>validateSchemeSale(current,{...data,discount_rule_key:discountRuleKey(zeroOffers.find(r=>r!==rule))},unit,'2026-11-09')).toThrow('Цена');
+ expect(()=>validateSchemeSale(current,{...data,discount_rule_key:'invalid'},unit,'2026-11-09')).toThrow('не найдено');
 });

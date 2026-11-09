@@ -1,4 +1,5 @@
 import { AppError } from '../../shared/errors/errorHandler.js';
+export const discountRuleKey = rule => JSON.stringify([Number(rule.payment_percent), rule.price_per_m2 == null || rule.price_per_m2 === '' ? null : Number(rule.price_per_m2), Number(rule.discount_percent || 0), Number(rule.months)]);
 const fail = message => { throw new AppError(message, 400); };
 export function validateScheme(body) {
   const name = String(body.name || '').trim();
@@ -11,11 +12,13 @@ export function validateScheme(body) {
     const payment_percent = Number(row.payment_percent), discount_percent = Number(row.discount_percent), months = Number(row.months);
     if ([row.payment_percent,row.discount_percent,row.months].some(x => x === '' || x == null) || !Number.isFinite(payment_percent) || payment_percent < 0 || payment_percent > 100 || Math.abs(Math.round(payment_percent*100)-payment_percent*100)>0.000001 || !Number.isFinite(discount_percent) || discount_percent < 0 || discount_percent >= 100 || Math.abs(Math.round(discount_percent*100)-discount_percent*100)>0.000001 || !Number.isInteger(months) || months < 0 || months > 120) fail('Проверьте проценты (до 2 знаков) и срок (0–120 месяцев)');
     if ((payment_percent === 100) !== (months === 0)) fail('Срок 0 месяцев допускается только при взносе 100%');
-    if (seen.has(payment_percent)) fail('Процент первоначального взноса не должен повторяться');
-    seen.add(payment_percent);
     const price = row.price_per_m2 === '' || row.price_per_m2 == null ? null : Number(row.price_per_m2);
     if (price !== null && (!Number.isFinite(price) || price <= 0 || !Number.isSafeInteger(Math.round(price*100)) || Math.abs(Math.round(price*100)-price*100)>0.000001)) fail('Цена за м² должна быть положительной, до 2 знаков после запятой');
-    return { payment_percent, discount_percent, months, ...(price !== null ? {price_per_m2:price} : {}) };
+    const rule = { payment_percent, discount_percent, months, ...(price !== null ? {price_per_m2:price} : {}) };
+    const key = discountRuleKey(rule);
+    if (seen.has(key)) fail('Полностью одинаковые условия оффера не должны повторяться');
+    seen.add(key);
+    return rule;
   }).sort((a,b) => a.payment_percent-b.payment_percent);
   for (const key of ['starts_on','ends_on']) if (body[key] && (!/^\d{4}-\d{2}-\d{2}$/.test(body[key]) || !Number.isFinite(new Date(body[key]).getTime()) || new Date(body[key]).toISOString().slice(0,10)!==body[key])) fail('Неверная дата действия скидки');
   if (body.starts_on && body.ends_on && body.starts_on > body.ends_on) fail('Дата окончания раньше начала');
@@ -27,7 +30,9 @@ export function validateSchemeSale(scheme, data, unit, today) {
   const project = unit.floors?.sections?.buildings?.projects;
   if (Number(scheme.project_id) !== Number(project?.id)) fail('Схема относится к другому ЖК');
   if (data.discount_scheme_updated_at !== scheme.updated_at) fail('Схема скидок изменилась. Откройте оформление заново');
-  const rule = scheme.rules.find(r => r.payment_percent === Number(data.discount_rule_payment_percent));
+  const candidates = scheme.rules.filter(r => Number(r.payment_percent) === Number(data.discount_rule_payment_percent));
+  if (!data.discount_rule_key && candidates.length > 1) fail('Для этого взноса есть несколько офферов. Выберите конкретную цену и срок заново');
+  const rule = data.discount_rule_key ? candidates.find(r => discountRuleKey(r) === data.discount_rule_key) : candidates[0];
   if (!rule) fail('Условие скидки не найдено');
   const base = Math.round(Number(unit.area_m2_x100) * Number(unit.price_per_m2_minor) / 100);
   if (!Number.isSafeInteger(base) || base <= 0) fail('В карточке квартиры не задана базовая цена');
@@ -43,5 +48,5 @@ export function validateSchemeSale(scheme, data, unit, today) {
   const months = Number(data.installment_months);
   if (full ? data.payment_type !== 'FULL' : !['INSTALLMENT','PARTIAL_BARTER'].includes(data.payment_type)) fail('Тип оплаты не соответствует условию скидки');
   if ((full ? months !== 0 : !Number.isInteger(months) || months < 1 || months > rule.months) || Number(data.installment_interval_months ?? 1)!==1) fail('Срок рассрочки не соответствует условию скидки');
-  return { scheme_id: scheme.id, scheme_name: scheme.name, scheme_updated_at: scheme.updated_at, ...rule, agreed_down_payment_minor: down, agreed_installment_months: months, base_price_minor: base, discount_minor: discount, final_price_minor: final };
+  return { scheme_id: scheme.id, scheme_name: scheme.name, scheme_updated_at: scheme.updated_at, ...rule, rule_key: discountRuleKey(rule), agreed_down_payment_minor: down, agreed_installment_months: months, base_price_minor: base, discount_minor: discount, final_price_minor: final };
 }
