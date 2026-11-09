@@ -6,6 +6,7 @@ import express from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import instagramIngestGatedRouter from './modules/integrations/instagram-ingest-gated.router.js';
 import instagramOAuthRouter from './modules/integrations/instagram.router.js';
+import metaSourcesRouter from './modules/integrations/meta-sources.router.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -79,7 +80,7 @@ app.use(pino({
     'req.body.token'
   ],
   autoLogging: {
-    ignore: (req) => req.url === '/api/health' || req.url?.startsWith('/api/integrations/instagram/callback') || req.url?.startsWith('/api/integrations/instagram/webhook'),
+    ignore: (req) => req.url === '/api/health' || req.url?.startsWith('/api/integrations/instagram/callback') || req.url?.startsWith('/api/integrations/instagram/webhook') || req.url?.startsWith('/api/integrations/meta/callback'),
   }
 }));
 
@@ -124,6 +125,7 @@ app.use('/api', activityMiddleware);
 app.use('/api/auth/activity', activityRouter);
 // OAuth remains fail-closed until INSTAGRAM_OAUTH_ENABLED=true.
 app.use('/api/integrations/instagram', instagramOAuthRouter);
+app.use('/api/integrations/meta', metaSourcesRouter);
 app.use('/api/leads/intake', leadIntakeRouter);
 app.use('/api/telegram-finance', telegramFinanceRouter);
 app.use('/api/construction', constructionRouter);
