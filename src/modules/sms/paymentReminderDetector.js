@@ -49,6 +49,7 @@ export class PaymentReminderDetector {
           status,
           currency,
           responsible_user_id,
+          company_project_id,
           final_price_minor,
           lead_id,
           leads!inner (
@@ -100,6 +101,7 @@ export class PaymentReminderDetector {
       already_exists: 0,
       cancelled_stale: 0,
       skipped_paid: 0,
+      skipped_cancelled: 0,
       skipped_overdue: 0,
       skipped_invalid_phone: 0,
       skipped_ineligible_deal: 0,
@@ -122,12 +124,13 @@ export class PaymentReminderDetector {
       const paidMinor = Number(sched.paid_amount_minor) || 0;
       const unpaidMinor = Math.max(0, amountMinor - paidMinor);
 
-      if (unpaidMinor <= 0 || sched.status === 'PAID') {
+      if(sched.status==='CANCELLED'){stats.skipped_cancelled++;continue;}
+      if (unpaidMinor <= 0 || sched.status==='PAID') {
         stats.skipped_paid++;
         continue;
       }
 
-      if (!deal || !eligibleDeals.includes(deal.status)) {
+      if (!deal || deal.company_project_id || !eligibleDeals.includes(deal.status)) {
         stats.skipped_ineligible_deal++;
         continue;
       }
@@ -275,6 +278,7 @@ export class PaymentReminderDetector {
           status,
           currency,
           responsible_user_id,
+          company_project_id,
           lead_id,
           leads!inner (
             id,
@@ -295,6 +299,7 @@ export class PaymentReminderDetector {
     const eligibleDeals = ['SIGNED'];
     let notifiedCount = 0;
     let skippedPaidCount = 0;
+    let skippedCancelledCount = 0;
 
     for (const sched of (overdueSchedules || [])) {
       const deal = sched.deals;
@@ -306,12 +311,13 @@ export class PaymentReminderDetector {
       const paidMinor = Number(sched.paid_amount_minor) || 0;
       const unpaidMinor = Math.max(0, amountMinor - paidMinor);
 
-      if (unpaidMinor <= 0 || sched.status === 'PAID') {
+      if(sched.status==='CANCELLED'){skippedCancelledCount++;continue;}
+      if (unpaidMinor <= 0 || sched.status==='PAID') {
         skippedPaidCount++;
         continue;
       }
 
-      if (!deal || !eligibleDeals.includes(deal.status)) {
+      if (!deal || deal.company_project_id || !eligibleDeals.includes(deal.status)) {
         continue;
       }
 
@@ -338,7 +344,8 @@ export class PaymentReminderDetector {
       cutoffDate,
       overdueScanned: (overdueSchedules || []).length,
       overdueNotified: notifiedCount,
-      skippedPaid: skippedPaidCount
+      skippedPaid: skippedPaidCount,
+      skippedCancelled: skippedCancelledCount
     };
   }
 }

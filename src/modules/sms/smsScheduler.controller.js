@@ -63,6 +63,7 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
         already_exists: stats.already_exists,
         cancelled_stale: stats.cancelled_stale,
         skipped_paid: stats.skipped_paid,
+        skipped_cancelled: stats.skipped_cancelled,
         skipped_overdue: stats.skipped_overdue,
         skipped_invalid_phone: stats.skipped_invalid_phone,
         skipped_ineligible_deal: stats.skipped_ineligible_deal,

@@ -5,6 +5,7 @@ import request from 'supertest';
 import jwt from 'jsonwebtoken';
 const mocks = vi.hoisted(() => ({ findUser: vi.fn() }));
 vi.mock('../users/users.repository.js', () => ({ UsersRepository: { findById: mocks.findUser } }));
+import {verifySchedulerToken} from '../../middleware/schedulerAuth.middleware.js';
 import { workspaceBoundary, assertWorkspacePilotRuntime } from './workspace.boundary.js';
 const secret = 'synthetic-workspace-test-secret-only';
 const token = () => jwt.sign({ id: 20 }, secret, { expiresIn: '5m' });
@@ -43,4 +44,11 @@ describe('project-only API boundary', () => {
   it('checks exact test database hostname rather than substring', () => {
     expect(() => assertWorkspacePilotRuntime({PROJECT_WORKSPACE_ENABLED:'true',SUPABASE_URL:'https://yaolkwbnhnacxxjpgiyu.supabase.co.attacker.invalid'})).toThrow();
   });
+});
+
+it('leaves the exact cookieless scheduler route to its dedicated authentication without creating a CRM bypass',async()=>{
+ const server=express();server.use(cookieParser());server.use('/api',workspaceBoundary);server.post('/api/internal/sms/payment-reminder/run',verifySchedulerToken,(req,res)=>res.json({ok:true}));server.use((e,req,res,next)=>res.status(e.statusCode||500).json({message:e.message}));vi.stubEnv('SMS_SCHEDULER_INTERNAL_TOKEN','synthetic-internal-scheduler-secret');
+ expect((await request(server).post('/api/internal/sms/payment-reminder/run').set('Authorization','Bearer synthetic-internal-scheduler-secret')).status).toBe(200);
+ expect((await request(server).post('/api/internal/sms/payment-reminder/run').set('Authorization','Bearer '+token())).status).toBe(401);
+ expect((await request(server).post('/api/internal/sms/payment-reminder/run').set('Cookie','jwt='+token()).set('Authorization','Bearer synthetic-internal-scheduler-secret')).status).toBe(403);
 });

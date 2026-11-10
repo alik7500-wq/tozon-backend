@@ -21,6 +21,10 @@ export async function workspaceBoundary(req, res, next) {
   const path = String(req.originalUrl || '').split('?')[0];
   // Expired cookies must not prevent credential-based sign-in or clearing a session.
   if (req.method === 'POST' && ['/api/auth/login', '/api/auth/logout'].includes(path)) return next();
+  // This one server-to-server route verifies its dedicated scheduler secret.
+  // Treating that bearer secret as a CRM JWT breaks the existing cron. A real
+  // CRM cookie still enters the scoped boundary and cannot use this exemption.
+  if (req.method === 'POST' && path === '/api/internal/sms/payment-reminder/run' && !req.cookies?.jwt) return next();
   const token = req.cookies?.jwt || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
   if (!token || token === 'loggedout') return next();
   try {

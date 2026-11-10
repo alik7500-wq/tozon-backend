@@ -1,3 +1,4 @@
+vi.mock('../company-projects/workspace.background.js',()=>({assertLegacyAutomationAllowed:vi.fn().mockResolvedValue(undefined)}));
 import {it,expect,vi} from 'vitest';
 import {withMainMenu,TelegramAPI,FinanceBot} from './bot.js';
 it('appends home once and preserves existing navigation without mutation',()=>{

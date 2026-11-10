@@ -1,3 +1,4 @@
+vi.mock('../company-projects/workspace.background.js',()=>({assertLegacyAutomationAllowed:vi.fn().mockResolvedValue(undefined)}));
 import { it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';

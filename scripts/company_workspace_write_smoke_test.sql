@@ -7,6 +7,9 @@ DO $guard$ BEGIN
     RAISE EXCEPTION 'ISOLATED_DEMO_DATABASE_REQUIRED';
   END IF;
 END $guard$;
+-- Exercise the real SQL queue path without committing or calling a provider.
+INSERT INTO public.sms_templates(code,name,text,is_active) VALUES('CONTRACT_CREATED','Isolation fixture','Isolation only - rolled back',true) ON CONFLICT(code) DO UPDATE SET is_active=true;
+INSERT INTO public.sms_notification_rules(event_type,group_name,name,template_code,enabled,mode) VALUES('CONTRACT_CREATED','Isolation','Isolation fixture','CONTRACT_CREATED',true,'CONFIRM') ON CONFLICT(event_type) DO UPDATE SET enabled=true,mode='CONFIRM';
 CREATE FUNCTION pg_temp.clone_workspace_fixture(p_table text,p_patch jsonb) RETURNS integer LANGUAGE plpgsql AS $fn$
 DECLARE v_id integer; v_row jsonb; v_sequence text; v_exists boolean;
 BEGIN
@@ -219,5 +222,37 @@ BEGIN
  END LOOP;
  IF (SELECT count(*) FROM public.company_project_commands)<>28 THEN RAISE EXCEPTION 'Unexpected closure command count';END IF;
 END $closure$;
+DO $background$
+DECLARE a record;global_actor integer;legacy_lead integer;legacy_unit integer;legacy_deal integer;demo_floor integer;affected integer;event_id bigint;target uuid;
+BEGIN
+ global_actor:=pg_temp.clone_workspace_fixture('users',jsonb_build_object('name','Legacy background control','email','background-control@example.invalid','role','ADMIN','is_active',1,'permissions','[]'::jsonb));
+ FOR a IN SELECT * FROM workspace_smoke_actors ORDER BY slot LOOP
+  IF EXISTS(SELECT 1 FROM public.sms_events WHERE client_id=a.lead_id) THEN RAISE EXCEPTION 'Project SQL trigger leaked a legacy SMS event';END IF;
+  UPDATE public.leads SET phone='+99200000000'||a.slot WHERE id=a.lead_id;
+  IF NOT public.company_project_background_blocked(jsonb_build_object('phone','+99200000000'||a.slot)) THEN RAISE EXCEPTION 'Phone-only project send was not blocked';END IF;
+  INSERT INTO public.sms_messages(client_id,deal_id,phone,message,status) VALUES(a.lead_id,a.deal_id,'+99200000000'||a.slot,'Isolation only','queued');GET DIAGNOSTICS affected=ROW_COUNT;
+  IF affected<>0 THEN RAISE EXCEPTION 'Project SMS attempt admitted';END IF;
+  INSERT INTO public.user_notifications(user_id,event_type,type,title,message,entity_type,entity_id,metadata) VALUES(global_actor,'LEAD_CREATED','LEAD_CREATED','Isolation','Isolation','LEAD',a.lead_id,jsonb_build_object('lead_id',a.lead_id));GET DIAGNOSTICS affected=ROW_COUNT;
+  IF affected<>0 THEN RAISE EXCEPTION 'Project notification broadcast admitted';END IF;
+  INSERT INTO public.user_notifications(user_id,event_type,type,title,message,metadata) VALUES(a.actor,'LEAD_CREATED','LEAD_CREATED','Legacy broadcast','Isolation','{}');GET DIAGNOSTICS affected=ROW_COUNT;
+  IF affected<>0 THEN RAISE EXCEPTION 'Legacy broadcast reached project recipient';END IF;
+  INSERT INTO public.tasks(lead_id,assigned_user_id,title,status) VALUES(a.lead_id,global_actor,'Isolation task','OPEN');GET DIAGNOSTICS affected=ROW_COUNT;
+  IF affected<>0 THEN RAISE EXCEPTION 'Project automatic task admitted';END IF;
+ END LOOP;
+ IF NOT public.company_project_background_blocked('{"global_export":true}'::jsonb) THEN RAISE EXCEPTION 'Shared export admitted with scoped footprint';END IF;
+ SELECT f.id INTO STRICT demo_floor FROM public.floors f JOIN public.sections s ON s.id=f.section_id JOIN public.buildings b ON b.id=s.building_id JOIN public.projects c ON c.id=b.project_id WHERE c.code='DEMO-001' ORDER BY f.id LIMIT 1;
+ legacy_lead:=pg_temp.clone_workspace_fixture('leads',jsonb_build_object('full_name','Legacy isolation control','phone','+992000000009','secondary_phone',NULL,'interested_project_id',NULL,'responsible_user_id',global_actor,'archived_at',NULL));
+ legacy_unit:=pg_temp.clone_workspace_fixture('units',jsonb_build_object('floor_id',demo_floor,'unit_number','BG-LEGACY','status','SOLD','archived_at',NULL));
+ legacy_deal:=pg_temp.clone_workspace_fixture('deals',jsonb_build_object('unit_id',legacy_unit,'lead_id',legacy_lead,'responsible_user_id',global_actor,'contract_number','BG-LEGACY','status','SIGNED','company_project_id',NULL,'company_director_snapshot',NULL,'company_closure_snapshot',NULL));
+ SELECT id INTO STRICT event_id FROM public.sms_events WHERE deal_id=legacy_deal AND event_type='CONTRACT_CREATED';
+ INSERT INTO public.user_notifications(user_id,event_type,type,title,message,entity_type,entity_id,metadata) VALUES(global_actor,'LEAD_CREATED','LEAD_CREATED','Legacy control','Isolation','LEAD',legacy_lead,jsonb_build_object('lead_id',legacy_lead));GET DIAGNOSTICS affected=ROW_COUNT;
+ IF affected<>1 THEN RAISE EXCEPTION 'Legacy notification no longer works';END IF;
+ SELECT project INTO STRICT target FROM workspace_smoke_actors WHERE slot=1;
+ INSERT INTO public.company_project_leads VALUES(legacy_lead,target);
+ UPDATE public.sms_events SET status='PROCESSING' WHERE id=event_id;GET DIAGNOSTICS affected=ROW_COUNT;
+ IF affected<>0 THEN RAISE EXCEPTION 'Pre-existing event claimed after project assignment';END IF;
+ UPDATE public.sms_events SET status='CANCELLED',cancel_reason='Isolation check' WHERE id=event_id;GET DIAGNOSTICS affected=ROW_COUNT;
+ IF affected<>1 THEN RAISE EXCEPTION 'Historical event cancellation was lost';END IF;
+END $background$;
 ROLLBACK;
-SELECT 'PASS: two project actors, drafts, exact 36/40-month signing, options, PKO/FIFO, RKO/balances, supplier settlements, stock ledgers, private document/file metadata, draft cancellation, unpaid termination and safe unit resale; all rows rolled back' AS result;
+SELECT 'PASS: two project actors, drafts, exact 36/40-month signing, options, PKO/FIFO, RKO/balances, supplier settlements, stock ledgers, private document/file metadata, draft cancellation, unpaid termination and safe unit resale and legacy background quarantine; all rows rolled back' AS result;

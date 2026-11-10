@@ -1,3 +1,4 @@
+vi.mock('../company-projects/workspace.background.js',()=>({assertLegacyAutomationAllowed:vi.fn().mockResolvedValue(undefined)}));
 import {it,expect,vi,afterEach} from 'vitest';
 import crypto from 'node:crypto';
 import {syncSheets} from './sheets-sync.js';
