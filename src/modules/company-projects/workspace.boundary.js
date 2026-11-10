@@ -21,10 +21,10 @@ export async function workspaceBoundary(req, res, next) {
   const path = String(req.originalUrl || '').split('?')[0];
   // Expired cookies must not prevent credential-based sign-in or clearing a session.
   if (req.method === 'POST' && ['/api/auth/login', '/api/auth/logout'].includes(path)) return next();
-  // This one server-to-server route verifies its dedicated scheduler secret.
+  // These exact server-to-server routes verify the dedicated scheduler secret.
   // Treating that bearer secret as a CRM JWT breaks the existing cron. A real
   // CRM cookie still enters the scoped boundary and cannot use this exemption.
-  if (req.method === 'POST' && path === '/api/internal/sms/payment-reminder/run' && !req.cookies?.jwt) return next();
+  if (req.method === 'POST' && ['/api/internal/sms/payment-reminder/run','/api/internal/project-reminders/run'].includes(path) && !req.cookies?.jwt) return next();
   const token = req.cookies?.jwt || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
   if (!token || token === 'loggedout') return next();
   try {
@@ -42,7 +42,8 @@ export async function workspaceBoundary(req, res, next) {
     const workspaceRead = req.method === 'GET' && /^\/api\/project-workspace(?:\/|$)/.test(path);
     const workspaceCommand = req.method === 'POST' && /^\/api\/project-workspace\/[0-9a-f-]{36}\/commands$/.test(path) && process.env.PROJECT_WORKSPACE_WRITES_ENABLED === 'true';
     const workspaceUpload = req.method === 'POST' && /^\/api\/project-workspace\/[0-9a-f-]{36}\/documents\/[1-9]\d{0,9}\/files$/.test(path) && process.env.PROJECT_WORKSPACE_WRITES_ENABLED === 'true' && process.env.PROJECT_WORKSPACE_DOCUMENTS_ENABLED === 'true' && process.env.PROJECT_WORKSPACE_FILES_ENABLED === 'true';
-    if (!workspaceRead && !workspaceCommand && !workspaceUpload)
+    const reminderAck=req.method==='POST' && /^\/api\/project-workspace\/[0-9a-f-]{36}\/reminders\/[0-9a-f-]{36}\/read$/.test(path) && process.env.PROJECT_INTERNAL_REMINDERS_ENABLED==='true';
+    if (!workspaceRead && !workspaceCommand && !workspaceUpload && !reminderAck)
       throw new AppError('Для проектной учётной записи этот раздел или операция ещё не разрешены', 403);
     return next();
   } catch (error) { next(error); }

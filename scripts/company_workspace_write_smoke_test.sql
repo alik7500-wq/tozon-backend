@@ -254,5 +254,34 @@ BEGIN
  UPDATE public.sms_events SET status='CANCELLED',cancel_reason='Isolation check' WHERE id=event_id;GET DIAGNOSTICS affected=ROW_COUNT;
  IF affected<>1 THEN RAISE EXCEPTION 'Historical event cancellation was lost';END IF;
 END $background$;
+DO $reminders$
+DECLARE a record;admin_id integer;other_actor integer;other_project uuid;result jsonb;notice uuid;
+BEGIN
+ admin_id:=pg_temp.clone_workspace_fixture('users',jsonb_build_object('name','Reminder settings control','email','reminder-control@example.invalid','role','ADMIN','is_active',1,'permissions','[]'::jsonb));
+ FOR a IN SELECT * FROM workspace_smoke_actors ORDER BY slot LOOP
+  SELECT actor,project INTO STRICT other_actor,other_project FROM workspace_smoke_actors WHERE slot<>a.slot;
+  PERFORM public.save_company_project_reminders(admin_id,a.project,0,true,3,'2026-11-10');
+  PERFORM public.refresh_company_project_reminders(a.project);
+  IF public.refresh_company_project_reminders(a.project)<>0 THEN RAISE EXCEPTION 'Duplicate project reminders';END IF;
+  result:=public.read_company_project_reminders(a.actor,a.project);
+  IF jsonb_array_length(result->'records')<>1 OR result->'records'->0->>'client_name'<>'Isolation client '||a.slot THEN RAISE EXCEPTION 'Reminder scope, schedule or closure filter failed';END IF;
+  notice:=(result->'records'->0->>'id')::uuid;
+  BEGIN
+   PERFORM public.ack_company_project_reminder(other_actor,other_project,notice);
+   RAISE EXCEPTION 'Foreign reminder acknowledged';
+  EXCEPTION WHEN no_data_found THEN NULL;END;
+  result:=public.ack_company_project_reminder(a.actor,a.project,notice);
+  IF result->>'is_read'<>'true' THEN RAISE EXCEPTION 'Own reminder not acknowledged';END IF;
+  UPDATE public.company_workspace_access SET sections=array_remove(sections,'finance.payments') WHERE user_id=a.actor;
+  BEGIN
+   PERFORM public.read_company_project_reminders(a.actor,a.project);
+   RAISE EXCEPTION 'Revoked reminder permission accepted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;END;
+  UPDATE public.company_workspace_access SET sections=array_append(sections,'finance.payments') WHERE user_id=a.actor;
+  PERFORM public.save_company_project_reminders(admin_id,a.project,1,false,3,'2026-11-10');
+  result:=public.read_company_project_reminders(a.actor,a.project);
+  IF jsonb_array_length(result->'records')<>0 THEN RAISE EXCEPTION 'Disabled reminders still visible';END IF;
+ END LOOP;
+END $reminders$;
 ROLLBACK;
-SELECT 'PASS: two project actors, drafts, exact 36/40-month signing, options, PKO/FIFO, RKO/balances, supplier settlements, stock ledgers, private document/file metadata, draft cancellation, unpaid termination and safe unit resale and legacy background quarantine; all rows rolled back' AS result;
+SELECT 'PASS: two project actors, drafts, exact 36/40-month signing, options, PKO/FIFO, RKO/balances, supplier settlements, stock ledgers, private document/file metadata, draft cancellation, unpaid termination and safe unit resale and legacy background quarantine, isolated internal reminders, read acknowledgement and permission revocation; all rows rolled back' AS result;

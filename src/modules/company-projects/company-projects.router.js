@@ -1,3 +1,4 @@
+import {assertInternalReminders,reminderRpc} from './workspace.reminders.js';
 import express from 'express';
 import { z } from 'zod';
 import { protect } from '../../middleware/auth.middleware.js';
@@ -15,6 +16,17 @@ router.use((req, res, next) => {
     return next(new AppError('Реестр проектов доступен администратору компании с правом настройки и управления персоналом', 403));
   res.set('Cache-Control', 'no-store');
   next();
+});
+function reminderOrigin(req){
+ if(!req.cookies?.jwt)return;
+ let origin;try{origin=new URL(process.env.FRONTEND_ORIGIN).origin;}catch{/* deny */}
+ if((req.method!=='GET'||req.headers.origin)&&(!origin||req.headers.origin!==origin))throw new AppError('Недопустимый источник запроса',403);
+}
+router.get('/:id/reminders',async(req,res,next)=>{
+ try{assertInternalReminders();reminderOrigin(req);const id=z.uuid().parse(req.params.id);res.json({status:'success',data:{settings:await reminderRpc('company_project_reminder_configuration',{p_actor:req.user.id,p_project:id})}});}catch(e){next(e instanceof z.ZodError?new AppError('Некорректный проект',400):e);}
+});
+router.put('/:id/reminders',async(req,res,next)=>{
+ try{assertInternalReminders();reminderOrigin(req);const id=z.uuid().parse(req.params.id),body=z.object({revision:z.number().int().nonnegative(),enabled:z.boolean(),lead_days:z.number().int().min(0).max(30),backlog_from:z.iso.date().nullable()}).strict().parse(req.body);res.json({status:'success',data:{settings:await reminderRpc('save_company_project_reminders',{p_actor:req.user.id,p_project:id,p_revision:body.revision,p_enabled:body.enabled,p_lead_days:body.lead_days,p_backlog_from:body.backlog_from})}});}catch(e){next(e instanceof z.ZodError?new AppError('Проверьте настройки напоминаний',400):e);}
 });
 router.get('/', async (req, res, next) => {
   try { res.json({ status: 'success', data: await projectRegistry() }); } catch (e) { next(e); }

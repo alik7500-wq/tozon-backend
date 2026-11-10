@@ -1,3 +1,4 @@
+import {assertInternalReminders,reminderRpc} from './workspace.reminders.js';
 import express from 'express';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
@@ -95,6 +96,12 @@ router.get('/:project/options{/:kind}', async (req, res, next) => {
     if (kind === 'context' && process.env.PROJECT_WORKSPACE_WRITES_ENABLED !== 'true') data.commands = [];
     res.json({ status: 'success', data });
   } catch (e) { next(e); }
+});
+router.get('/:project/reminders',async(req,res,next)=>{
+ try{assertInternalReminders();const project=parse(z.uuid(),req.params.project),page=parse(pageSchema,req.query);res.json({status:'success',data:await reminderRpc('read_company_project_reminders',{p_actor:req.user.id,p_project:project,p_after:page.after||'',p_limit:page.limit||50})});}catch(e){next(e);}
+});
+router.post('/:project/reminders/:id/read',async(req,res,next)=>{
+ try{assertInternalReminders();trustedWriteOrigin(req);parse(z.object({}).strict(),req.query);parse(z.object({}).strict(),req.body||{});const project=parse(z.uuid(),req.params.project),id=parse(z.uuid(),req.params.id);res.json({status:'success',data:await reminderRpc('ack_company_project_reminder',{p_actor:req.user.id,p_project:project,p_record:id})});}catch(e){next(e);}
 });
 router.get('/:project/:resource{/:record}', async (req, res, next) => {
   try {
