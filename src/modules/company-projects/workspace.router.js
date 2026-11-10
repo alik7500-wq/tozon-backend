@@ -4,6 +4,7 @@ import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { assertWorkspacePilotRuntime, isProjectOnlyUser } from './workspace.boundary.js';
 import { readWorkspace } from './workspace.repository.js';
+import { parseWorkspaceCommand, executeWorkspaceCommand } from './workspace.commands.js';
 
 const router = express.Router();
 const resource = z.enum(['complexes', 'units', 'leads', 'deals', 'payments', 'schedules', 'expenses', 'warehouses']);
@@ -22,6 +23,22 @@ router.use((req, res, next) => {
 });
 router.get('/projects', async (req, res, next) => {
   try { parse(z.object({}).strict(), req.query); res.json({ status: 'success', data: await readWorkspace(req.user.id, null, 'projects') }); } catch (e) { next(e); }
+});
+router.post('/:project/commands', async (req, res, next) => {
+  try {
+    if (process.env.PROJECT_WORKSPACE_WRITES_ENABLED !== 'true') throw new AppError('Операции записи пилота ещё не включены', 403);
+    // Cookie authentication requires an exact trusted browser origin. Bearer-only
+    // callers must already hold the verified CRM token; a forged header cannot
+    // bypass this check when a cookie is present.
+    if (req.cookies?.jwt) {
+      let allowed;
+      try { allowed = new URL(process.env.FRONTEND_ORIGIN).origin; } catch { /* deny */ }
+      if (!allowed || req.headers.origin !== allowed) throw new AppError('Недопустимый источник запроса', 403);
+    }
+    const project = parse(z.uuid(), req.params.project);
+    const result = await executeWorkspaceCommand(req.user.id, project, parseWorkspaceCommand(req.body));
+    res.status(result.idempotent ? 200 : 201).json({ status: 'success', data: result });
+  } catch (e) { next(e); }
 });
 router.get('/:project/:resource{/:record}', async (req, res, next) => {
   try {
