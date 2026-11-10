@@ -86,11 +86,11 @@ END $assert$;
 DO $writes$
 DECLARE a record; foreign_project uuid; foreign_lead integer; own_floor integer; available_unit integer; another_unit integer;
  desk uuid; foreign_desk uuid; supplier uuid; material uuid; warehouse uuid; foreign_warehouse uuid;
- request uuid; payload jsonb; result jsonb; again jsonb; failed boolean; command_count integer;
+ request uuid; payload jsonb; result jsonb; again jsonb; failed boolean; command_count integer; signed_deal integer; own_complex integer; scheme uuid; scheme_version timestamptz;
 BEGIN
  FOR a IN SELECT * FROM workspace_smoke_actors ORDER BY slot LOOP
   SELECT project,lead_id INTO STRICT foreign_project,foreign_lead FROM workspace_smoke_actors WHERE slot<>a.slot;
-  UPDATE public.company_workspace_access SET write_sections=ARRAY['deals.write','finance.payments.write','finance.expenses.write','construction.stock.write'] WHERE user_id=a.actor;
+  UPDATE public.company_workspace_access SET write_sections=ARRAY['deals.write','contracts.sign','finance.payments.write','finance.expenses.write','construction.stock.write'] WHERE user_id=a.actor;
   INSERT INTO public.dictionaries(type,name,code,is_active) VALUES('CASH_DESK','Isolation cash '||a.slot,'WORKSPACE-ISO-CASH-'||a.slot,true) RETURNING id INTO desk;
   INSERT INTO public.company_project_cash_desks VALUES(desk,a.project);
   UPDATE public.deals SET status='SIGNED',payment_type='INSTALLMENT',installment_months=1,currency='USD',down_payment_minor=0,final_price_minor=20000000 WHERE id=a.deal_id;
@@ -117,6 +117,22 @@ BEGIN
   available_unit:=pg_temp.clone_workspace_fixture('units',jsonb_build_object('floor_id',own_floor,'unit_number','CMD-'||a.slot,'status','AVAILABLE','archived_at',NULL));
   result:=public.execute_company_project_command(a.actor,a.project,gen_random_uuid(),'DEAL_DRAFT',jsonb_build_object('unit_id',available_unit,'lead_id',a.lead_id,'final_price_minor',1000000,'date','2026-11-10'));
   IF result->>'status'<>'DRAFT' OR NOT EXISTS(SELECT 1 FROM public.deals WHERE id=(result->>'id')::integer AND company_project_id=a.project AND company_director_snapshot IS NOT NULL) THEN RAISE EXCEPTION 'Project draft/snapshot failed';END IF;
+  signed_deal:=(result->>'id')::integer;
+  UPDATE public.company_projects SET director_name='Isolation director '||a.slot,director_authority='Isolation authority' WHERE id=a.project;
+  UPDATE public.units SET unit_kind='APARTMENT',area_m2_x100=6000,price_per_m2_minor=70000 WHERE id=available_unit;
+  SELECT b.project_id INTO STRICT own_complex FROM public.floors f JOIN public.sections s ON s.id=f.section_id JOIN public.buildings b ON b.id=s.building_id WHERE f.id=own_floor;
+  INSERT INTO public.discount_schemes(project_id,name,rules,is_active) VALUES(own_complex,'Isolation two offers','[{"payment_percent":0,"price_per_m2":640,"discount_percent":8.57,"months":36},{"payment_percent":0,"price_per_m2":700,"discount_percent":0,"months":40}]'::jsonb,true) RETURNING id,updated_at INTO scheme,scheme_version;
+  IF NOT (public.company_project_operation_options(a.actor,a.project)->'commands' ? 'SIGN_DEAL') THEN RAISE EXCEPTION 'Missing signing action';END IF;
+  BEGIN
+   PERFORM public.company_project_operation_options(a.actor,foreign_project,'deals');
+   RAISE EXCEPTION 'Foreign form options accepted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;END;
+  payload:=jsonb_build_object('deal_id',signed_deal,'expected_updated_at',(SELECT updated_at FROM public.deals WHERE id=signed_deal),'scheme_id',scheme,'scheme_updated_at',scheme_version,'rule_key',CASE a.slot WHEN 1 THEN '[0,640,8.57,36]' ELSE '[0,700,0,40]' END,'down_payment_minor',0,'installment_months',CASE a.slot WHEN 1 THEN 36 ELSE 40 END);
+  request:=gen_random_uuid();result:=public.execute_company_project_command(a.actor,a.project,request,'SIGN_DEAL',payload);
+  again:=public.execute_company_project_command(a.actor,a.project,request,'SIGN_DEAL',payload);
+  IF result->>'status'<>'SIGNED' OR again->>'idempotent'<>'true' OR (SELECT sum(amount_minor) FROM public.deal_payment_schedules WHERE deal_id=signed_deal)<>(result->>'final_price_minor')::integer OR (SELECT count(*) FROM public.deal_payment_schedules WHERE deal_id=signed_deal)<>(CASE a.slot WHEN 1 THEN 36 ELSE 40 END) THEN RAISE EXCEPTION 'Signing schedule / exact offer failed';END IF;
+  result:=public.execute_company_project_command(a.actor,a.project,gen_random_uuid(),'PAYMENT',jsonb_build_object('cash_desk_id',desk,'deal_id',signed_deal,'amount_minor',92400,'currency','TJS','exchange_rate',9.24,'date','2026-11-10'));
+  IF (SELECT sum(paid_amount_minor) FROM public.deal_payment_schedules WHERE deal_id=signed_deal)<>10000 THEN RAISE EXCEPTION 'Signed deal payment/FIFO failed';END IF;
   another_unit:=pg_temp.clone_workspace_fixture('units',jsonb_build_object('floor_id',own_floor,'unit_number','REJECT-'||a.slot,'status','AVAILABLE','archived_at',NULL));
   BEGIN
    PERFORM public.execute_company_project_command(a.actor,a.project,gen_random_uuid(),'DEAL_DRAFT',jsonb_build_object('unit_id',another_unit,'lead_id',foreign_lead,'final_price_minor',1000000,'date','2026-11-10'));
@@ -140,7 +156,7 @@ BEGIN
   IF result->>'resource'<>'expenses' THEN RAISE EXCEPTION 'Supplier settlement expense failed';END IF;
  END LOOP;
  SELECT count(*) INTO command_count FROM public.company_project_commands;
- IF command_count<>14 THEN RAISE EXCEPTION 'Unexpected duplicate or missing commands: %',command_count;END IF;
+ IF command_count<>18 THEN RAISE EXCEPTION 'Unexpected duplicate or missing commands: %',command_count;END IF;
 END $writes$;
 ROLLBACK;
-SELECT 'PASS: two project actors, draft contracts, PKO/FIFO, RKO/balances, supplier settlements, stock ledgers and retries; all rows rolled back' AS result;
+SELECT 'PASS: two project actors, drafts, exact 36/40-month signing, options, PKO/FIFO, RKO/balances, supplier settlements, stock ledgers and retries; all rows rolled back' AS result;

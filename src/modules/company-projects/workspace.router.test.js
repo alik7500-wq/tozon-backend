@@ -3,10 +3,10 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
-const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn()}));
+const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn()}));
 vi.mock('../users/users.repository.js',()=>({UsersRepository:{findById:mocks.findUser}}));
 vi.mock('./workspace.commands.js',async original=>{const actual=await original();return {...actual,executeWorkspaceCommand:mocks.command};});
-vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read}));
+vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options}));
 vi.mock('../../db/connection.js',()=>({getServiceDB:vi.fn()}));
 import router from './workspace.router.js';
 import { workspaceBoundary } from './workspace.boundary.js';
@@ -67,6 +67,22 @@ describe('workspace route with real auth and global boundary',()=>{
   expect(r.status).toBe(403);expect(mocks.command).not.toHaveBeenCalled();
   mocks.command.mockResolvedValue({id:1,resource:'payments',idempotent:true});
   expect((await request(app).post(`/api/project-workspace/${project}/commands`).set('Cookie',cookie).set('Origin','https://trusted.example').send(body)).status).toBe(200);
+ });
+
+ it('loads scoped operation options through verified identity and hides actions while writes are disabled',async()=>{
+  mocks.options.mockResolvedValue({commands:['SIGN_DEAL'],project_id:project});
+  let r=await auth(request(app).get(`/api/project-workspace/${project}/options`));
+  expect(r.status).toBe(200);expect(r.body.data.commands).toEqual([]);expect(mocks.options).toHaveBeenCalledWith(10,project,'context',{});
+  vi.stubEnv('PROJECT_WORKSPACE_WRITES_ENABLED','true');mocks.options.mockResolvedValue({commands:['SIGN_DEAL'],project_id:project});
+  r=await auth(request(app).get(`/api/project-workspace/${project}/options`));expect(r.body.data.commands).toEqual(['SIGN_DEAL']);
+  expect((await auth(request(app).get(`/api/project-workspace/${project}/options/materials?limit=101`))).status).toBe(400);
+  expect((await auth(request(app).get(`/api/project-workspace/${project}/options?actor=2`))).status).toBe(400);
+ });
+ it('accepts the dedicated signing command and rejects client-supplied price or actor',async()=>{
+  vi.stubEnv('PROJECT_WORKSPACE_WRITES_ENABLED','true');mocks.command.mockResolvedValue({id:1,resource:'deals',status:'SIGNED'});
+  const body={request_id:project,kind:'SIGN_DEAL',payload:{deal_id:1,expected_updated_at:'version',down_payment_minor:0,installment_months:36}};
+  expect((await auth(request(app).post(`/api/project-workspace/${project}/commands`).send(body))).status).toBe(201);
+  expect((await auth(request(app).post(`/api/project-workspace/${project}/commands`).send({...body,payload:{...body.payload,final_price_minor:1}}))).status).toBe(400);
  });
 
 });

@@ -11,3 +11,10 @@ export async function readWorkspace(actor, project, resource, { record = null, a
   if (error) throw error;
   return data;
 }
+
+export async function readWorkspaceOptions(actor, project, kind, { after = '', limit = 100 } = {}) {
+  const { data, error } = await getServiceDB().rpc('company_project_operation_options', { p_actor: actor, p_project: project, p_kind: kind, p_after: after, p_limit: limit });
+  if (error?.code === '42501') throw new AppError('Нет доступа к справочнику этого проекта', 403);
+  if (error) throw error;
+  return data;
+}

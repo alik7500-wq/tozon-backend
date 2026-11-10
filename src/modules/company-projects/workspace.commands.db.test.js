@@ -73,7 +73,7 @@ describe.sequential('atomic project commands against real domain functions',()=>
   expect((await db.query('SELECT count(*)::int AS n FROM construction_documents')).rows[0].n).toBe(before);
  });
  it('accepts TJS against a USD contract and credits its historical USD equivalent to the schedule',async()=>{
-  await db.exec("INSERT INTO deal_payment_schedules VALUES(50,1,'2026-12-01',1000000,0,'UPCOMING',null)");
+  await db.exec("INSERT INTO deal_payment_schedules(id,deal_id,due_date,amount_minor,paid_amount_minor,status) VALUES(50,1,'2026-12-01',1000000,0,'UPCOMING')");
   const p=(await run('PAYMENT',{...money,currency:'TJS',exchange_rate:9.24,amount_minor:92400,deal_id:1})).rows[0].result;
   const stored=(await db.query('SELECT amount_minor,amount_usd,amount_tjs,currency FROM payments WHERE id=$1',[p.id])).rows[0];
   expect(stored.amount_minor).toBe(92400);expect(Number(stored.amount_usd)).toBe(100);expect(Number(stored.amount_tjs)).toBe(924);expect(stored.currency).toBe('TJS');

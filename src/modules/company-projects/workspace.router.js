@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { assertWorkspacePilotRuntime, isProjectOnlyUser } from './workspace.boundary.js';
-import { readWorkspace } from './workspace.repository.js';
+import { readWorkspace, readWorkspaceOptions } from './workspace.repository.js';
 import { parseWorkspaceCommand, executeWorkspaceCommand } from './workspace.commands.js';
 
 const router = express.Router();
@@ -38,6 +38,17 @@ router.post('/:project/commands', async (req, res, next) => {
     const project = parse(z.uuid(), req.params.project);
     const result = await executeWorkspaceCommand(req.user.id, project, parseWorkspaceCommand(req.body));
     res.status(result.idempotent ? 200 : 201).json({ status: 'success', data: result });
+  } catch (e) { next(e); }
+});
+router.get('/:project/options{/:kind}', async (req, res, next) => {
+  try {
+    const project = parse(z.uuid(), req.params.project);
+    const kind = parse(z.enum(['context','units','leads','deals','cash_desks','warehouses','parties','materials','complexes','schemes']), req.params.kind || 'context');
+    const page = parse(pageSchema, req.query);
+    if (kind === 'context' && Object.keys(page).length) throw new AppError('Параметры страницы не требуются', 400);
+    const data = await readWorkspaceOptions(req.user.id, project, kind, page);
+    if (kind === 'context' && process.env.PROJECT_WORKSPACE_WRITES_ENABLED !== 'true') data.commands = [];
+    res.json({ status: 'success', data });
   } catch (e) { next(e); }
 });
 router.get('/:project/:resource{/:record}', async (req, res, next) => {
