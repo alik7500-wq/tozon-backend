@@ -133,6 +133,29 @@ BEGIN
   IF result->>'status'<>'SIGNED' OR again->>'idempotent'<>'true' OR (SELECT sum(amount_minor) FROM public.deal_payment_schedules WHERE deal_id=signed_deal)<>(result->>'final_price_minor')::integer OR (SELECT count(*) FROM public.deal_payment_schedules WHERE deal_id=signed_deal)<>(CASE a.slot WHEN 1 THEN 36 ELSE 40 END) THEN RAISE EXCEPTION 'Signing schedule / exact offer failed';END IF;
   result:=public.execute_company_project_command(a.actor,a.project,gen_random_uuid(),'PAYMENT',jsonb_build_object('cash_desk_id',desk,'deal_id',signed_deal,'amount_minor',92400,'currency','TJS','exchange_rate',9.24,'date','2026-11-10'));
   IF (SELECT sum(paid_amount_minor) FROM public.deal_payment_schedules WHERE deal_id=signed_deal)<>10000 THEN RAISE EXCEPTION 'Signed deal payment/FIFO failed';END IF;
+  -- Document privileges are separate from contract/finance access.
+  BEGIN
+   PERFORM public.read_company_project_document(a.actor,a.project,signed_deal);
+   RAISE EXCEPTION 'Implicit document access accepted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;END;
+  UPDATE public.company_workspace_access SET sections=array_append(sections,'documents.print'),write_sections=array_append(write_sections,'documents.manage') WHERE user_id=a.actor;
+  result:=public.read_company_project_document(a.actor,a.project,signed_deal);
+  IF result->'signer'->>'director_name'<>'Isolation director '||a.slot OR (result->>'total_paid_minor')::integer<>10000 THEN RAISE EXCEPTION 'Document snapshot/FX total failed';END IF;
+  request:=gen_random_uuid();result:=public.register_company_project_file(a.actor,a.project,signed_deal,request,'isolation.pdf','application/pdf',100,repeat('a',64));
+  again:=public.register_company_project_file(a.actor,a.project,signed_deal,request,'isolation.pdf','application/pdf',100,repeat('a',64));
+  IF result<>again OR result?'object_path' THEN RAISE EXCEPTION 'File metadata retry/privacy failed';END IF;
+  result:=public.read_company_project_files(a.actor,a.project,signed_deal);
+  IF jsonb_array_length(result->'records')<>1 OR result->'records'->0 ? 'object_path' THEN RAISE EXCEPTION 'File catalog leaked path';END IF;
+  BEGIN
+   PERFORM public.read_company_project_document(a.actor,foreign_project,signed_deal);
+   RAISE EXCEPTION 'Foreign document accepted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;END;
+  UPDATE public.company_workspace_access SET sections=array_remove(sections,'documents.print') WHERE user_id=a.actor;
+  BEGIN
+   PERFORM public.read_company_project_files(a.actor,a.project,signed_deal,request);
+   RAISE EXCEPTION 'Revoked document grant accepted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;END;
+  UPDATE public.company_workspace_access SET sections=array_append(sections,'documents.print') WHERE user_id=a.actor;
   another_unit:=pg_temp.clone_workspace_fixture('units',jsonb_build_object('floor_id',own_floor,'unit_number','REJECT-'||a.slot,'status','AVAILABLE','archived_at',NULL));
   BEGIN
    PERFORM public.execute_company_project_command(a.actor,a.project,gen_random_uuid(),'DEAL_DRAFT',jsonb_build_object('unit_id',another_unit,'lead_id',foreign_lead,'final_price_minor',1000000,'date','2026-11-10'));
@@ -159,4 +182,4 @@ BEGIN
  IF command_count<>18 THEN RAISE EXCEPTION 'Unexpected duplicate or missing commands: %',command_count;END IF;
 END $writes$;
 ROLLBACK;
-SELECT 'PASS: two project actors, drafts, exact 36/40-month signing, options, PKO/FIFO, RKO/balances, supplier settlements, stock ledgers and retries; all rows rolled back' AS result;
+SELECT 'PASS: two project actors, drafts, exact 36/40-month signing, options, PKO/FIFO, RKO/balances, supplier settlements, stock ledgers, private document/file metadata and retries; all rows rolled back' AS result;

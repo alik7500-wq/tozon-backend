@@ -37,7 +37,8 @@ export async function workspaceBoundary(req, res, next) {
     assertWorkspacePilotRuntime();
     const workspaceRead = req.method === 'GET' && /^\/api\/project-workspace(?:\/|$)/.test(path);
     const workspaceCommand = req.method === 'POST' && /^\/api\/project-workspace\/[0-9a-f-]{36}\/commands$/.test(path) && process.env.PROJECT_WORKSPACE_WRITES_ENABLED === 'true';
-    if (!workspaceRead && !workspaceCommand)
+    const workspaceUpload = req.method === 'POST' && /^\/api\/project-workspace\/[0-9a-f-]{36}\/documents\/[1-9]\d{0,9}\/files$/.test(path) && process.env.PROJECT_WORKSPACE_WRITES_ENABLED === 'true' && process.env.PROJECT_WORKSPACE_DOCUMENTS_ENABLED === 'true' && process.env.PROJECT_WORKSPACE_FILES_ENABLED === 'true';
+    if (!workspaceRead && !workspaceCommand && !workspaceUpload)
       throw new AppError('Для проектной учётной записи этот раздел или операция ещё не разрешены', 403);
     return next();
   } catch (error) { next(error); }
