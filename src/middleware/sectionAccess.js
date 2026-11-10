@@ -52,7 +52,7 @@ export const authorizeSectionRequest = async req => {
     }
   }
   // Instagram OAuth is limited to administrator/director by its own router.
-  if (/^\/api\/integrations\/meta\/(?:sources(?:\/[0-9a-f-]{36})?|connect|connection)$/.test(path) &&
+  if (/^\/api\/integrations\/meta\/(?:sources(?:\/[0-9a-f-]{36}(?:\/subscribe)?)?|events(?:\/[0-9a-f-]{36}\/assign)?|connect|connection|preflight)$/.test(path) &&
       ['ADMIN', 'DIRECTOR'].includes(user.role) && hasSection(user, 'automation.view', true)) {
     req.sectionAccessGranted = true;
     return;

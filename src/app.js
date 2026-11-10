@@ -7,6 +7,7 @@ import { timingSafeEqual } from 'node:crypto';
 import instagramIngestGatedRouter from './modules/integrations/instagram-ingest-gated.router.js';
 import instagramOAuthRouter from './modules/integrations/instagram.router.js';
 import metaSourcesRouter from './modules/integrations/meta-sources.router.js';
+import metaWebhookRouter from './modules/integrations/meta-webhook.router.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -65,6 +66,7 @@ app.use(cors({
 }));
 // Preserve exact signed bytes before the global JSON parser.
 app.use('/api/integrations/instagram/webhook', instagramIngestGatedRouter);
+app.use('/api/integrations/meta/webhook', metaWebhookRouter);
 app.use('/api/leads/intake', express.json({ limit: '3mb' }));
 app.use(express.json());
 app.use(cookieParser());
@@ -80,7 +82,7 @@ app.use(pino({
     'req.body.token'
   ],
   autoLogging: {
-    ignore: (req) => req.url === '/api/health' || req.url?.startsWith('/api/integrations/instagram/callback') || req.url?.startsWith('/api/integrations/instagram/webhook') || req.url?.startsWith('/api/integrations/meta/callback'),
+    ignore: (req) => req.url === '/api/health' || req.url?.startsWith('/api/integrations/instagram/callback') || req.url?.startsWith('/api/integrations/instagram/webhook') || req.url?.startsWith('/api/integrations/meta/callback') || req.url?.startsWith('/api/integrations/meta/webhook'),
   }
 }));
 

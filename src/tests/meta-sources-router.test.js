@@ -4,7 +4,7 @@ import request from 'supertest';
 const mocks = vi.hoisted(() => ({
   user: { id: 1, role: 'ADMIN', is_active: true },
   list: vi.fn(), bind: vi.fn(), disconnect: vi.fn(), saveState: vi.fn(), consumeState: vi.fn(), sync: vi.fn(),
-  findUser: vi.fn(), discover: vi.fn()
+  findUser: vi.fn(), discover: vi.fn(), events: vi.fn(), assign: vi.fn()
 }));
 vi.mock('../middleware/auth.middleware.js', () => ({ protect: (req, _res, next) => { req.user = mocks.user; next(); } }));
 vi.mock('../middleware/sectionAccess.js', () => ({
@@ -13,6 +13,7 @@ vi.mock('../middleware/sectionAccess.js', () => ({
 }));
 vi.mock('../modules/users/users.repository.js', () => ({ UsersRepository: { findById: mocks.findUser } }));
 vi.mock('../modules/integrations/meta-sources.repository.js', () => ({ MetaSources: mocks }));
+vi.mock('../modules/integrations/meta-events.repository.js', () => ({ MetaEvents: { list: mocks.events, assign: mocks.assign } }));
 vi.mock('../modules/integrations/meta-assets.client.js', () => ({ discoverMetaAssets: mocks.discover }));
 import router from '../modules/integrations/meta-sources.router.js';
 const app = express(); app.use(express.json()); app.use('/meta', router);
@@ -101,5 +102,21 @@ describe('Meta settings authorization and OAuth', () => {
     expect(result.status).toBe(200);
     expect(mocks.sync).toHaveBeenCalledWith(1, 'fixture-token', catalogue, state);
     expect(result.text).not.toContain('fixture-token');
+  });
+  it('scopes the event journal to the authenticated owner', async () => {
+    mocks.events.mockResolvedValue([]);
+    const result = await request(app).get('/meta/events').query({ projectId: '11', ownerId: '999' });
+    expect(result.status).toBe(200); expect(mocks.events).toHaveBeenCalledWith(1, '11');
+  });
+  it('rejects event operations for employees', async () => {
+    mocks.user = { id: 2, role: 'MANAGER', is_active: true };
+    expect((await request(app).get('/meta/events')).status).toBe(403);
+    expect((await request(app).post(`/meta/events/${sourceId}/assign`)).status).toBe(403);
+    expect(mocks.assign).not.toHaveBeenCalled();
+  });
+  it('assigns an unassigned event through the server-side source binding', async () => {
+    mocks.assign.mockResolvedValue(true);
+    expect((await request(app).post(`/meta/events/${sourceId}/assign`).send({ expectedProjectId: '11', projectId: '999', ownerId: '999' })).status).toBe(200);
+    expect(mocks.assign).toHaveBeenCalledWith(1, sourceId, '11');
   });
 });

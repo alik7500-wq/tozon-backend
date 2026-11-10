@@ -44,6 +44,14 @@ export const MetaSources = {
       p_owner: String(ownerId), p_source: sourceId, p_project: projectId
     }));
   },
+  async formSubscriptionContext(ownerId, sourceId) {
+    const db = getServiceDB();
+    const connection = check(await db.from('meta_source_connections').select('id,token_expires_at')
+      .eq('owner_user_id', String(ownerId)).eq('status', 'connected').maybeSingle());
+    if (!connection || connection.token_expires_at && new Date(connection.token_expires_at).getTime() <= Date.now()) return null;
+    return check(await db.from('meta_project_sources').select('page_id,encrypted_access_token')
+      .eq('connection_id', connection.id).eq('id', sourceId).eq('channel', 'FACEBOOK_FORM').eq('available', true).maybeSingle());
+  },
   async disconnect(ownerId) {
     // Tokens and bindings are cleared atomically; historical events remain in their original project.
     check(await getServiceDB().rpc('disconnect_meta_source_connection', { p_owner: String(ownerId) }));

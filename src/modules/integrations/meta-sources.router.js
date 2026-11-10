@@ -5,6 +5,11 @@ import { hasSection, isMatrixUser } from '../../middleware/sectionAccess.js';
 import { createOAuthState } from './social-oauth-state.js';
 import { MetaSources } from './meta-sources.repository.js';
 import { discoverMetaAssets } from './meta-assets.client.js';
+import { MetaEvents } from './meta-events.repository.js';
+import { subscribeMetaLeadgen } from './meta-form-subscription.client.js';
+import { decryptSocialToken } from './social-token-crypto.js';
+import { metaIngestEnabled } from './meta-webhook.router.js';
+import { checkMetaCredentials } from './meta-credentials.client.js';
 
 const router = Router();
 const enabled = () => process.env.META_SOURCE_ROUTING_ENABLED === 'true';
@@ -64,10 +69,40 @@ router.use(protect, (req, res, next) => {
   if (!canManageMetaSources(req.user)) return res.sendStatus(403);
   next();
 });
+router.post('/preflight', async (_req, res) => {
+  return res.json({ status: 'success', data: await checkMetaCredentials() });
+});
 router.get('/sources', async (req, res) => {
   if (!enabled()) return res.json({ status: 'success', data: { enabled: false, connection: null, sources: [] } });
-  try { return res.json({ status: 'success', data: { enabled: true, ...await MetaSources.list(req.user.id) } }); }
+  try { return res.json({ status: 'success', data: { enabled: true, ingestEnabled: metaIngestEnabled(), formLeadsEnabled: process.env.META_FORM_LEADS_ENABLED === 'true', ...await MetaSources.list(req.user.id) } }); }
   catch { return unavailable(res); }
+});
+router.post('/sources/:id/subscribe', async (req, res) => {
+  if (!metaIngestEnabled()) return unavailable(res);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id)) return res.sendStatus(400);
+  try {
+    const source = await MetaSources.formSubscriptionContext(req.user.id, req.params.id);
+    if (!source?.encrypted_access_token) return res.sendStatus(404);
+    await subscribeMetaLeadgen(source.page_id, decryptSocialToken(source.encrypted_access_token));
+    return res.json({ status: 'success', data: { subscribed: true } });
+  } catch { return res.status(503).json({ message: 'Подписка не подтверждена. Проверьте доступ к странице и настройку Webhooks в Meta.' }); }
+});
+router.get('/events', async (req, res) => {
+  if (!enabled()) return unavailable(res);
+  const project = req.query.projectId;
+  if (project !== undefined && (typeof project !== 'string' || !/^[1-9]\d{0,18}$/.test(project) || BigInt(project) > 9223372036854775807n)) return res.sendStatus(400);
+  try { return res.json({ status: 'success', data: { events: await MetaEvents.list(req.user.id, project || null) } }); }
+  catch { return unavailable(res); }
+});
+router.post('/events/:id/assign', async (req, res) => {
+  if (!enabled()) return unavailable(res);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.id)) return res.sendStatus(400);
+  const project = req.body?.expectedProjectId;
+  if (typeof project !== 'string' || !/^[1-9]\d{0,18}$/.test(project) || BigInt(project) > 9223372036854775807n) return res.sendStatus(400);
+  try {
+    if (!await MetaEvents.assign(req.user.id, req.params.id, project)) return res.status(409).json({ message: 'Источник или привязка изменились. Обновите список.' });
+    return res.json({ status: 'success' });
+  } catch { return unavailable(res); }
 });
 router.post('/connect', async (req, res) => {
   if (!enabled()) return unavailable(res);
