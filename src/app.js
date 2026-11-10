@@ -48,6 +48,9 @@ import telegramFinanceRouter from './modules/telegram-finance/router.js';
 import { financeBotHealth } from './modules/telegram-finance/start.js';
 import salesPlansRouter from './modules/sales-plans/salesPlans.router.js';
 import companyProjectsRouter from './modules/company-projects/company-projects.router.js';
+import workspaceRouter from './modules/company-projects/workspace.router.js';
+import { workspaceBoundary } from './modules/company-projects/workspace.boundary.js';
+import { protect } from './middleware/auth.middleware.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -85,7 +88,8 @@ app.use(pino({
 }));
 
 // Static files for uploads
-app.use('/uploads', express.static(uploadDir));
+app.use(['/api', '/uploads'], workspaceBoundary);
+app.use('/uploads', protect, express.static(uploadDir));
 
 // Verification-only Meta callback. Inbound Instagram events remain disabled.
 app.get('/api/integrations/instagram/webhook', (req, res) => {
@@ -131,6 +135,7 @@ app.use('/api/construction', constructionRouter);
 app.use('/api/costs', costsRouter);
 app.use('/api/auth', authRouter);
 app.use('/api/company-projects', companyProjectsRouter);
+app.use('/api/project-workspace', workspaceRouter);
 app.use('/api/calls', callsRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/discount-schemes', discountsRouter);

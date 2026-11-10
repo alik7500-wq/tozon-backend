@@ -1,0 +1,37 @@
+import express from 'express';
+import { z } from 'zod';
+import { protect } from '../../middleware/auth.middleware.js';
+import { AppError } from '../../shared/errors/errorHandler.js';
+import { assertWorkspacePilotRuntime, isProjectOnlyUser } from './workspace.boundary.js';
+import { readWorkspace } from './workspace.repository.js';
+
+const router = express.Router();
+const resource = z.enum(['complexes', 'units', 'leads', 'deals', 'payments', 'schedules', 'expenses', 'warehouses']);
+const pageSchema = z.object({ after: z.string().max(40).regex(/^(?:[0-9]{1,18}|[0-9a-f-]{36})?$/).optional(), limit: z.string().regex(/^\d{1,3}$/).transform(Number).refine(n => n >= 1 && n <= 100).optional() }).strict();
+function parse(schema, value) {
+  const result = schema.safeParse(value);
+  if (!result.success) throw new AppError('Некорректные параметры рабочего пространства', 400);
+  return result.data;
+}
+router.use(protect);
+router.use((req, res, next) => {
+  try {
+    if (!isProjectOnlyUser(req.user)) throw new AppError('Этот раздел предназначен для проектной учётной записи', 403);
+    assertWorkspacePilotRuntime(); res.set('Cache-Control', 'no-store'); next();
+  } catch (e) { next(e); }
+});
+router.get('/projects', async (req, res, next) => {
+  try { parse(z.object({}).strict(), req.query); res.json({ status: 'success', data: await readWorkspace(req.user.id, null, 'projects') }); } catch (e) { next(e); }
+});
+router.get('/:project/:resource{/:record}', async (req, res, next) => {
+  try {
+    const project = parse(z.uuid(), req.params.project);
+    const kind = parse(resource, req.params.resource);
+    const page = parse(pageSchema, req.query);
+    const record = req.params.record ? parse(kind === 'warehouses' ? z.uuid() : z.string().regex(/^[1-9]\d{0,17}$/), req.params.record) : null;
+    if (record && Object.keys(page).length) throw new AppError('Параметры страницы недопустимы для отдельной записи', 400);
+    res.json({ status: 'success', data: await readWorkspace(req.user.id, project, kind, { ...page, record }) });
+  } catch (e) { next(e); }
+});
+router.use((req, res, next) => next(new AppError('Операция рабочего пространства не разрешена', 403)));
+export default router;

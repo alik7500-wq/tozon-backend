@@ -22,7 +22,7 @@ export const protect = async (req, res, next) => {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
     // Check if user still exists
-    const currentUser = await UsersRepository.findById(decoded.id);
+    const currentUser = req.boundaryUser || await UsersRepository.findById(decoded.id);
     if (!currentUser) {
       return next(new AppError('The user belonging to this token does no longer exist.', 401));
     }
@@ -43,7 +43,15 @@ export const protect = async (req, res, next) => {
 
     // Grant access to protected route
     req.user = currentUser;
-    await authorizeSectionRequest(req);
+    // Workspace authorization is checked against current memberships and section
+    // grants inside its SQL reader; legacy section privileges never widen it.
+    const projectOnly = currentUser.permissions?.includes('company.project-only');
+    const workspacePath = /^\/api\/project-workspace(?:\/|$)/.test(String(req.originalUrl || '').split('?')[0]);
+    const fileRead = ['GET', 'HEAD'].includes(req.method) && String(req.originalUrl || '').startsWith('/uploads/');
+    if (fileRead) {
+      if (projectOnly || (!hasSection(currentUser, 'inventory.view') && !hasSection(currentUser, 'contracts.view')))
+        throw new AppError('Нет доступа к файлу', 403);
+    } else if (!(projectOnly && workspacePath)) await authorizeSectionRequest(req);
     next();
   } catch (error) {
     next(error instanceof AppError ? error : new AppError('Invalid token or authorization error', 401));
