@@ -181,5 +181,43 @@ BEGIN
  SELECT count(*) INTO command_count FROM public.company_project_commands;
  IF command_count<>18 THEN RAISE EXCEPTION 'Unexpected duplicate or missing commands: %',command_count;END IF;
 END $writes$;
+DO $closure$
+DECLARE a record;own_floor integer;unit_id integer;closure_deal integer;request uuid;payload jsonb;result jsonb;again jsonb;stamp text;message text;
+BEGIN
+ FOR a IN SELECT * FROM workspace_smoke_actors ORDER BY slot LOOP
+  UPDATE public.company_workspace_access SET write_sections=write_sections||ARRAY['contracts.cancel','contracts.terminate'] WHERE user_id=a.actor;
+  SELECT d.id,d.updated_at INTO STRICT closure_deal,stamp FROM public.deals d WHERE d.company_project_id=a.project AND d.status='SIGNED';
+  BEGIN
+   PERFORM public.execute_company_project_command(a.actor,a.project,gen_random_uuid(),'TERMINATE_UNPAID',jsonb_build_object('deal_id',closure_deal,'expected_updated_at',stamp,'reason','Paid contract must be reviewed','basis','Isolation agreement','basis_date','2026-11-10'));
+   RAISE EXCEPTION 'Paid termination accepted';
+  EXCEPTION WHEN check_violation THEN
+   GET STACKED DIAGNOSTICS message=MESSAGE_TEXT;
+   IF message<>'CLOSURE_FINANCIAL_REVIEW_REQUIRED' THEN RAISE;END IF;
+  END;
+  SELECT floor_id INTO STRICT own_floor FROM public.units WHERE id=a.unit_id;
+  unit_id:=pg_temp.clone_workspace_fixture('units',jsonb_build_object('floor_id',own_floor,'unit_number','CLOSE-'||a.slot,'status','AVAILABLE','unit_kind','APARTMENT','area_m2_x100',6000,'price_per_m2_minor',70000,'manual_total_price_minor',NULL,'archived_at',NULL));
+  result:=public.execute_company_project_command(a.actor,a.project,gen_random_uuid(),'DEAL_DRAFT',jsonb_build_object('unit_id',unit_id,'lead_id',a.lead_id,'final_price_minor',4200000,'date','2026-11-10'));closure_deal:=(result->>'id')::integer;
+  SELECT updated_at INTO STRICT stamp FROM public.deals WHERE id=closure_deal;
+  request:=gen_random_uuid();payload:=jsonb_build_object('deal_id',closure_deal,'expected_updated_at',stamp,'reason','Client cancelled draft');
+  result:=public.execute_company_project_command(a.actor,a.project,request,'CANCEL_DRAFT',payload);again:=public.execute_company_project_command(a.actor,a.project,request,'CANCEL_DRAFT',payload);
+  IF result->>'status'<>'CANCELLED' OR again->>'idempotent'<>'true' OR (SELECT status FROM public.units WHERE id=unit_id)<>'AVAILABLE' THEN RAISE EXCEPTION 'Draft cancellation/retry failed';END IF;
+  result:=public.execute_company_project_command(a.actor,a.project,gen_random_uuid(),'DEAL_DRAFT',jsonb_build_object('unit_id',unit_id,'lead_id',a.lead_id,'final_price_minor',4200000,'date','2026-11-10'));closure_deal:=(result->>'id')::integer;
+  -- A replay of the old cancellation must not release the newly reserved unit.
+  PERFORM public.execute_company_project_command(a.actor,a.project,request,'CANCEL_DRAFT',payload);
+  IF (SELECT status FROM public.units WHERE id=unit_id)<>'RESERVED' THEN RAISE EXCEPTION 'Cancellation replay changed new reservation';END IF;
+  SELECT updated_at INTO STRICT stamp FROM public.deals WHERE id=closure_deal;
+  PERFORM public.execute_company_project_command(a.actor,a.project,gen_random_uuid(),'SIGN_DEAL',jsonb_build_object('deal_id',closure_deal,'expected_updated_at',stamp,'down_payment_minor',0,'installment_months',36));
+  SELECT updated_at INTO STRICT stamp FROM public.deals WHERE id=closure_deal;
+  PERFORM public.execute_company_project_command(a.actor,a.project,gen_random_uuid(),'TERMINATE_UNPAID',jsonb_build_object('deal_id',closure_deal,'expected_updated_at',stamp,'reason','Parties ended unpaid contract','basis','Isolation agreement','basis_date','2026-11-10'));
+  IF (SELECT status FROM public.units WHERE id=unit_id)<>'AVAILABLE' OR (SELECT count(*) FROM public.deal_payment_schedules WHERE deal_id=closure_deal AND status='CANCELLED')<36 THEN RAISE EXCEPTION 'Unpaid termination failed';END IF;
+  result:=public.read_company_project_document(a.actor,a.project,closure_deal);
+  IF result->'closure'->>'kind'<>'TERMINATE_UNPAID' OR result->'signer'->>'director_name'<>'Isolation director '||a.slot THEN RAISE EXCEPTION 'Closure document history failed';END IF;
+  BEGIN
+   UPDATE public.deals SET status='SIGNED' WHERE id=closure_deal;
+   RAISE EXCEPTION 'Closed deal reopened';
+  EXCEPTION WHEN check_violation THEN NULL;END;
+ END LOOP;
+ IF (SELECT count(*) FROM public.company_project_commands)<>28 THEN RAISE EXCEPTION 'Unexpected closure command count';END IF;
+END $closure$;
 ROLLBACK;
-SELECT 'PASS: two project actors, drafts, exact 36/40-month signing, options, PKO/FIFO, RKO/balances, supplier settlements, stock ledgers, private document/file metadata and retries; all rows rolled back' AS result;
+SELECT 'PASS: two project actors, drafts, exact 36/40-month signing, options, PKO/FIFO, RKO/balances, supplier settlements, stock ledgers, private document/file metadata, draft cancellation, unpaid termination and safe unit resale; all rows rolled back' AS result;

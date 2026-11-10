@@ -7,6 +7,8 @@ const currency=z.enum(['USD','TJS']);
 const baseMoney={cash_desk_id:uuid,amount_minor:amount,currency,exchange_rate:rate,date};
 const line=z.object({material_id:uuid,quantity:z.number().positive().max(1e9).refine(n=>Math.abs(n*10000-Math.round(n*10000))<1e-5,'Количество: до четырёх знаков'),value:z.number().nonnegative().max(1e12).refine(n=>Math.abs(n*100-Math.round(n*100))<1e-5,'Стоимость: до двух знаков').optional()}).strict();
 export const commandSchema=z.discriminatedUnion('kind',[
+ z.object({request_id:uuid,kind:z.literal('CANCEL_DRAFT'),payload:z.object({deal_id:id,expected_updated_at:z.string().min(1).max(100),reason:z.string().trim().min(5).max(1000)}).strict()}).strict(),
+ z.object({request_id:uuid,kind:z.literal('TERMINATE_UNPAID'),payload:z.object({deal_id:id,expected_updated_at:z.string().min(1).max(100),reason:z.string().trim().min(5).max(1000),basis:z.string().trim().min(3).max(500),basis_date:date}).strict()}).strict(),
  z.object({request_id:uuid,kind:z.literal('SIGN_DEAL'),payload:z.object({deal_id:id,expected_updated_at:z.string().min(1).max(100),scheme_id:uuid.optional(),scheme_updated_at:z.string().min(1).max(100).optional(),rule_key:z.string().min(1).max(300).optional(),down_payment_minor:z.number().int().nonnegative().max(2147483647),installment_months:z.number().int().min(0).max(120),first_payment_date:date.optional()}).strict()}).strict(),
  z.object({request_id:uuid,kind:z.literal('DEAL_DRAFT'),payload:z.object({lead_id:id,unit_id:id,final_price_minor:amount,down_payment_minor:z.number().int().nonnegative().max(2147483647).default(0),payment_type:z.enum(['FULL','INSTALLMENT']).default('FULL'),installment_months:z.number().int().min(0).max(120).default(0),date}).strict()}).strict(),
  z.object({request_id:uuid,kind:z.literal('PAYMENT'),payload:z.object({...baseMoney,deal_id:id,comment:z.string().trim().max(1000).default('')}).strict()}).strict(),
@@ -21,6 +23,9 @@ export function parseWorkspaceCommand(body){
 export async function executeWorkspaceCommand(actor,project,command){
  const {data,error}=await getServiceDB().rpc('execute_company_project_command',{p_actor:actor,p_project:project,p_request:command.request_id,p_kind:command.kind,p_payload:command.payload});
  if(error){
+  if(String(error.message).includes('CLOSURE_FINANCIAL_REVIEW_REQUIRED'))throw new AppError('Есть денежные движения, бартер или оплаченный график. Нужна отдельная процедура расчёта и возврата; простое закрытие запрещено.',409);
+  if(String(error.message).includes('TERMINATION_BASIS_REQUIRED'))throw new AppError('Укажите основание и дату расторжения: не раньше договора и не позже сегодняшней даты.',400);
+  if(String(error.message).includes('STALE_CLOSURE_TARGET'))throw new AppError('Договор изменился или уже закрыт. Обновите список и проверьте его состояние.',409);
   if(error.code==='42501')throw new AppError('Нет права на эту операцию в выбранном проекте',403);
   if(error.code==='P0002')throw new AppError('Связанная запись не найдена в выбранном проекте',404);
   if(['23505','40001'].includes(error.code))throw new AppError('Операция уже выполнена с другими данными либо объект занят',409);

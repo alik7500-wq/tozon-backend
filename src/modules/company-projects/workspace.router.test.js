@@ -85,4 +85,13 @@ describe('workspace route with real auth and global boundary',()=>{
   expect((await auth(request(app).post(`/api/project-workspace/${project}/commands`).send({...body,payload:{...body.payload,final_price_minor:1}}))).status).toBe(400);
  });
 
+ it('validates separate cancellation and termination payloads without accepting forged status or actor',async()=>{
+  vi.stubEnv('PROJECT_WORKSPACE_WRITES_ENABLED','true');mocks.command.mockResolvedValue({id:1,resource:'deals',status:'CANCELLED'});
+  const body={request_id:project,kind:'CANCEL_DRAFT',payload:{deal_id:1,expected_updated_at:'version',reason:'Клиент отказался'}};
+  expect((await auth(request(app).post(`/api/project-workspace/${project}/commands`).send(body))).status).toBe(201);
+  expect((await auth(request(app).post(`/api/project-workspace/${project}/commands`).send({...body,payload:{...body.payload,status:'CANCELLED'}}))).status).toBe(400);
+  expect((await auth(request(app).post(`/api/project-workspace/${project}/commands`).send({...body,kind:'TERMINATE_UNPAID'}))).status).toBe(400);
+  expect((await auth(request(app).post(`/api/project-workspace/${project}/commands`).send({...body,kind:'TERMINATE_UNPAID',payload:{...body.payload,basis:'Соглашение № 1',basis_date:'2026-11-10'}}))).status).toBe(201);
+ });
+
 });

@@ -88,7 +88,7 @@ router.post('/:project/commands', async (req, res, next) => {
 router.get('/:project/options{/:kind}', async (req, res, next) => {
   try {
     const project = parse(z.uuid(), req.params.project);
-    const kind = parse(z.enum(['context','units','leads','deals','cash_desks','warehouses','parties','materials','complexes','schemes']), req.params.kind || 'context');
+    const kind = parse(z.enum(['context','units','leads','deals','cash_desks','warehouses','parties','materials','complexes','schemes','cancel_drafts','terminate_deals']), req.params.kind || 'context');
     const page = parse(pageSchema, req.query);
     if (kind === 'context' && Object.keys(page).length) throw new AppError('Параметры страницы не требуются', 400);
     const data = await readWorkspaceOptions(req.user.id, project, kind, page);
