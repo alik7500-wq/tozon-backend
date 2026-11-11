@@ -1,3 +1,5 @@
+import {projectReadiness} from './company-projects.readiness.js';
+import {assertWorkspacePilotRuntime} from './workspace.boundary.js';
 import {assertInternalReminders,reminderRpc} from './workspace.reminders.js';
 import express from 'express';
 import { z } from 'zod';
@@ -22,6 +24,9 @@ function reminderOrigin(req){
  let origin;try{origin=new URL(process.env.FRONTEND_ORIGIN).origin;}catch{/* deny */}
  if((req.method!=='GET'||req.headers.origin)&&(!origin||req.headers.origin!==origin))throw new AppError('Недопустимый источник запроса',403);
 }
+router.get('/:id/readiness',async(req,res,next)=>{
+ try{assertWorkspacePilotRuntime();reminderOrigin(req);const id=z.uuid().parse(req.params.id);z.object({}).strict().parse(req.query);const snapshot=await reminderRpc('read_company_project_readiness',{p_actor:req.user.id,p_project:id});res.json({status:'success',data:projectReadiness(snapshot)});}catch(e){next(e instanceof z.ZodError?new AppError('Некорректный запрос проверки проекта',400):e);}
+});
 router.get('/:id/reminders',async(req,res,next)=>{
  try{assertInternalReminders();reminderOrigin(req);const id=z.uuid().parse(req.params.id);res.json({status:'success',data:{settings:await reminderRpc('company_project_reminder_configuration',{p_actor:req.user.id,p_project:id})}});}catch(e){next(e instanceof z.ZodError?new AppError('Некорректный проект',400):e);}
 });

@@ -37,3 +37,12 @@ it('runs the internal reminder scheduler under the dedicated token while SMS is 
  expect((await auth(request(app).post('/api/internal/project-reminders/run'))).status).toBe(401);
  expect((await request(app).post('/api/internal/project-reminders/run').set('Cookie','jwt='+token()).set('Authorization','Bearer reminder-internal-synthetic-token')).status).toBe(403);
 });
+
+it('protects the read-only readiness audit from scoped actors, actor overrides and wrong cookie origin',async()=>{
+ const path=`/api/company-projects/${project}/readiness`;expect((await auth(request(app).get(path))).status).toBe(403);
+ m.user.mockResolvedValue({id:10,is_active:1,role:'ADMIN',permissions:[]});m.rpc.mockResolvedValue({data:{members:[]}});
+ expect((await auth(request(app).get(path))).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('read_company_project_readiness',{p_actor:10,p_project:project});
+ expect((await auth(request(app).get(path+'?actor=20'))).status).toBe(400);
+ expect((await request(app).get(path).set('Cookie','jwt='+token()).set('Origin','https://foreign.example')).status).toBe(403);
+ vi.stubEnv('TEST_SUPABASE_URL','https://yeslzrrcwgcqfxhgbrqk.supabase.co');expect((await auth(request(app).get(path))).status).toBe(503);
+});

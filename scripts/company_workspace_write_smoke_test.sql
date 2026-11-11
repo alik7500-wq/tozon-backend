@@ -260,6 +260,8 @@ BEGIN
  admin_id:=pg_temp.clone_workspace_fixture('users',jsonb_build_object('name','Reminder settings control','email','reminder-control@example.invalid','role','ADMIN','is_active',1,'permissions','[]'::jsonb));
  FOR a IN SELECT * FROM workspace_smoke_actors ORDER BY slot LOOP
   SELECT actor,project INTO STRICT other_actor,other_project FROM workspace_smoke_actors WHERE slot<>a.slot;
+  result:=public.read_company_project_readiness(admin_id,a.project);
+  IF (result->>'complex_count')::integer<>1 OR jsonb_array_length(result->'members')<>1 OR result->'members'->0->>'user_id'<>a.actor::text THEN RAISE EXCEPTION 'Readiness metadata outside requested project';END IF;
   PERFORM public.save_company_project_reminders(admin_id,a.project,0,true,3,'2026-11-10');
   PERFORM public.refresh_company_project_reminders(a.project);
   IF public.refresh_company_project_reminders(a.project)<>0 THEN RAISE EXCEPTION 'Duplicate project reminders';END IF;
