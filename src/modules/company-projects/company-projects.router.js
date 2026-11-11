@@ -1,3 +1,5 @@
+import {setupRpc,executeSetup} from './company-projects.setup.js';
+import rateLimit from 'express-rate-limit';
 import {projectReadiness} from './company-projects.readiness.js';
 import {assertWorkspacePilotRuntime} from './workspace.boundary.js';
 import {assertInternalReminders,reminderRpc} from './workspace.reminders.js';
@@ -24,6 +26,16 @@ function reminderOrigin(req){
  let origin;try{origin=new URL(process.env.FRONTEND_ORIGIN).origin;}catch{/* deny */}
  if((req.method!=='GET'||req.headers.origin)&&(!origin||req.headers.origin!==origin))throw new AppError('Недопустимый источник запроса',403);
 }
+const setupLimit=rateLimit({windowMs:60000,limit:20,standardHeaders:true,legacyHeaders:false});
+router.get('/:id/setup',async(req,res,next)=>{
+ try{assertWorkspacePilotRuntime();reminderOrigin(req);const id=z.uuid().parse(req.params.id);z.object({}).strict().parse(req.query);res.json({status:'success',data:await setupRpc('read_company_project_setup',{p_actor:req.user.id,p_project:id})});}catch(e){next(e instanceof z.ZodError?new AppError('Некорректный проект',400):e);}
+});
+router.get('/:id/unbound-deals',async(req,res,next)=>{
+ try{assertWorkspacePilotRuntime();reminderOrigin(req);const id=z.uuid().parse(req.params.id),page=z.object({after:z.coerce.number().int().nonnegative().default(0)}).strict().parse(req.query);res.json({status:'success',data:await setupRpc('read_company_project_unbound_deals',{p_actor:req.user.id,p_project:id,p_after:page.after})});}catch(e){next(e instanceof z.ZodError?new AppError('Некорректная страница',400):e);}
+});
+router.post('/:id/setup',setupLimit,async(req,res,next)=>{
+ try{assertWorkspacePilotRuntime();reminderOrigin(req);const id=z.uuid().parse(req.params.id);z.object({}).strict().parse(req.query);res.json({status:'success',data:await executeSetup(req.user.id,id,req.body)});}catch(e){next(e instanceof z.ZodError?new AppError('Некорректный проект',400):e);}
+});
 router.get('/:id/readiness',async(req,res,next)=>{
  try{assertWorkspacePilotRuntime();reminderOrigin(req);const id=z.uuid().parse(req.params.id);z.object({}).strict().parse(req.query);const snapshot=await reminderRpc('read_company_project_readiness',{p_actor:req.user.id,p_project:id});res.json({status:'success',data:projectReadiness(snapshot)});}catch(e){next(e instanceof z.ZodError?new AppError('Некорректный запрос проверки проекта',400):e);}
 });

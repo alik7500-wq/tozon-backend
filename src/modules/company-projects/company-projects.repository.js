@@ -27,6 +27,8 @@ export async function saveCompanyProject(id, payload, actorId) {
   });
   if (error) {
     const message = String(error.message || '');
+    if (message.includes('COMPLEX_HAS_PROJECT_HISTORY')) throw new AppError('ЖК связан с проектными договорами. Сначала требуется отдельный перенос истории.',409);
+    if (message.includes('MEMBERSHIP_HAS_ACCESS_HISTORY')) throw new AppError('У сотрудника есть история проектного доступа. Отключите доступ в отдельном блоке; удаление назначения запрещено.',409);
     if (message.includes('STALE_PROJECT')) throw new AppError('Проект изменён другим пользователем. Обновите список и повторите.', 409);
     if (message.includes('ADMIN_REQUIRED')) throw new AppError('Недостаточно прав для управления проектами', 403);
     if (message.includes('PROJECT_NOT_FOUND')) throw new AppError('Проект не найден', 404);

@@ -46,3 +46,11 @@ it('protects the read-only readiness audit from scoped actors, actor overrides a
  expect((await request(app).get(path).set('Cookie','jwt='+token()).set('Origin','https://foreign.example')).status).toBe(403);
  vi.stubEnv('TEST_SUPABASE_URL','https://yeslzrrcwgcqfxhgbrqk.supabase.co');expect((await auth(request(app).get(path))).status).toBe(503);
 });
+
+it('keeps setup admin-only, uses the verified actor and protects writes from foreign Origin',async()=>{
+ const path=`/api/company-projects/${project}/setup`;expect((await auth(request(app).get(path))).status).toBe(403);m.user.mockResolvedValue({id:10,is_active:1,role:'ADMIN',permissions:[]});m.rpc.mockResolvedValue({data:{revision:2,members:[]}});
+ expect((await auth(request(app).get(path))).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('read_company_project_setup',{p_actor:10,p_project:project});
+ const body={request_id:id,kind:'RESOURCE',project_revision:2,resource:'cash_desks',id:null,name:'Test desk'};
+ expect((await auth(request(app).post(path).send(body))).status).toBe(200);expect(m.rpc).toHaveBeenCalledWith('execute_company_project_admin',expect.objectContaining({p_actor:10,p_project:project,p_payload:expect.objectContaining({name:'Test desk'})}));
+ expect((await auth(request(app).post(path).send({...body,actor:30}))).status).toBe(400);expect((await request(app).post(path).set('Cookie','jwt='+token()).set('Origin','https://foreign.example').send(body)).status).toBe(403);
+});
