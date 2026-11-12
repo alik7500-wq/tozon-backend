@@ -40,7 +40,8 @@ export async function getEventById(req, res, next) {
 export async function previewEvent(req, res, next) {
   try {
     const { id } = req.params;
-    const previewData = await defaultSmsEventsService.previewEvent(id);
+    const { language } = req.body || {};
+    const previewData = await defaultSmsEventsService.previewEvent(id, language);
 
     return res.status(200).json({
       success: true,
@@ -76,13 +77,14 @@ export async function cancelEvent(req, res, next) {
 export async function confirmEvent(req, res, next) {
   try {
     const { id } = req.params;
-    const { previewHash } = req.body || {};
+    const { previewHash, language } = req.body || {};
     const userId = req.user?.id;
 
     const confirmResult = await defaultSmsEventsService.confirmEvent({
       id,
       userId,
-      previewHash
+      previewHash,
+      language
     });
 
     return res.status(200).json({
