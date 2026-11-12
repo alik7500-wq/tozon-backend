@@ -6,6 +6,14 @@ import {
   normalizeBlockCode,
   resolveContractDate
 } from '../modules/reports/apartmentSalesReport.service.js';
+import {
+  MarketingAttributionService,
+  resolveDealAttributionAndCommission,
+  SALES_SOURCES,
+  COMMISSION_STATUSES,
+  AUDIT_ACTION_SALES_SOURCE,
+  AUDIT_ACTION_COMMISSION,
+} from '../modules/reports/marketingAttribution.service.js';
 import { authorizeSectionRequest } from '../middleware/sectionAccess.js';
 
 function makeBuilding({ id, name, code, projectId, projectName, projectCode }) {
@@ -654,7 +662,7 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
     expect(report.totals.remainingDebtUsd).toBe(totalDebtFromBlocks);
   });
 
-  it('7. Генерация Excel (.xlsx) с 2 листами и всеми новыми финансовыми столбцами', async () => {
+  it('7. Генерация Excel (.xlsx) с 4 листами (Сводный отчёт, Детализация квартир, Источники продаж, Комиссии маркетологов)', async () => {
     const report = ApartmentSalesReportService.computeReport({
       deals: dataset,
       buildings: SAMPLE_BUILDINGS,
@@ -677,17 +685,25 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
 
     expect(workbook.worksheets.map((ws) => ws.name)).toEqual([
       'Сводный отчёт',
-      'Детализация квартир'
+      'Детализация квартир',
+      'Источники продаж',
+      'Комиссии маркетологов'
     ]);
 
     const summarySheet = workbook.getWorksheet('Сводный отчёт');
-    expect(summarySheet.getCell('A1').value).toBe('ОТЧЁТ О ПРОДАЖАХ КВАРТИР');
+    expect(summarySheet.getCell('A1').value).toBe('ОТЧЁТ О ПРОДАЖАХ КВАРТИР И КОМИССИЯХ МАРКЕТОЛОГОВ');
     expect(summarySheet.pageSetup.orientation).toBe('landscape');
 
     const detailsSheet = workbook.getWorksheet('Детализация квартир');
     expect(String(detailsSheet.getCell('A1').value)).toContain('ДЕТАЛИЗАЦИЯ ПРОДАННЫХ КВАРТИР');
     expect(detailsSheet.pageSetup.orientation).toBe('landscape');
     expect(detailsSheet.rowCount).toBe(9);
+
+    const sourcesSheet = workbook.getWorksheet('Источники продаж');
+    expect(String(sourcesSheet.getCell('A1').value)).toContain('АНАЛИТИКА ПО ИСТОЧНИКАМ ПРОДАЖ');
+
+    const commissionsSheet = workbook.getWorksheet('Комиссии маркетологов');
+    expect(String(commissionsSheet.getCell('A1').value)).toContain('КОНТРОЛЬ КОМИССИЙ МАРКЕТОЛОГОВ');
   });
 
   it('8. Валидация некорректного периода, нормализация и авторизация (sectionAccess)', async () => {
@@ -718,5 +734,488 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
     };
     await expect(authorizeSectionRequest(directorReq)).resolves.toBeUndefined();
     expect(directorReq.sectionAccessGranted).toBe(true);
+  });
+
+  it('9. [V3] Прямая продажа TOZON (DIRECT), Продажа через маркетолога (MARKETER) и Источник не определён (UNSPECIFIED)', () => {
+    const partnersMap = new Map([
+      [
+        501,
+        {
+          id: 501,
+          name: 'Agency Alpha',
+          isActive: true,
+          commissionType: 'PERCENT',
+          commissionRateBp: 300, // 3.00%
+          commissionRatePercent: 3,
+          commissionFixedMinor: 0,
+        },
+      ],
+      [
+        502,
+        {
+          id: 502,
+          name: 'Partner ZeroRate (Без согласованной ставки)',
+          isActive: true,
+          commissionType: 'NONE',
+          commissionRateBp: 0,
+          commissionRatePercent: 0,
+          commissionFixedMinor: 0,
+        },
+      ],
+    ]);
+
+    // 9a. Direct sale TOZON -> 0 USD commission
+    const directAttr = resolveDealAttributionAndCommission({
+      deal: { id: 1001, status: 'SIGNED', final_price_minor: 5000000 }, // $50,000
+      auditLogs: [
+        {
+          id: 1,
+          deal_id: 1001,
+          action: AUDIT_ACTION_SALES_SOURCE,
+          changes_json: { new_source: SALES_SOURCES.DIRECT },
+          created_at: '2026-11-05T10:00:00Z',
+        },
+      ],
+      partnersMap,
+    });
+    expect(directAttr.salesSource).toBe(SALES_SOURCES.DIRECT);
+    expect(directAttr.commission.calculatedCommissionUsd).toBe(0);
+    expect(directAttr.commission.approvedCommissionUsd).toBe(0);
+    expect(directAttr.commission.remainingCommissionUsd).toBe(0);
+    expect(directAttr.commission.status).toBe(COMMISSION_STATUSES.NOT_CALCULATED);
+
+    // 9b. Unspecified sale (historical contract) -> 0 USD commission, NOT auto-calculated
+    const unspecifiedAttr = resolveDealAttributionAndCommission({
+      deal: { id: 1002, status: 'SIGNED', final_price_minor: 6000000 }, // $60,000
+      auditLogs: [],
+      partnersMap,
+    });
+    expect(unspecifiedAttr.salesSource).toBe(SALES_SOURCES.UNSPECIFIED);
+    expect(unspecifiedAttr.commission.calculatedCommissionUsd).toBe(0);
+    expect(unspecifiedAttr.commission.status).toBe(COMMISSION_STATUSES.NOT_CALCULATED);
+
+    // 9c. Marketer sale with Partner #501 (3% of $50,000 = $1,500), approved and $500 paid -> $1,000 remaining
+    const marketerAttr = resolveDealAttributionAndCommission({
+      deal: { id: 1003, status: 'SIGNED', final_price_minor: 5000000 }, // $50,000
+      auditLogs: [
+        {
+          id: 2,
+          deal_id: 1003,
+          action: AUDIT_ACTION_SALES_SOURCE,
+          changes_json: {
+            old_source: SALES_SOURCES.UNSPECIFIED,
+            new_source: SALES_SOURCES.MARKETER,
+            new_partner_id: 501,
+            marketer_name: 'Алишер',
+          },
+          created_at: '2026-11-06T10:00:00Z',
+        },
+        {
+          id: 3,
+          deal_id: 1003,
+          action: AUDIT_ACTION_COMMISSION,
+          changes_json: {
+            action_type: 'APPROVE',
+            approved_amount_minor: 150000, // $1,500
+            status: COMMISSION_STATUSES.APPROVED,
+          },
+          created_at: '2026-11-07T10:00:00Z',
+        },
+        {
+          id: 4,
+          deal_id: 1003,
+          action: AUDIT_ACTION_COMMISSION,
+          changes_json: {
+            action_type: 'RECORD_PAYOUT',
+            paid_amount_minor: 50000, // $500
+            status: COMMISSION_STATUSES.PARTIALLY_PAID,
+          },
+          created_at: '2026-11-08T10:00:00Z',
+        },
+      ],
+      partnersMap,
+    });
+    expect(marketerAttr.salesSource).toBe(SALES_SOURCES.MARKETER);
+    expect(marketerAttr.marketingPartnerName).toBe('Agency Alpha');
+    expect(marketerAttr.marketerName).toBe('Алишер');
+    expect(marketerAttr.commission.commissionRatePercent).toBe(3);
+    expect(marketerAttr.commission.calculatedCommissionUsd).toBe(1500);
+    expect(marketerAttr.commission.approvedCommissionUsd).toBe(1500);
+    expect(marketerAttr.commission.paidCommissionUsd).toBe(500);
+    expect(marketerAttr.commission.remainingCommissionUsd).toBe(1000);
+    expect(marketerAttr.commission.status).toBe(COMMISSION_STATUSES.PARTIALLY_PAID);
+
+    // 9d. Marketer sale with Partner #502 (no agreed rate) -> 0 USD, NOT_CALCULATED (never invents a rate!)
+    const noRateAttr = resolveDealAttributionAndCommission({
+      deal: { id: 1004, status: 'SIGNED', final_price_minor: 4500000 },
+      auditLogs: [
+        {
+          id: 5,
+          deal_id: 1004,
+          action: AUDIT_ACTION_SALES_SOURCE,
+          changes_json: { new_source: SALES_SOURCES.MARKETER, new_partner_id: 502 },
+          created_at: '2026-11-06T12:00:00Z',
+        },
+      ],
+      partnersMap,
+    });
+    expect(noRateAttr.salesSource).toBe(SALES_SOURCES.MARKETER);
+    expect(noRateAttr.commission.calculatedCommissionUsd).toBe(0);
+    expect(noRateAttr.commission.status).toBe(COMMISSION_STATUSES.NOT_CALCULATED);
+  });
+
+  it('10. [V3] Расторжение договора (CANCELLED): отмена невыплаченной комиссии, сохранение выплаченной в истории и независимый источник при перепродаже квартиры', () => {
+    const partnersMap = new Map([
+      [501, { id: 501, name: 'Agency Alpha', isActive: true, commissionType: 'PERCENT', commissionRateBp: 400, commissionRatePercent: 4 }]
+    ]);
+
+    // Terminated deal where $2,000 was approved and $600 was already paid before termination
+    const terminatedAttr = resolveDealAttributionAndCommission({
+      deal: {
+        id: 2001,
+        unit_id: 777,
+        status: 'CANCELLED',
+        cancelled_at: '2026-11-12T10:00:00Z',
+        cancellation_reason: 'Расторжение по соглашению сторон',
+        final_price_minor: 5000000, // $50,000
+      },
+      auditLogs: [
+        {
+          id: 10,
+          deal_id: 2001,
+          action: AUDIT_ACTION_SALES_SOURCE,
+          changes_json: { new_source: SALES_SOURCES.MARKETER, new_partner_id: 501 },
+          created_at: '2026-11-01T10:00:00Z',
+        },
+        {
+          id: 11,
+          deal_id: 2001,
+          action: AUDIT_ACTION_COMMISSION,
+          changes_json: {
+            approved_amount_minor: 200000,
+            paid_amount_minor: 60000,
+            status: COMMISSION_STATUSES.PARTIALLY_PAID,
+          },
+          created_at: '2026-11-05T10:00:00Z',
+        },
+      ],
+      partnersMap,
+    });
+
+    // Unpaid commission ($1,400) is cancelled; remaining to pay = 0; paid ($600) is preserved!
+    expect(terminatedAttr.commission.status).toBe(COMMISSION_STATUSES.CANCELLED);
+    expect(terminatedAttr.commission.paidCommissionUsd).toBe(600);
+    expect(terminatedAttr.commission.remainingCommissionUsd).toBe(0);
+
+    // New deal on the same apartment (unit_id = 777) starts fresh without inheriting old marketer attribution
+    const resoldDealAttr = resolveDealAttributionAndCommission({
+      deal: { id: 2002, unit_id: 777, status: 'SIGNED', final_price_minor: 5200000 },
+      auditLogs: [], // new deal has its own empty log
+      partnersMap,
+    });
+    expect(resoldDealAttr.salesSource).toBe(SALES_SOURCES.UNSPECIFIED);
+    expect(resoldDealAttr.marketingPartnerId).toBeNull();
+    expect(resoldDealAttr.commission.calculatedCommissionUsd).toBe(0);
+  });
+
+  it('11. [V3] RBAC и аудит при изменении источника продажи и управлении комиссией', async () => {
+    const insertedAuditLogs = [];
+    const mockDeal = {
+      id: 3001,
+      unit_id: 101,
+      status: 'SIGNED',
+      final_price_minor: 4000000, // $40,000
+    };
+    const mockPartners = [
+      {
+        id: 501,
+        type: 'MARKETING_PARTNER',
+        name: 'Somon Marketing',
+        is_active: true,
+        code: JSON.stringify({
+          contact_person: 'Фарход',
+          phone: '+992927770011',
+          commission_type: 'PERCENT',
+          commission_rate_bp: 250, // 2.5%
+        }),
+      },
+    ];
+
+    const fakeDb = {
+      from(table) {
+        if (table === 'marketing_partners') {
+          return {
+            select: () => ({
+              order: async () => ({ data: null, error: { message: 'table does not exist' } }),
+              limit: async () => ({ data: null, error: { message: 'table does not exist' } }),
+              eq: () => ({ maybeSingle: async () => ({ data: null, error: { message: 'table does not exist' } }) }),
+            }),
+          };
+        }
+        if (table === 'dictionaries') {
+          return {
+            select: () => ({
+              eq: () => ({
+                order: () => ({
+                  order: () => ({
+                    eq: async () => ({ data: mockPartners, error: null }),
+                    then: (resolve) => resolve({ data: mockPartners, error: null }),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === 'users') {
+          return {
+            select: async () => ({
+              data: [
+                { id: 1, full_name: 'Admin User', role: 'ADMIN' },
+                { id: 2, full_name: 'Sales Manager', role: 'SALES_MANAGER' },
+              ],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'deals') {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: mockDeal, error: null }),
+              }),
+            }),
+          };
+        }
+        if (table === 'deal_audit_logs') {
+          return {
+            select: () => ({
+              in: () => ({
+                in: () => ({
+                  order: async () => ({ data: insertedAuditLogs, error: null }),
+                }),
+              }),
+            }),
+            insert: async (row) => {
+              const entry = {
+                id: insertedAuditLogs.length + 1,
+                ...row,
+                created_at: new Date().toISOString(),
+              };
+              insertedAuditLogs.push(entry);
+              return { data: entry, error: null };
+            },
+          };
+        }
+        return {};
+      },
+    };
+
+    const service = new MarketingAttributionService(() => fakeDb);
+
+    // 11a. Regular SALES_MANAGER cannot change source of a SIGNED contract
+    await expect(
+      service.updateDealSalesSource(
+        3001,
+        { salesSource: 'DIRECT', reason: 'Хочу поменять' },
+        { id: 2, role: 'SALES_MANAGER' }
+      )
+    ).rejects.toThrow(/только администратор/i);
+
+    // 11b. ADMIN cannot change source of a SIGNED contract without providing a reason
+    await expect(
+      service.updateDealSalesSource(
+        3001,
+        { salesSource: 'DIRECT', reason: '' },
+        { id: 1, role: 'ADMIN' }
+      )
+    ).rejects.toThrow(/обязательно укажите причину/i);
+
+    // 11c. Selecting MARKETER without marketingPartnerId fails validation
+    await expect(
+      service.updateDealSalesSource(
+        3001,
+        { salesSource: 'MARKETER', reason: 'Привлёк внешний партнёр' },
+        { id: 1, role: 'ADMIN' }
+      )
+    ).rejects.toThrow(/необходимо выбрать маркетингового партнёра/i);
+
+    // 11d. ADMIN sets MARKETER with partner 501 and valid reason -> logs audit & calculates 2.5% of $40,000 = $1,000
+    const updatedDeal = await service.updateDealSalesSource(
+      3001,
+      {
+        salesSource: 'MARKETER',
+        marketingPartnerId: 501,
+        marketerName: 'Фарход',
+        reason: 'Подтверждён акт сверки с партнёром Somon Marketing',
+      },
+      { id: 1, role: 'ADMIN', fullName: 'Admin User' }
+    );
+
+    expect(updatedDeal.sales_source).toBe('MARKETER');
+    expect(updatedDeal.marketing_partner_name).toBe('Somon Marketing');
+    expect(updatedDeal.commission.calculatedCommissionUsd).toBe(1000);
+    expect(updatedDeal.commission.status).toBe('CALCULATED');
+    expect(updatedDeal.source_history).toHaveLength(1);
+    expect(updatedDeal.source_history[0].oldSource).toBe('UNSPECIFIED');
+    expect(updatedDeal.source_history[0].newSource).toBe('MARKETER');
+    expect(updatedDeal.source_history[0].reason).toContain('Подтверждён акт сверки');
+
+    // 11e. SALES_MANAGER cannot approve or pay commission
+    await expect(
+      service.updateDealCommission(
+        3001,
+        { action: 'APPROVE' },
+        { id: 2, role: 'SALES_MANAGER' }
+      )
+    ).rejects.toThrow(/не может утверждать/i);
+
+    // 11f. DIRECTOR can submit for approval, ADMIN can approve, FINANCE_MANAGER can record payout
+    const afterSubmit = await service.updateDealCommission(
+      3001,
+      { action: 'SUBMIT_FOR_APPROVAL', notes: 'Проверено руководителем' },
+      { id: 3, role: 'DIRECTOR' }
+    );
+    expect(afterSubmit.commission.status).toBe('PENDING_APPROVAL');
+
+    const afterApprove = await service.updateDealCommission(
+      3001,
+      { action: 'APPROVE', notes: 'Утверждено к выплате' },
+      { id: 1, role: 'ADMIN' }
+    );
+    expect(afterApprove.commission.status).toBe('APPROVED');
+    expect(afterApprove.commission.approvedCommissionUsd).toBe(1000);
+    expect(afterApprove.commission.remainingCommissionUsd).toBe(1000);
+
+    const afterPayout = await service.updateDealCommission(
+      3001,
+      { action: 'RECORD_PAYOUT', payoutAmountUsd: 400, notes: 'Частичная выплата по РКО' },
+      { id: 4, role: 'FINANCE_MANAGER' }
+    );
+    expect(afterPayout.commission.status).toBe('PARTIALLY_PAID');
+    expect(afterPayout.commission.paidCommissionUsd).toBe(400);
+    expect(afterPayout.commission.remainingCommissionUsd).toBe(600);
+  });
+
+  it('12. [V3] Фильтрация отчёта по источнику продажи (salesSource) и маркетинговому партнёру (partnerId)', () => {
+    const partners = [
+      {
+        id: 701,
+        name: 'Media Дом',
+        isActive: true,
+        commissionType: 'PERCENT',
+        commissionRateBp: 300,
+        commissionRatePercent: 3,
+        commissionFixedMinor: 0,
+      },
+    ];
+
+    const v3Deals = [
+      makeDeal({
+        id: 401,
+        unitId: 501,
+        unitNumber: '501',
+        blockCode: 'А',
+        projectName: 'TOZON PLAZA',
+        dealDate: '2026-11-03',
+        contractNumber: 'V3-DIR-1',
+        finalPriceMinor: 4000000, // $40,000
+      }),
+      makeDeal({
+        id: 402,
+        unitId: 502,
+        unitNumber: '502',
+        blockCode: 'Б',
+        projectName: 'TOZON PLAZA',
+        dealDate: '2026-11-05',
+        contractNumber: 'V3-MKT-1',
+        finalPriceMinor: 5000000, // $50,000 -> 3% = $1,500
+      }),
+      makeDeal({
+        id: 403,
+        unitId: 503,
+        unitNumber: '503',
+        blockCode: 'В',
+        projectName: 'TOZON PLAZA-2',
+        dealDate: '2026-11-08',
+        contractNumber: 'V3-UNSPEC-1',
+        finalPriceMinor: 3000000, // $30,000
+      }),
+    ];
+
+    const auditLogs = [
+      {
+        id: 1,
+        deal_id: 401,
+        action: AUDIT_ACTION_SALES_SOURCE,
+        changes_json: { new_source: 'DIRECT' },
+        created_at: '2026-11-03T12:00:00Z',
+      },
+      {
+        id: 2,
+        deal_id: 402,
+        action: AUDIT_ACTION_SALES_SOURCE,
+        changes_json: { new_source: 'MARKETER', new_partner_id: 701 },
+        created_at: '2026-11-05T12:00:00Z',
+      },
+      {
+        id: 3,
+        deal_id: 402,
+        action: AUDIT_ACTION_COMMISSION,
+        changes_json: {
+          approved_amount_minor: 150000,
+          paid_amount_minor: 50000,
+          status: 'PARTIALLY_PAID',
+        },
+        created_at: '2026-11-06T12:00:00Z',
+      },
+    ];
+
+    // Full report (ALL sources)
+    const fullReport = ApartmentSalesReportService.computeReport({
+      deals: v3Deals,
+      buildings: SAMPLE_BUILDINGS,
+      marketingPartners: partners,
+      dealAuditLogs: auditLogs,
+      query: { startDate: '2026-11-01', endDate: '2026-11-13' },
+      now: fixedNow,
+    });
+
+    expect(fullReport.summary.totalSoldCount).toBe(3);
+    expect(fullReport.summary.directSoldCount).toBe(1);
+    expect(fullReport.summary.marketerSoldCount).toBe(1);
+    expect(fullReport.summary.unspecifiedSoldCount).toBe(1);
+    expect(fullReport.summary.directSalesAmountUsd).toBe(40000);
+    expect(fullReport.summary.marketerSalesAmountUsd).toBe(50000);
+    expect(fullReport.summary.unspecifiedSalesAmountUsd).toBe(30000);
+    expect(fullReport.summary.calculatedCommissionUsd).toBe(1500);
+    expect(fullReport.summary.approvedCommissionUsd).toBe(1500);
+    expect(fullReport.summary.paidCommissionUsd).toBe(500);
+    expect(fullReport.summary.remainingCommissionUsd).toBe(1000);
+
+    // Filter by DIRECT only
+    const directOnly = ApartmentSalesReportService.computeReport({
+      deals: v3Deals,
+      buildings: SAMPLE_BUILDINGS,
+      marketingPartners: partners,
+      dealAuditLogs: auditLogs,
+      query: { startDate: '2026-11-01', endDate: '2026-11-13', salesSource: 'DIRECT' },
+      now: fixedNow,
+    });
+    expect(directOnly.summary.totalSoldCount).toBe(1);
+    expect(directOnly.apartments[0].contractNumber).toBe('V3-DIR-1');
+    expect(directOnly.summary.calculatedCommissionUsd).toBe(0);
+
+    // Filter by partnerId = 701
+    const partnerOnly = ApartmentSalesReportService.computeReport({
+      deals: v3Deals,
+      buildings: SAMPLE_BUILDINGS,
+      marketingPartners: partners,
+      dealAuditLogs: auditLogs,
+      query: { startDate: '2026-11-01', endDate: '2026-11-13', partnerId: '701' },
+      now: fixedNow,
+    });
+    expect(partnerOnly.summary.totalSoldCount).toBe(1);
+    expect(partnerOnly.apartments[0].contractNumber).toBe('V3-MKT-1');
+    expect(partnerOnly.apartments[0].marketingPartnerName).toBe('Media Дом');
   });
 });

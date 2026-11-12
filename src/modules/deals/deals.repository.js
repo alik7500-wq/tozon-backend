@@ -8,6 +8,7 @@ import { allocatePaymentsFIFO } from '../../utils/fifoPaymentAllocation.js';
 import { matchSearchQuery } from '../../utils/searchUtils.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
 import { getDealRules } from '../document-settings/configuration.js';
+import { marketingAttributionService } from '../reports/marketingAttribution.service.js';
 
 export class DealsRepository {
   static async findAll(filters = {}) {
@@ -81,7 +82,7 @@ export class DealsRepository {
 
     const today = getBusinessDate();
 
-    return deals.map((deal) => {
+    const mappedDeals = deals.map((deal) => {
       // Flatten the structure to match the old SQL return shape
       const p = deal.units?.floors?.sections?.buildings?.projects || {};
       
@@ -149,6 +150,12 @@ export class DealsRepository {
         leads: undefined, units: undefined, users: undefined, payments: undefined, deal_payment_schedules: undefined
       };
     });
+
+    try {
+      return await marketingAttributionService.enrichDealsList(mappedDeals);
+    } catch {
+      return mappedDeals;
+    }
   }
 
   static async getStats() {
@@ -242,7 +249,7 @@ export class DealsRepository {
     const areaM2 = deal.units?.area_m2_x100 ? (deal.units.area_m2_x100 / 100) : 0;
     const computedDealPricePerM2 = deal.deal_price_per_m2_minor ?? (areaM2 > 0 ? Math.round(deal.final_price_minor / areaM2) : deal.units?.price_per_m2_minor);
 
-    return {
+    const baseDealObj = {
       ...deal,
       lead_name: deal.leads?.full_name,
       lead_phone: deal.leads?.phone,
@@ -289,6 +296,12 @@ export class DealsRepository {
       paid_percent,
       leads: undefined, units: undefined, users: undefined, deal_payment_schedules: undefined
     };
+
+    try {
+      return await marketingAttributionService.enrichDealWithAttribution(baseDealObj);
+    } catch {
+      return baseDealObj;
+    }
   }
 
   static async createDeal(data, responsibleUserId) {
@@ -422,10 +435,25 @@ export class DealsRepository {
       });
     }
 
+    const rawSalesSource = String(data.sales_source || data.salesSource || '').trim().toUpperCase();
+    if (['DIRECT', 'MARKETER'].includes(rawSalesSource)) {
+      await marketingAttributionService.updateDealSalesSource(
+        newDeal.id,
+        {
+          salesSource: rawSalesSource,
+          marketingPartnerId: data.marketing_partner_id ?? data.marketingPartnerId ?? null,
+          marketerName: data.marketer_name ?? data.marketerName ?? '',
+          reason: 'Указан при создании сделки'
+        },
+        { id: responsibleUserId, role: 'ADMIN' },
+        { isSigningFlow: true }
+      );
+    }
+
     return this.getDealById(newDeal.id);
   }
 
-  static async signDeal(id, userId) {
+  static async signDeal(id, userId, payload = {}) {
     const db = getDB();
     const now = new Date().toISOString();
     
@@ -433,6 +461,21 @@ export class DealsRepository {
     if (!deal) throw new AppError('Сделка не найдена', 404);
     if (deal.status === 'SIGNED') throw new AppError('Сделка уже подписана', 400);
     if (deal.status === 'CANCELLED') throw new AppError('Нельзя подписать отмененную сделку', 400);
+
+    const rawSalesSource = String(payload?.sales_source || payload?.salesSource || '').trim().toUpperCase();
+    if (['DIRECT', 'MARKETER'].includes(rawSalesSource)) {
+      await marketingAttributionService.updateDealSalesSource(
+        id,
+        {
+          salesSource: rawSalesSource,
+          marketingPartnerId: payload?.marketing_partner_id ?? payload?.marketingPartnerId ?? null,
+          marketerName: payload?.marketer_name ?? payload?.marketerName ?? '',
+          reason: 'Подтверждён при подписании договора'
+        },
+        { id: userId, role: 'ADMIN' },
+        { isSigningFlow: true }
+      );
+    }
 
     await db.from('deals').update({ status: 'SIGNED', signed_at: now, updated_at: now }).eq('id', id);
     await db.from('units').update({ status: 'SOLD', updated_at: now }).eq('id', deal.unit_id);

@@ -8,6 +8,7 @@ import { WeeklyDynamicsService } from './weeklyDynamics.service.js';
 import { BlockPlanFactService } from './blockPlanFact.service.js';
 import { SalesManagementExportService } from './salesManagementExport.service.js';
 import { ApartmentSalesReportService } from './apartmentSalesReport.service.js';
+import { marketingAttributionService } from './marketingAttribution.service.js';
 import { protect } from '../../middleware/auth.middleware.js';
 
 const router = Router();
@@ -220,6 +221,38 @@ router.get('/apartment-sales/export.xlsx', async (req, res, next) => {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="tozon-apartment-sales-${start}-${end}.xlsx"`);
     res.status(200).send(Buffer.from(buffer));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Marketing Partners Directory (V3 Apartment Sales & Commissions Control)
+router.get('/marketing-partners', async (req, res, next) => {
+  try {
+    const includeInactive = req.query.includeInactive === 'true' || req.query.includeInactive === '1';
+    const partners = await marketingAttributionService.getMarketingPartners({
+      includeInactive,
+      user: req.user,
+    });
+    res.status(200).json({ status: 'success', data: { partners } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/marketing-partners', async (req, res, next) => {
+  try {
+    const partner = await marketingAttributionService.createMarketingPartner(req.body, req.user);
+    res.status(201).json({ status: 'success', data: { partner } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch('/marketing-partners/:id', async (req, res, next) => {
+  try {
+    const partner = await marketingAttributionService.updateMarketingPartner(req.params.id, req.body, req.user);
+    res.status(200).json({ status: 'success', data: { partner } });
   } catch (error) {
     next(error);
   }

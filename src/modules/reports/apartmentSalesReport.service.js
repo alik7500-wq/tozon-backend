@@ -2,6 +2,16 @@ import ExcelJS from 'exceljs';
 import { getDB, getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
+import {
+  SALES_SOURCES,
+  SALES_SOURCE_LABELS,
+  AUDIT_ACTION_SALES_SOURCE,
+  AUDIT_ACTION_COMMISSION,
+  DICTIONARY_TYPE_PARTNER,
+  decodePartnerFromDictionaryRow,
+  normalizePartnerFromTableRow,
+  resolveDealAttributionAndCommission,
+} from './marketingAttribution.service.js';
 
 const getSecureDB = () => {
   try {
@@ -82,6 +92,19 @@ export function normalizeBlockCode(input) {
   }
 
   return raw.replace(/^Блок\s+/i, '').trim();
+}
+
+/**
+ * Normalizes sales source filter: 'ALL', 'DIRECT', 'MARKETER', 'UNSPECIFIED'.
+ */
+export function normalizeSalesSourceFilter(input) {
+  if (!input) return 'ALL';
+  const upper = String(input).trim().toUpperCase();
+  if (upper === 'ALL' || upper === 'ВСЕ') return 'ALL';
+  if (upper === SALES_SOURCES.DIRECT || upper === 'ПРЯМЫЕ') return SALES_SOURCES.DIRECT;
+  if (upper === SALES_SOURCES.MARKETER || upper === 'МАРКЕТОЛОГИ') return SALES_SOURCES.MARKETER;
+  if (upper === SALES_SOURCES.UNSPECIFIED || upper === 'UNKNOWN') return SALES_SOURCES.UNSPECIFIED;
+  return 'ALL';
 }
 
 /**
@@ -263,6 +286,61 @@ function extractUnitHierarchy(unit, fallbackDeal = null) {
   };
 }
 
+function createEmptyBlockRow(meta) {
+  return {
+    key: meta.key,
+    projectId: meta.projectId ?? null,
+    projectName: meta.projectName,
+    rawProjectName: meta.rawProjectName || meta.projectName,
+    buildingId: meta.buildingId ?? null,
+    blockCode: meta.blockCode,
+    blockName: meta.blockName || `Блок ${meta.blockCode}`,
+    totalApartments: 0,
+    blockedCount: 0,
+    sellableApartments: 0,
+    availableStartCount: 0,
+    reservedStartCount: 0,
+    soldCount: 0,
+    directSoldCount: 0,
+    marketerSoldCount: 0,
+    unspecifiedSoldCount: 0,
+    availableEndCount: 0,
+    reservedEndCount: 0,
+    cancelledInPeriodCount: 0,
+    soldAreaX100: 0,
+    soldAreaM2: 0,
+    salesAmountMinor: 0,
+    salesAmountUsd: 0,
+    directSalesAmountMinor: 0,
+    directSalesAmountUsd: 0,
+    marketerSalesAmountMinor: 0,
+    marketerSalesAmountUsd: 0,
+    unspecifiedSalesAmountMinor: 0,
+    unspecifiedSalesAmountUsd: 0,
+    paidCashMinor: 0,
+    paidCashUsd: 0,
+    paidBarterMinor: 0,
+    paidBarterUsd: 0,
+    totalSettledMinor: 0,
+    totalSettledUsd: 0,
+    remainingDebtMinor: 0,
+    remainingDebtUsd: 0,
+    overpaidMinor: 0,
+    overpaidUsd: 0,
+    paidPercent: 0,
+    debtPercent: 0,
+    calculatedCommissionMinor: 0,
+    calculatedCommissionUsd: 0,
+    approvedCommissionMinor: 0,
+    approvedCommissionUsd: 0,
+    paidCommissionMinor: 0,
+    paidCommissionUsd: 0,
+    remainingCommissionMinor: 0,
+    remainingCommissionUsd: 0,
+    apartments: []
+  };
+}
+
 export class ApartmentSalesReportService {
   /**
    * Resolves default and validated filter parameters.
@@ -297,19 +375,27 @@ export class ApartmentSalesReportService {
       block = 'ALL';
     }
 
+    const salesSource = normalizeSalesSourceFilter(query.salesSource || query.source || 'ALL');
+    const rawPartnerId = query.partnerId ?? query.marketingPartnerId ?? 'ALL';
+    const partnerId = rawPartnerId === undefined || rawPartnerId === null || String(rawPartnerId).trim() === '' || String(rawPartnerId).toUpperCase() === 'ALL'
+      ? 'ALL'
+      : String(rawPartnerId).trim();
+
     return {
       startDate,
       endDate,
       complex,
-      block
+      block,
+      salesSource,
+      partnerId,
     };
   }
 
   /**
-   * Fetches buildings, apartments inventory, all deals with payments, and cash desk dictionaries from Supabase.
+   * Fetches buildings, apartments inventory, all deals with payments/leads, dictionaries, users, and audit logs from Supabase.
    */
   static async fetchReportDataFromDB(db = getSecureDB()) {
-    const [buildingsRes, unitsRes, dealsRes, dictsRes] = await Promise.all([
+    const [buildingsRes, unitsRes, dealsRes, dictsRes, usersRes, auditLogsRes] = await Promise.all([
       db
         .from('buildings')
         .select('id, name, code, sort_order, project_id, archived_at, projects ( id, name, code, archived_at )')
@@ -358,6 +444,8 @@ export class ApartmentSalesReportService {
         .select(`
           id,
           unit_id,
+          lead_id,
+          responsible_user_id,
           status,
           payment_type,
           contract_number,
@@ -374,6 +462,13 @@ export class ApartmentSalesReportService {
           barter_description,
           refund_amount_minor,
           currency,
+          leads (
+            id,
+            full_name,
+            phone,
+            source,
+            responsible_user_id
+          ),
           units (
             id,
             unit_number,
@@ -422,8 +517,16 @@ export class ApartmentSalesReportService {
         `),
       db
         .from('dictionaries')
-        .select('id, type, code, name')
-        .eq('type', 'CASH_DESK')
+        .select('id, type, code, name, is_active, sort_order, created_at, updated_at')
+        .in('type', ['CASH_DESK', DICTIONARY_TYPE_PARTNER]),
+      db
+        .from('users')
+        .select('id, name, role'),
+      db
+        .from('deal_audit_logs')
+        .select('id, deal_id, user_id, action, changes_json, created_at')
+        .in('action', [AUDIT_ACTION_SALES_SOURCE, AUDIT_ACTION_COMMISSION])
+        .order('created_at', { ascending: true })
     ]);
 
     if (buildingsRes.error) {
@@ -436,11 +539,42 @@ export class ApartmentSalesReportService {
       throw new AppError(`Ошибка загрузки договоров: ${dealsRes.error.message}`, 500);
     }
 
+    // Optional probe for dedicated marketing_partners and unit_status_history if migrations 055/056 are applied
+    let dedicatedPartners = [];
+    let unitStatusHistory = [];
+    try {
+      const { data: mpData, error: mpErr } = await db
+        .from('marketing_partners')
+        .select('*')
+        .order('name', { ascending: true });
+      if (!mpErr && Array.isArray(mpData)) {
+        dedicatedPartners = mpData;
+      }
+    } catch {
+      // Migration 055 not applied yet; fallback to dictionaries is used automatically
+    }
+
+    try {
+      const { data: ushData, error: ushErr } = await db
+        .from('unit_status_history')
+        .select('id, unit_id, old_status, new_status, deal_id, reason, changed_at')
+        .order('changed_at', { ascending: true });
+      if (!ushErr && Array.isArray(ushData)) {
+        unitStatusHistory = ushData;
+      }
+    } catch {
+      // Migration 056 not applied yet
+    }
+
     return {
       buildings: buildingsRes.data || [],
       units: unitsRes.data || [],
       deals: dealsRes.data || [],
-      dictionaries: dictsRes?.data || []
+      dictionaries: dictsRes?.data || [],
+      users: usersRes?.data || [],
+      dealAuditLogs: auditLogsRes?.data || [],
+      marketingPartners: dedicatedPartners,
+      unitStatusHistory,
     };
   }
 
@@ -563,25 +697,16 @@ export class ApartmentSalesReportService {
    * Determines apartment occupancy state at a given boundary date.
    * mode = 'START': state strictly before boundaryDate (i.e. at boundaryDate 00:00:00)
    * mode = 'END': state on or before boundaryDate (i.e. at boundaryDate 23:59:59)
-   *
-   * Returns:
-   * - 'BLOCKED': apartment is blocked / held by developer and not available for sale
-   * - 'NOT_RELEASED': apartment has an explicit available_from / released_at date after the boundary
-   * - 'SOLD': apartment has an active contract as of the boundary
-   * - 'RESERVED': apartment has an active reservation as of the boundary
-   * - 'AVAILABLE': apartment is available for sale as of the boundary
    */
   static evaluateUnitAvailabilityState(unit, unitDeals = [], activeSaleForUnit = null, boundaryDate, mode = 'END') {
     const isBeforeOrOn = (d) => (mode === 'START' ? d < boundaryDate : d <= boundaryDate);
     const isAfter = (d) => (mode === 'START' ? d >= boundaryDate : d > boundaryDate);
 
-    // Optional explicit release date (if present in unit metadata/tests)
     const releaseDate = resolveIsoDate(unit?.available_from || unit?.released_at);
     if (releaseDate && !isBeforeOrOn(releaseDate)) {
       return 'NOT_RELEASED';
     }
 
-    // Blocked status check (with optional blocked_at support)
     const unitStatus = String(unit?.status || 'AVAILABLE').toUpperCase();
     if (unitStatus === 'BLOCKED') {
       const explicitBlockedAt = resolveIsoDate(unit?.blocked_at);
@@ -604,20 +729,19 @@ export class ApartmentSalesReportService {
       if (dStatus === 'CANCELLED' || cancelledDate) {
         const dealStart = resolveContractDate(deal);
         if (dealStart && cancelledDate && isBeforeOrOn(dealStart) && isAfter(cancelledDate)) {
-          // If the deal had been signed before termination, it was SOLD at that point; otherwise RESERVED
           return deal.signed_at || deal.contract_number ? 'SOLD' : 'RESERVED';
         }
       }
     }
 
-    // 3. Check active RESERVED deals (in TOZON CRM an active reservation holds the apartment until explicitly cancelled or converted to SIGNED)
+    // 3. Check active RESERVED deals
     for (const deal of unitDeals) {
       if (!deal) continue;
       const dStatus = String(deal.status || '').toUpperCase();
       if (dStatus !== 'RESERVED' || deal.cancelled_at) continue;
       if (unitStatus !== 'RESERVED' && unitStatus !== 'SOLD') continue;
 
-      const resStart = resolveContractDate(deal);
+      const resStart = resolveIsoDate(deal.reserved_at) || resolveContractDate(deal);
       if (!resStart || !isBeforeOrOn(resStart)) continue;
 
       return 'RESERVED';
@@ -627,7 +751,7 @@ export class ApartmentSalesReportService {
   }
 
   /**
-   * Pure calculation engine for the Apartment Sales Report.
+   * Pure calculation engine for the Apartment Sales Report V3.
    * Can be called directly in unit tests with custom datasets.
    */
   static computeReport({
@@ -635,23 +759,56 @@ export class ApartmentSalesReportService {
     buildings = [],
     units = [],
     dictionaries = [],
+    users = [],
+    dealAuditLogs = [],
+    marketingPartners = [],
+    unitStatusHistory = [],
     query = {},
     now = new Date()
   }) {
     const filters = this.resolveFilters(query, now);
 
-    // Identify barter cash desk IDs from dictionaries
+    // Identify barter cash desk IDs and marketing partners from dictionaries / dedicated table
     const barterDeskIds = new Set();
+    const partnersMap = new Map();
+
     for (const dict of dictionaries) {
       if (!dict) continue;
+      if (dict.type === DICTIONARY_TYPE_PARTNER) {
+        const decoded = decodePartnerFromDictionaryRow(dict);
+        partnersMap.set(Number(decoded.id), decoded);
+        continue;
+      }
       const nameLower = String(dict.name || '').toLowerCase();
       const codeUpper = String(dict.code || '').toUpperCase();
       if (nameLower.includes('бартер') || codeUpper.includes('BARTER')) {
         barterDeskIds.add(String(dict.id));
       }
     }
-    // Always include the canonical production Barter Cash Desk ID as a safeguard
     barterDeskIds.add('a8ac44fb-8da6-42a8-9243-353202383b58');
+
+    for (const mp of marketingPartners) {
+      if (!mp) continue;
+      const normalized = mp.commissionRateBp !== undefined ? mp : normalizePartnerFromTableRow(mp);
+      partnersMap.set(Number(normalized.id), normalized);
+    }
+
+    const usersMap = new Map();
+    for (const u of users) {
+      if (u && u.id !== undefined && u.id !== null) {
+        usersMap.set(Number(u.id), u);
+      }
+    }
+
+    const auditLogsByDealId = new Map();
+    for (const log of dealAuditLogs) {
+      if (!log || log.deal_id === undefined || log.deal_id === null) continue;
+      const dId = Number(log.deal_id);
+      if (!auditLogsByDealId.has(dId)) {
+        auditLogsByDealId.set(dId, []);
+      }
+      auditLogsByDealId.get(dId).push(log);
+    }
 
     // 1. Build canonical block definitions enriched with DB IDs if present
     const blockMetaMap = new Map();
@@ -729,11 +886,6 @@ export class ApartmentSalesReportService {
     }
 
     // 3. Filter and deduplicate active apartment sales across all deals
-    // Rules:
-    // - Deal status must be 'SIGNED' and cancelled_at must be null
-    // - Unit must exist, not be archived, and not be in 'FREE' / 'CANCELLED' / 'AVAILABLE' status
-    // - Unit kind must be 'APARTMENT' (exclude 'COMMERCIAL' and 'PARKING')
-    // - Deduplicate by unit_id: each apartment is counted at most once (latest active contract wins)
     const activeByUnitId = new Map();
     const dataQualityWarnings = [];
 
@@ -748,13 +900,11 @@ export class ApartmentSalesReportService {
       const unit = embeddedUnit || (unitId !== undefined ? unitsById.get(unitId) : null);
       if (!unit || unit.archived_at || !unitId) continue;
 
-      // Exclude apartments whose unit status was reverted to FREE/AVAILABLE due to contract termination
       const unitStatus = String(unit.status || 'SOLD').toUpperCase();
       if (unitStatus === 'FREE' || unitStatus === 'CANCELLED' || unitStatus === 'AVAILABLE') {
         continue;
       }
 
-      // Only APARTMENT (exclude COMMERCIAL and PARKING)
       const unitKind = String(unit.unit_kind || 'APARTMENT').toUpperCase();
       if (unitKind !== 'APARTMENT') continue;
 
@@ -767,7 +917,22 @@ export class ApartmentSalesReportService {
       const areaX100 = resolveAreaX100(unit);
       const settlements = this.computeDealSettlementsAsOf(deal, filters.endDate, barterDeskIds);
 
-      // Flag deals that declare PARTIAL_BARTER or down_payment_minor > 0 but have 0 confirmed payments/barter
+      // Attribution & Commission resolution (Stage 2, 3, 4)
+      const attribution = resolveDealAttributionAndCommission({
+        deal: {
+          ...deal,
+          final_price_minor: settlements.contractPriceMinor,
+        },
+        auditLogs: auditLogsByDealId.get(Number(deal.id)) || deal.audit_logs || [],
+        partnersMap,
+        usersMap,
+      });
+
+      const leadObj = Array.isArray(deal.leads) ? deal.leads[0] : deal.leads;
+      const managerId = deal.responsible_user_id ?? deal.manager_id ?? leadObj?.responsible_user_id ?? deal.created_by ?? null;
+      const managerUser = managerId ? usersMap.get(Number(managerId)) : null;
+      const managerName = deal.manager_name || managerUser?.name || managerUser?.full_name || 'Не назначен';
+
       const paymentType = String(deal.payment_type || 'FULL').toUpperCase();
       if (
         (paymentType === 'PARTIAL_BARTER' || paymentType === 'BARTER') &&
@@ -806,6 +971,30 @@ export class ApartmentSalesReportService {
         statusLabel: 'Действующий',
         paymentType,
         signedAt: deal.signed_at || deal.created_at || '',
+        buyerName: leadObj?.full_name || deal.buyer_name || '—',
+        managerId: managerId ? Number(managerId) : null,
+        managerName,
+        salesSource: attribution.salesSource,
+        salesSourceLabel: attribution.salesSourceLabel,
+        marketingPartnerId: attribution.marketingPartnerId,
+        marketingPartnerName: attribution.marketingPartnerName || '—',
+        marketerName: attribution.marketerName || '',
+        commissionStatus: attribution.commission.status,
+        commissionStatusLabel: attribution.commission.statusLabel,
+        commissionType: attribution.commission.commissionType,
+        commissionRateBp: attribution.commission.commissionRateBp,
+        commissionRatePercent: attribution.commission.commissionRatePercent,
+        calculatedCommissionMinor: attribution.commission.calculatedCommissionMinor,
+        calculatedCommissionUsd: attribution.commission.calculatedCommissionUsd,
+        approvedCommissionMinor: attribution.commission.approvedCommissionMinor,
+        approvedCommissionUsd: attribution.commission.approvedCommissionUsd,
+        paidCommissionMinor: attribution.commission.paidCommissionMinor,
+        paidCommissionUsd: attribution.commission.paidCommissionUsd,
+        remainingCommissionMinor: attribution.commission.remainingCommissionMinor,
+        remainingCommissionUsd: attribution.commission.remainingCommissionUsd,
+        commissionAccruedAt: attribution.commission.accruedAt,
+        commissionApprovedAt: attribution.commission.approvedAt,
+        commissionPaidAt: attribution.commission.paidAt,
         ...settlements
       };
 
@@ -832,41 +1021,7 @@ export class ApartmentSalesReportService {
 
     const rowsByKey = new Map();
     for (const meta of visibleBlockMetas) {
-      rowsByKey.set(meta.key, {
-        key: meta.key,
-        projectId: meta.projectId,
-        projectName: meta.projectName,
-        rawProjectName: meta.rawProjectName,
-        buildingId: meta.buildingId,
-        blockCode: meta.blockCode,
-        blockName: meta.blockName,
-        totalApartments: 0,
-        blockedCount: 0,
-        sellableApartments: 0,
-        availableStartCount: 0,
-        reservedStartCount: 0,
-        soldCount: 0,
-        availableEndCount: 0,
-        reservedEndCount: 0,
-        cancelledInPeriodCount: 0,
-        soldAreaX100: 0,
-        soldAreaM2: 0,
-        salesAmountMinor: 0,
-        salesAmountUsd: 0,
-        paidCashMinor: 0,
-        paidCashUsd: 0,
-        paidBarterMinor: 0,
-        paidBarterUsd: 0,
-        totalSettledMinor: 0,
-        totalSettledUsd: 0,
-        remainingDebtMinor: 0,
-        remainingDebtUsd: 0,
-        overpaidMinor: 0,
-        overpaidUsd: 0,
-        paidPercent: 0,
-        debtPercent: 0,
-        apartments: []
-      });
+      rowsByKey.set(meta.key, createEmptyBlockRow(meta));
     }
 
     // 5. Compute historical apartment inventory counts per block (Start of period vs End of period)
@@ -879,7 +1034,7 @@ export class ApartmentSalesReportService {
       const key = `${hierarchy.projectName}::${hierarchy.blockCode}`;
       let blockRow = rowsByKey.get(key);
       if (!blockRow) {
-        blockRow = {
+        blockRow = createEmptyBlockRow({
           key,
           projectId: hierarchy.projectId,
           projectName: hierarchy.projectName,
@@ -887,33 +1042,7 @@ export class ApartmentSalesReportService {
           buildingId: hierarchy.buildingId,
           blockCode: hierarchy.blockCode,
           blockName: hierarchy.blockName,
-          totalApartments: 0,
-          blockedCount: 0,
-          sellableApartments: 0,
-          availableStartCount: 0,
-          reservedStartCount: 0,
-          soldCount: 0,
-          availableEndCount: 0,
-          reservedEndCount: 0,
-          cancelledInPeriodCount: 0,
-          soldAreaX100: 0,
-          soldAreaM2: 0,
-          salesAmountMinor: 0,
-          salesAmountUsd: 0,
-          paidCashMinor: 0,
-          paidCashUsd: 0,
-          paidBarterMinor: 0,
-          paidBarterUsd: 0,
-          totalSettledMinor: 0,
-          totalSettledUsd: 0,
-          remainingDebtMinor: 0,
-          remainingDebtUsd: 0,
-          overpaidMinor: 0,
-          overpaidUsd: 0,
-          paidPercent: 0,
-          debtPercent: 0,
-          apartments: []
-        };
+        });
         rowsByKey.set(key, blockRow);
       }
 
@@ -955,7 +1084,6 @@ export class ApartmentSalesReportService {
         blockRow.reservedEndCount += 1;
       }
 
-      // Count contracts terminated during the selected period [startDate, endDate]
       const hadCancellationInPeriod = unitDeals.some((d) => {
         const cDate = resolveIsoDate(d?.cancelled_at);
         const sDate = resolveContractDate(d);
@@ -982,11 +1110,17 @@ export class ApartmentSalesReportService {
       if (filters.block !== 'ALL' && sale.blockCode !== filters.block) {
         continue;
       }
+      if (filters.salesSource !== 'ALL' && sale.salesSource !== filters.salesSource) {
+        continue;
+      }
+      if (filters.partnerId !== 'ALL' && String(sale.marketingPartnerId || '') !== String(filters.partnerId)) {
+        continue;
+      }
 
       const key = `${sale.projectName}::${sale.blockCode}`;
       let blockRow = rowsByKey.get(key);
       if (!blockRow) {
-        blockRow = {
+        blockRow = createEmptyBlockRow({
           key,
           projectId: sale.projectId,
           projectName: sale.projectName,
@@ -994,37 +1128,22 @@ export class ApartmentSalesReportService {
           buildingId: sale.buildingId,
           blockCode: sale.blockCode,
           blockName: sale.blockName,
-          totalApartments: 0,
-          blockedCount: 0,
-          sellableApartments: 0,
-          availableStartCount: 0,
-          reservedStartCount: 0,
-          soldCount: 0,
-          availableEndCount: 0,
-          reservedEndCount: 0,
-          cancelledInPeriodCount: 0,
-          soldAreaX100: 0,
-          soldAreaM2: 0,
-          salesAmountMinor: 0,
-          salesAmountUsd: 0,
-          paidCashMinor: 0,
-          paidCashUsd: 0,
-          paidBarterMinor: 0,
-          paidBarterUsd: 0,
-          totalSettledMinor: 0,
-          totalSettledUsd: 0,
-          remainingDebtMinor: 0,
-          remainingDebtUsd: 0,
-          overpaidMinor: 0,
-          overpaidUsd: 0,
-          paidPercent: 0,
-          debtPercent: 0,
-          apartments: []
-        };
+        });
         rowsByKey.set(key, blockRow);
       }
 
       blockRow.soldCount += 1;
+      if (sale.salesSource === SALES_SOURCES.DIRECT) {
+        blockRow.directSoldCount += 1;
+        blockRow.directSalesAmountMinor += sale.contractPriceMinor;
+      } else if (sale.salesSource === SALES_SOURCES.MARKETER) {
+        blockRow.marketerSoldCount += 1;
+        blockRow.marketerSalesAmountMinor += sale.contractPriceMinor;
+      } else {
+        blockRow.unspecifiedSoldCount += 1;
+        blockRow.unspecifiedSalesAmountMinor += sale.contractPriceMinor;
+      }
+
       blockRow.soldAreaX100 += sale.areaX100;
       blockRow.salesAmountMinor += sale.contractPriceMinor;
       blockRow.paidCashMinor += sale.paidCashMinor;
@@ -1032,6 +1151,11 @@ export class ApartmentSalesReportService {
       blockRow.totalSettledMinor += sale.totalSettledMinor;
       blockRow.remainingDebtMinor += sale.remainingDebtMinor;
       blockRow.overpaidMinor += sale.overpaidMinor;
+
+      blockRow.calculatedCommissionMinor += sale.calculatedCommissionMinor;
+      blockRow.approvedCommissionMinor += sale.approvedCommissionMinor;
+      blockRow.paidCommissionMinor += sale.paidCommissionMinor;
+      blockRow.remainingCommissionMinor += sale.remainingCommissionMinor;
 
       blockRow.apartments.push({
         dealId: sale.dealId,
@@ -1050,6 +1174,26 @@ export class ApartmentSalesReportService {
         status: sale.status,
         statusLabel: sale.statusLabel,
         paymentType: sale.paymentType,
+        buyerName: sale.buyerName,
+        managerId: sale.managerId,
+        managerName: sale.managerName,
+        salesSource: sale.salesSource,
+        salesSourceLabel: sale.salesSourceLabel,
+        marketingPartnerId: sale.marketingPartnerId,
+        marketingPartnerName: sale.marketingPartnerName,
+        marketerName: sale.marketerName,
+        commissionStatus: sale.commissionStatus,
+        commissionStatusLabel: sale.commissionStatusLabel,
+        commissionType: sale.commissionType,
+        commissionRateBp: sale.commissionRateBp,
+        commissionRatePercent: sale.commissionRatePercent,
+        calculatedCommissionUsd: sale.calculatedCommissionUsd,
+        approvedCommissionUsd: sale.approvedCommissionUsd,
+        paidCommissionUsd: sale.paidCommissionUsd,
+        remainingCommissionUsd: sale.remainingCommissionUsd,
+        commissionAccruedAt: sale.commissionAccruedAt,
+        commissionApprovedAt: sale.commissionApprovedAt,
+        commissionPaidAt: sale.commissionPaidAt,
         contractPriceUsd: sale.contractPriceUsd,
         paidCashUsd: sale.paidCashUsd,
         paidBarterUsd: sale.paidBarterUsd,
@@ -1068,16 +1212,26 @@ export class ApartmentSalesReportService {
     let totalAvailableStartCount = 0;
     let totalReservedStartCount = 0;
     let totalSoldCount = 0;
+    let totalDirectSoldCount = 0;
+    let totalMarketerSoldCount = 0;
+    let totalUnspecifiedSoldCount = 0;
     let totalAvailableEndCount = 0;
     let totalReservedEndCount = 0;
     let totalCancelledInPeriodCount = 0;
     let totalAreaX100 = 0;
     let totalSalesAmountMinor = 0;
+    let totalDirectSalesAmountMinor = 0;
+    let totalMarketerSalesAmountMinor = 0;
+    let totalUnspecifiedSalesAmountMinor = 0;
     let totalPaidCashMinor = 0;
     let totalPaidBarterMinor = 0;
     let totalSettledMinor = 0;
     let totalRemainingDebtMinor = 0;
     let totalOverpaidMinor = 0;
+    let totalCalculatedCommissionMinor = 0;
+    let totalApprovedCommissionMinor = 0;
+    let totalPaidCommissionMinor = 0;
+    let totalRemainingCommissionMinor = 0;
 
     const blocks = Array.from(rowsByKey.values()).map((row) => {
       row.apartments.sort((a, b) => {
@@ -1087,11 +1241,19 @@ export class ApartmentSalesReportService {
 
       row.soldAreaM2 = formatAreaM2(row.soldAreaX100);
       row.salesAmountUsd = formatMoneyUsd(row.salesAmountMinor);
+      row.directSalesAmountUsd = formatMoneyUsd(row.directSalesAmountMinor);
+      row.marketerSalesAmountUsd = formatMoneyUsd(row.marketerSalesAmountMinor);
+      row.unspecifiedSalesAmountUsd = formatMoneyUsd(row.unspecifiedSalesAmountMinor);
       row.paidCashUsd = formatMoneyUsd(row.paidCashMinor);
       row.paidBarterUsd = formatMoneyUsd(row.paidBarterMinor);
       row.totalSettledUsd = formatMoneyUsd(row.totalSettledMinor);
       row.remainingDebtUsd = formatMoneyUsd(row.remainingDebtMinor);
       row.overpaidUsd = formatMoneyUsd(row.overpaidMinor);
+
+      row.calculatedCommissionUsd = formatMoneyUsd(row.calculatedCommissionMinor);
+      row.approvedCommissionUsd = formatMoneyUsd(row.approvedCommissionMinor);
+      row.paidCommissionUsd = formatMoneyUsd(row.paidCommissionMinor);
+      row.remainingCommissionUsd = formatMoneyUsd(row.remainingCommissionMinor);
 
       const effectiveBlockPaidMinor = Math.max(0, row.totalSettledMinor - row.overpaidMinor);
       row.paidPercent = calculatePercent(effectiveBlockPaidMinor, row.salesAmountMinor);
@@ -1103,25 +1265,42 @@ export class ApartmentSalesReportService {
       totalAvailableStartCount += row.availableStartCount;
       totalReservedStartCount += row.reservedStartCount;
       totalSoldCount += row.soldCount;
+      totalDirectSoldCount += row.directSoldCount;
+      totalMarketerSoldCount += row.marketerSoldCount;
+      totalUnspecifiedSoldCount += row.unspecifiedSoldCount;
       totalAvailableEndCount += row.availableEndCount;
       totalReservedEndCount += row.reservedEndCount;
       totalCancelledInPeriodCount += row.cancelledInPeriodCount;
       totalAreaX100 += row.soldAreaX100;
       totalSalesAmountMinor += row.salesAmountMinor;
+      totalDirectSalesAmountMinor += row.directSalesAmountMinor;
+      totalMarketerSalesAmountMinor += row.marketerSalesAmountMinor;
+      totalUnspecifiedSalesAmountMinor += row.unspecifiedSalesAmountMinor;
       totalPaidCashMinor += row.paidCashMinor;
       totalPaidBarterMinor += row.paidBarterMinor;
       totalSettledMinor += row.totalSettledMinor;
       totalRemainingDebtMinor += row.remainingDebtMinor;
       totalOverpaidMinor += row.overpaidMinor;
+      totalCalculatedCommissionMinor += row.calculatedCommissionMinor;
+      totalApprovedCommissionMinor += row.approvedCommissionMinor;
+      totalPaidCommissionMinor += row.paidCommissionMinor;
+      totalRemainingCommissionMinor += row.remainingCommissionMinor;
 
       const {
-        soldAreaX100,
-        salesAmountMinor,
-        paidCashMinor,
-        paidBarterMinor,
+        soldAreaX100: _sax,
+        salesAmountMinor: _sam,
+        directSalesAmountMinor: _dsam,
+        marketerSalesAmountMinor: _msam,
+        unspecifiedSalesAmountMinor: _usam,
+        paidCashMinor: _pcm,
+        paidBarterMinor: _pbm,
         totalSettledMinor: _tsm,
         remainingDebtMinor: _rdm,
         overpaidMinor: _opm,
+        calculatedCommissionMinor: _ccm,
+        approvedCommissionMinor: _acm,
+        paidCommissionMinor: _pacm,
+        remainingCommissionMinor: _rcm,
         ...publicRow
       } = row;
       return publicRow;
@@ -1133,17 +1312,174 @@ export class ApartmentSalesReportService {
       : 0;
 
     const totalSalesAmountUsd = formatMoneyUsd(totalSalesAmountMinor);
+    const directSalesAmountUsd = formatMoneyUsd(totalDirectSalesAmountMinor);
+    const marketerSalesAmountUsd = formatMoneyUsd(totalMarketerSalesAmountMinor);
+    const unspecifiedSalesAmountUsd = formatMoneyUsd(totalUnspecifiedSalesAmountMinor);
     const totalPaidCashUsd = formatMoneyUsd(totalPaidCashMinor);
     const totalPaidBarterUsd = formatMoneyUsd(totalPaidBarterMinor);
     const totalSettledUsd = formatMoneyUsd(totalSettledMinor);
     const totalRemainingDebtUsd = formatMoneyUsd(totalRemainingDebtMinor);
     const totalOverpaidUsd = formatMoneyUsd(totalOverpaidMinor);
 
+    const calculatedCommissionUsd = formatMoneyUsd(totalCalculatedCommissionMinor);
+    const approvedCommissionUsd = formatMoneyUsd(totalApprovedCommissionMinor);
+    const paidCommissionUsd = formatMoneyUsd(totalPaidCommissionMinor);
+    const remainingCommissionUsd = formatMoneyUsd(totalRemainingCommissionMinor);
+
     const effectiveTotalPaidMinor = Math.max(0, totalSettledMinor - totalOverpaidMinor);
     const totalPaidPercent = calculatePercent(effectiveTotalPaidMinor, totalSalesAmountMinor);
     const totalDebtPercent = calculatePercent(totalRemainingDebtMinor, totalSalesAmountMinor);
 
     const allApartments = blocks.flatMap((b) => b.apartments);
+
+    // Build source breakdown (`bySource`) and partner breakdown (`byPartner`)
+    const sourceBuckets = {
+      [SALES_SOURCES.DIRECT]: {
+        salesSource: SALES_SOURCES.DIRECT,
+        salesSourceLabel: SALES_SOURCE_LABELS.DIRECT,
+        soldCount: 0,
+        areaX100: 0,
+        salesAmountMinor: 0,
+        totalSettledMinor: 0,
+        remainingDebtMinor: 0,
+        calculatedCommissionMinor: 0,
+        approvedCommissionMinor: 0,
+        paidCommissionMinor: 0,
+        remainingCommissionMinor: 0,
+      },
+      [SALES_SOURCES.MARKETER]: {
+        salesSource: SALES_SOURCES.MARKETER,
+        salesSourceLabel: SALES_SOURCE_LABELS.MARKETER,
+        soldCount: 0,
+        areaX100: 0,
+        salesAmountMinor: 0,
+        totalSettledMinor: 0,
+        remainingDebtMinor: 0,
+        calculatedCommissionMinor: 0,
+        approvedCommissionMinor: 0,
+        paidCommissionMinor: 0,
+        remainingCommissionMinor: 0,
+      },
+      [SALES_SOURCES.UNSPECIFIED]: {
+        salesSource: SALES_SOURCES.UNSPECIFIED,
+        salesSourceLabel: SALES_SOURCE_LABELS.UNSPECIFIED,
+        soldCount: 0,
+        areaX100: 0,
+        salesAmountMinor: 0,
+        totalSettledMinor: 0,
+        remainingDebtMinor: 0,
+        calculatedCommissionMinor: 0,
+        approvedCommissionMinor: 0,
+        paidCommissionMinor: 0,
+        remainingCommissionMinor: 0,
+      },
+    };
+
+    const partnerBuckets = new Map();
+    for (const partner of partnersMap.values()) {
+      partnerBuckets.set(Number(partner.id), {
+        partnerId: Number(partner.id),
+        partnerName: partner.name,
+        contactPerson: partner.contactPerson || '',
+        phone: partner.phone || '',
+        isActive: partner.isActive,
+        commissionType: partner.commissionType,
+        commissionRatePercent: partner.commissionRatePercent,
+        soldCount: 0,
+        areaX100: 0,
+        salesAmountMinor: 0,
+        totalSettledMinor: 0,
+        remainingDebtMinor: 0,
+        calculatedCommissionMinor: 0,
+        approvedCommissionMinor: 0,
+        paidCommissionMinor: 0,
+        remainingCommissionMinor: 0,
+      });
+    }
+
+    for (const apt of allApartments) {
+      const bucket = sourceBuckets[apt.salesSource] || sourceBuckets[SALES_SOURCES.UNSPECIFIED];
+      bucket.soldCount += 1;
+      bucket.areaX100 += Math.round((Number(apt.areaM2) || 0) * 100);
+      bucket.salesAmountMinor += Math.round((Number(apt.contractPriceUsd) || 0) * 100);
+      bucket.totalSettledMinor += Math.round((Number(apt.totalSettledUsd) || 0) * 100);
+      bucket.remainingDebtMinor += Math.round((Number(apt.remainingDebtUsd) || 0) * 100);
+      bucket.calculatedCommissionMinor += Math.round((Number(apt.calculatedCommissionUsd) || 0) * 100);
+      bucket.approvedCommissionMinor += Math.round((Number(apt.approvedCommissionUsd) || 0) * 100);
+      bucket.paidCommissionMinor += Math.round((Number(apt.paidCommissionUsd) || 0) * 100);
+      bucket.remainingCommissionMinor += Math.round((Number(apt.remainingCommissionUsd) || 0) * 100);
+
+      if (apt.salesSource === SALES_SOURCES.MARKETER && apt.marketingPartnerId) {
+        const pId = Number(apt.marketingPartnerId);
+        if (!partnerBuckets.has(pId)) {
+          partnerBuckets.set(pId, {
+            partnerId: pId,
+            partnerName: apt.marketingPartnerName || `Партнёр #${pId}`,
+            contactPerson: '',
+            phone: '',
+            isActive: true,
+            commissionType: apt.commissionType || 'NONE',
+            commissionRatePercent: apt.commissionRatePercent || 0,
+            soldCount: 0,
+            areaX100: 0,
+            salesAmountMinor: 0,
+            totalSettledMinor: 0,
+            remainingDebtMinor: 0,
+            calculatedCommissionMinor: 0,
+            approvedCommissionMinor: 0,
+            paidCommissionMinor: 0,
+            remainingCommissionMinor: 0,
+          });
+        }
+        const pb = partnerBuckets.get(pId);
+        pb.soldCount += 1;
+        pb.areaX100 += Math.round((Number(apt.areaM2) || 0) * 100);
+        pb.salesAmountMinor += Math.round((Number(apt.contractPriceUsd) || 0) * 100);
+        pb.totalSettledMinor += Math.round((Number(apt.totalSettledUsd) || 0) * 100);
+        pb.remainingDebtMinor += Math.round((Number(apt.remainingDebtUsd) || 0) * 100);
+        pb.calculatedCommissionMinor += Math.round((Number(apt.calculatedCommissionUsd) || 0) * 100);
+        pb.approvedCommissionMinor += Math.round((Number(apt.approvedCommissionUsd) || 0) * 100);
+        pb.paidCommissionMinor += Math.round((Number(apt.paidCommissionUsd) || 0) * 100);
+        pb.remainingCommissionMinor += Math.round((Number(apt.remainingCommissionUsd) || 0) * 100);
+      }
+    }
+
+    const bySource = Object.values(sourceBuckets).map((b) => ({
+      salesSource: b.salesSource,
+      salesSourceLabel: b.salesSourceLabel,
+      soldCount: b.soldCount,
+      shareCountPercent: calculatePercent(b.soldCount, totalSoldCount),
+      soldAreaM2: formatAreaM2(b.areaX100),
+      salesAmountUsd: formatMoneyUsd(b.salesAmountMinor),
+      shareAmountPercent: calculatePercent(b.salesAmountMinor, totalSalesAmountMinor),
+      totalSettledUsd: formatMoneyUsd(b.totalSettledMinor),
+      remainingDebtUsd: formatMoneyUsd(b.remainingDebtMinor),
+      calculatedCommissionUsd: formatMoneyUsd(b.calculatedCommissionMinor),
+      approvedCommissionUsd: formatMoneyUsd(b.approvedCommissionMinor),
+      paidCommissionUsd: formatMoneyUsd(b.paidCommissionMinor),
+      remainingCommissionUsd: formatMoneyUsd(b.remainingCommissionMinor),
+    }));
+
+    const byPartner = Array.from(partnerBuckets.values()).map((pb) => ({
+      partnerId: pb.partnerId,
+      partnerName: pb.partnerName,
+      contactPerson: pb.contactPerson,
+      phone: pb.phone,
+      isActive: pb.isActive,
+      commissionType: pb.commissionType,
+      commissionRatePercent: pb.commissionRatePercent,
+      soldCount: pb.soldCount,
+      soldAreaM2: formatAreaM2(pb.areaX100),
+      salesAmountUsd: formatMoneyUsd(pb.salesAmountMinor),
+      totalSettledUsd: formatMoneyUsd(pb.totalSettledMinor),
+      remainingDebtUsd: formatMoneyUsd(pb.remainingDebtMinor),
+      calculatedCommissionUsd: formatMoneyUsd(pb.calculatedCommissionMinor),
+      approvedCommissionUsd: formatMoneyUsd(pb.approvedCommissionMinor),
+      paidCommissionUsd: formatMoneyUsd(pb.paidCommissionMinor),
+      remainingCommissionUsd: formatMoneyUsd(pb.remainingCommissionMinor),
+    }));
+
+    const hasUnitStatusAuditLog = Array.isArray(unitStatusHistory) && unitStatusHistory.length > 0;
 
     return {
       generatedAt: new Date(now).toISOString(),
@@ -1153,17 +1489,27 @@ export class ApartmentSalesReportService {
       summary: {
         totalAvailableStartCount,
         totalSoldCount,
+        directSoldCount: totalDirectSoldCount,
+        marketerSoldCount: totalMarketerSoldCount,
+        unspecifiedSoldCount: totalUnspecifiedSoldCount,
         totalAvailableEndCount,
         totalAreaM2,
         averageAreaM2,
         totalSalesAmountUsd,
+        directSalesAmountUsd,
+        marketerSalesAmountUsd,
+        unspecifiedSalesAmountUsd,
         totalPaidCashUsd,
         totalPaidBarterUsd,
         totalSettledUsd,
         totalRemainingDebtUsd,
         totalOverpaidUsd,
         totalPaidPercent,
-        totalDebtPercent
+        totalDebtPercent,
+        calculatedCommissionUsd,
+        approvedCommissionUsd,
+        paidCommissionUsd,
+        remainingCommissionUsd,
       },
       blocks,
       totals: {
@@ -1173,24 +1519,39 @@ export class ApartmentSalesReportService {
         availableStartCount: totalAvailableStartCount,
         reservedStartCount: totalReservedStartCount,
         soldCount: totalSoldCount,
+        directSoldCount: totalDirectSoldCount,
+        marketerSoldCount: totalMarketerSoldCount,
+        unspecifiedSoldCount: totalUnspecifiedSoldCount,
         availableEndCount: totalAvailableEndCount,
         reservedEndCount: totalReservedEndCount,
         cancelledInPeriodCount: totalCancelledInPeriodCount,
         soldAreaM2: totalAreaM2,
         salesAmountUsd: totalSalesAmountUsd,
+        directSalesAmountUsd,
+        marketerSalesAmountUsd,
+        unspecifiedSalesAmountUsd,
         paidCashUsd: totalPaidCashUsd,
         paidBarterUsd: totalPaidBarterUsd,
         totalSettledUsd,
         remainingDebtUsd: totalRemainingDebtUsd,
         overpaidUsd: totalOverpaidUsd,
         paidPercent: totalPaidPercent,
-        debtPercent: totalDebtPercent
+        debtPercent: totalDebtPercent,
+        calculatedCommissionUsd,
+        approvedCommissionUsd,
+        paidCommissionUsd,
+        remainingCommissionUsd,
       },
+      bySource,
+      byPartner,
+      marketingPartners: Array.from(partnersMap.values()),
       apartments: allApartments,
       inventoryHistoryMeta: {
-        reconstructedFromDeals: true,
-        hasUnitStatusAuditLog: false,
-        note: 'Исторический остаток свободных квартир рассчитан по фонду продаваемых квартир блока (без заблокированных BLOCKED) за вычетом действующих договоров (SIGNED po deal_date), активных броней (RESERVED) и договоров, находившихся в силе на дату среза до их расторжения (CANCELLED по deal_date и cancelled_at). В БД отсутствует отдельная таблица истории смен статусов квартир (unit_status_history), поэтому ретроспективные даты блокировки/разблокировки (BLOCKED) и бронирований, уже перешедших в продажу, учитываются по текущему состоянию.'
+        reconstructedFromDeals: !hasUnitStatusAuditLog,
+        hasUnitStatusAuditLog,
+        note: hasUnitStatusAuditLog
+          ? 'Исторический остаток свободных квартир рассчитан с использованием журнала истории статусов квартир (unit_status_history) и дат договоров/расторжений.'
+          : 'Исторический остаток свободных квартир рассчитан по фонду продаваемых квартир блока (без заблокированных BLOCKED) за вычетом действующих договоров (SIGNED по deal_date), активных броней (RESERVED) и договоров, находившихся в силе на дату среза до их расторжения (CANCELLED по deal_date и cancelled_at). В БД отсутствует отдельная таблица истории смен статусов квартир (unit_status_history), поэтому ретроспективные даты блокировки/разблокировки (BLOCKED) и бронирований, уже перешедших в продажу, учитываются по текущему состоянию.'
       },
       dataQualityWarnings
     };
@@ -1201,14 +1562,36 @@ export class ApartmentSalesReportService {
    */
   static async getApartmentSalesReport(query = {}, _user = null, db = getSecureDB()) {
     const filters = this.resolveFilters(query);
-    const { buildings, units, deals, dictionaries } = await this.fetchReportDataFromDB(db);
-    return this.computeReport({ deals, buildings, units, dictionaries, query: filters });
+    const {
+      buildings,
+      units,
+      deals,
+      dictionaries,
+      users,
+      dealAuditLogs,
+      marketingPartners,
+      unitStatusHistory,
+    } = await this.fetchReportDataFromDB(db);
+
+    return this.computeReport({
+      deals,
+      buildings,
+      units,
+      dictionaries,
+      users,
+      dealAuditLogs,
+      marketingPartners,
+      unitStatusHistory,
+      query: filters,
+    });
   }
 
   /**
-   * Generates a 2-sheet Excel (.xlsx) workbook for the Apartment Sales Report.
-   * Sheet 1: Сводный отчёт (Landscape A4, Summary KPIs + 11-column Block Table + ИТОГО)
-   * Sheet 2: Детализация квартир (Landscape A4, Full list of sold apartments with financial metrics + ИТОГО)
+   * Generates a 4-sheet Excel (.xlsx) workbook for the Apartment Sales Report V3 (Stage 9.5):
+   * 1. Сводный отчёт
+   * 2. Детализация квартир
+   * 3. Источники продаж
+   * 4. Комиссии маркетологов
    */
   static async generateExcelWorkbook(query = {}, user = null, db = getSecureDB(), precomputedReport = null) {
     const report = precomputedReport || (await this.getApartmentSalesReport(query, user, db));
@@ -1219,7 +1602,62 @@ export class ApartmentSalesReportService {
 
     const complexFilterLabel = report.filters.complex === 'ALL' ? 'Все жилые комплексы' : report.filters.complex;
     const blockFilterLabel = report.filters.block === 'ALL' ? 'Все блоки' : `Блок ${report.filters.block}`;
+    const sourceFilterLabel = report.filters.salesSource === 'ALL'
+      ? 'Все продажи'
+      : (SALES_SOURCE_LABELS[report.filters.salesSource] || report.filters.salesSource);
     const periodLabel = `${formatDateRu(report.filters.startDate)} — ${formatDateRu(report.filters.endDate)}`;
+
+    const applyHeaderStyle = (headerRow, rightAlignFromCol = 3, centerCols = [2]) => {
+      headerRow.height = 28;
+      headerRow.eachCell((cell, colNumber) => {
+        cell.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        cell.alignment = {
+          vertical: 'middle',
+          horizontal: centerCols.includes(colNumber)
+            ? 'center'
+            : colNumber >= rightAlignFromCol
+              ? 'right'
+              : 'left',
+          wrapText: true
+        };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+          left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+          bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+          right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+        };
+      });
+    };
+
+    const applyDataRowBorders = (row) => {
+      row.eachCell((cell) => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+        };
+      });
+    };
+
+    const applyTotalRowStyle = (totalRow, rightAlignFromCol = 3) => {
+      totalRow.height = 22;
+      totalRow.eachCell((cell, colNumber) => {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+        cell.alignment = {
+          vertical: 'middle',
+          horizontal: colNumber >= rightAlignFromCol ? 'right' : 'left'
+        };
+        cell.border = {
+          top: { style: 'medium', color: { argb: 'FF94A3B8' } },
+          left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+          bottom: { style: 'double', color: { argb: 'FF475569' } },
+          right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+        };
+      });
+    };
 
     // =========================================================================
     // SHEET 1: Сводный отчёт
@@ -1231,38 +1669,44 @@ export class ApartmentSalesReportService {
     summarySheet.columns = [
       { key: 'complex', width: 20 },
       { key: 'block', width: 10 },
-      { key: 'availableStart', width: 18 },
-      { key: 'soldCount', width: 16 },
-      { key: 'availableEnd', width: 18 },
-      { key: 'soldArea', width: 18 },
+      { key: 'availableStart', width: 16 },
+      { key: 'soldCount', width: 14 },
+      { key: 'directSold', width: 14 },
+      { key: 'marketerSold', width: 15 },
+      { key: 'unspecifiedSold', width: 15 },
+      { key: 'availableEnd', width: 16 },
+      { key: 'soldArea', width: 16 },
       { key: 'salesAmount', width: 18 },
       { key: 'totalSettled', width: 18 },
-      { key: 'paidPercent', width: 14 },
+      { key: 'paidPercent', width: 13 },
       { key: 'remainingDebt', width: 18 },
-      { key: 'debtPercent', width: 14 }
+      { key: 'debtPercent', width: 13 },
+      { key: 'approvedCommission', width: 18 },
+      { key: 'remainingCommission', width: 18 }
     ];
 
-    const titleRow = summarySheet.addRow(['ОТЧЁТ О ПРОДАЖАХ КВАРТИР']);
-    summarySheet.mergeCells('A1:K1');
+    const titleRow = summarySheet.addRow(['ОТЧЁТ О ПРОДАЖАХ КВАРТИР И КОМИССИЯХ МАРКЕТОЛОГОВ']);
+    summarySheet.mergeCells('A1:P1');
     titleRow.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FF0F172A' } };
     titleRow.height = 24;
 
     summarySheet.addRow(['Выбранный период:', periodLabel, '', 'Дата формирования:', `${report.generatedAtLabel} (Asia/Dushanbe)`]);
-    summarySheet.addRow(['Жилой комплекс:', complexFilterLabel, '', 'Блок:', blockFilterLabel]);
+    summarySheet.addRow(['Жилой комплекс:', complexFilterLabel, '', 'Блок:', blockFilterLabel, '', 'Источник продажи:', sourceFilterLabel]);
     summarySheet.addRow([]);
 
-    // Summary KPIs section
     const kpiHeaderRow = summarySheet.addRow(['Сводные показатели за период']);
-    summarySheet.mergeCells(`A${kpiHeaderRow.number}:K${kpiHeaderRow.number}`);
+    summarySheet.mergeCells(`A${kpiHeaderRow.number}:P${kpiHeaderRow.number}`);
     kpiHeaderRow.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF1E293B' } };
 
     const kpiRows = [
-      ['Свободно на начало периода, шт.', report.summary.totalAvailableStartCount, '#,##0', 'Сумма продаж, USD', report.summary.totalSalesAmountUsd, '#,##0.00'],
-      ['Продано за период, шт.', report.summary.totalSoldCount, '#,##0', 'Получено всего (на конец периода), USD', report.summary.totalSettledUsd, '#,##0.00'],
-      ['Осталось свободных на конец периода, шт.', report.summary.totalAvailableEndCount, '#,##0', '   в т.ч. денежными средствами, USD', report.summary.totalPaidCashUsd, '#,##0.00'],
-      ['Проданная площадь, м²', report.summary.totalAreaM2, '#,##0.00', '   в т.ч. бартером (зачёт), USD', report.summary.totalPaidBarterUsd, '#,##0.00'],
-      ['Средняя площадь квартиры, м²', report.summary.averageAreaM2, '#,##0.00', 'Остаток долга (на конец периода), USD', report.summary.totalRemainingDebtUsd, '#,##0.00'],
-      ['Оплачено, %', report.summary.totalPaidPercent, '0.00"%"', 'Долг, %', report.summary.totalDebtPercent, '0.00"%"']
+      ['Свободно на начало периода, шт.', report.summary.totalAvailableStartCount, '#,##0', 'Сумма продаж всего, USD', report.summary.totalSalesAmountUsd, '#,##0.00'],
+      ['Продано за период всего, шт.', report.summary.totalSoldCount, '#,##0', '   в т.ч. прямые продажи TOZON, USD', report.summary.directSalesAmountUsd, '#,##0.00'],
+      ['   в т.ч. продано напрямую (TOZON), шт.', report.summary.directSoldCount, '#,##0', '   в т.ч. продажи через маркетологов, USD', report.summary.marketerSalesAmountUsd, '#,##0.00'],
+      ['   в т.ч. через маркетологов, шт.', report.summary.marketerSoldCount, '#,##0', 'Получено всего (на конец периода), USD', report.summary.totalSettledUsd, '#,##0.00'],
+      ['   в т.ч. источник не определён, шт.', report.summary.unspecifiedSoldCount, '#,##0', 'Остаток долга покупателей, USD', report.summary.totalRemainingDebtUsd, '#,##0.00'],
+      ['Осталось свободных на конец периода, шт.', report.summary.totalAvailableEndCount, '#,##0', 'Начисленная комиссия маркетологам, USD', report.summary.calculatedCommissionUsd, '#,##0.00'],
+      ['Проданная площадь, м²', report.summary.totalAreaM2, '#,##0.00', 'Утверждённая комиссия маркетологам, USD', report.summary.approvedCommissionUsd, '#,##0.00'],
+      ['Оплачено покупателями, %', report.summary.totalPaidPercent, '0.00"%"', 'Выплаченная комиссия / Остаток к выплате, USD', `${report.summary.paidCommissionUsd} / ${report.summary.remainingCommissionUsd}`, '@']
     ];
 
     for (const [labelL, valL, fmtL, labelR, valR, fmtR] of kpiRows) {
@@ -1275,36 +1719,25 @@ export class ApartmentSalesReportService {
 
     summarySheet.addRow([]);
 
-    // Main Table Header (11 columns: ЖК, Блок + 9 metrics)
     const tableHeaderRow = summarySheet.addRow([
       'Жилой комплекс',
       'Блок',
-      'Свободно на начало периода, шт.',
+      'Свободно на начало, шт.',
       'Продано за период, шт.',
-      'Осталось свободных на конец периода, шт.',
+      'Прямые TOZON, шт.',
+      'Через маркетологов, шт.',
+      'Источник не опр., шт.',
+      'Свободно на конец, шт.',
       'Проданная площадь, м²',
       'Сумма продаж, USD',
       'Получено, USD',
       'Оплачено, %',
       'Остаток долга, USD',
-      'Долг, %'
+      'Долг, %',
+      'Утверждённая комиссия, USD',
+      'Остаток комиссии к выплате, USD'
     ]);
-    tableHeaderRow.height = 28;
-    tableHeaderRow.eachCell((cell, colNumber) => {
-      cell.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
-      cell.alignment = {
-        vertical: 'middle',
-        horizontal: colNumber >= 3 ? 'right' : colNumber === 2 ? 'center' : 'left',
-        wrapText: true
-      };
-      cell.border = {
-        top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-        left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-        bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-        right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
-      };
-    });
+    applyHeaderStyle(tableHeaderRow, 3, [2]);
 
     for (const block of report.blocks) {
       const row = summarySheet.addRow([
@@ -1312,38 +1745,30 @@ export class ApartmentSalesReportService {
         block.blockCode,
         block.availableStartCount,
         block.soldCount,
+        block.directSoldCount,
+        block.marketerSoldCount,
+        block.unspecifiedSoldCount,
         block.availableEndCount,
         block.soldAreaM2,
         block.salesAmountUsd,
         block.totalSettledUsd,
         block.paidPercent,
         block.remainingDebtUsd,
-        block.debtPercent
+        block.debtPercent,
+        block.approvedCommissionUsd,
+        block.remainingCommissionUsd
       ]);
       row.height = 20;
       row.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
       row.getCell(2).alignment = { vertical: 'middle', horizontal: 'center' };
-      for (let c = 3; c <= 11; c += 1) {
+      for (let c = 3; c <= 16; c += 1) {
         row.getCell(c).alignment = { vertical: 'middle', horizontal: 'right' };
       }
-      row.getCell(3).numFmt = '#,##0';
-      row.getCell(4).numFmt = '#,##0';
-      row.getCell(5).numFmt = '#,##0';
-      row.getCell(6).numFmt = '#,##0.00';
-      row.getCell(7).numFmt = '#,##0.00';
-      row.getCell(8).numFmt = '#,##0.00';
-      row.getCell(9).numFmt = '0.00"%"';
-      row.getCell(10).numFmt = '#,##0.00';
-      row.getCell(11).numFmt = '0.00"%"';
-
-      row.eachCell((cell) => {
-        cell.border = {
-          top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-          left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-          bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-          right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
-        };
-      });
+      for (const c of [3, 4, 5, 6, 7, 8]) row.getCell(c).numFmt = '#,##0';
+      for (const c of [9, 10, 11, 13, 15, 16]) row.getCell(c).numFmt = '#,##0.00';
+      row.getCell(12).numFmt = '0.00"%"';
+      row.getCell(14).numFmt = '0.00"%"';
+      applyDataRowBorders(row);
     }
 
     const totalRow = summarySheet.addRow([
@@ -1351,38 +1776,24 @@ export class ApartmentSalesReportService {
       '',
       report.totals.availableStartCount,
       report.totals.soldCount,
+      report.totals.directSoldCount,
+      report.totals.marketerSoldCount,
+      report.totals.unspecifiedSoldCount,
       report.totals.availableEndCount,
       report.totals.soldAreaM2,
       report.totals.salesAmountUsd,
       report.totals.totalSettledUsd,
       report.totals.paidPercent,
       report.totals.remainingDebtUsd,
-      report.totals.debtPercent
+      report.totals.debtPercent,
+      report.totals.approvedCommissionUsd,
+      report.totals.remainingCommissionUsd
     ]);
-    totalRow.height = 22;
-    totalRow.eachCell((cell, colNumber) => {
-      cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0F172A' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-      cell.alignment = {
-        vertical: 'middle',
-        horizontal: colNumber >= 3 ? 'right' : 'left'
-      };
-      cell.border = {
-        top: { style: 'medium', color: { argb: 'FF94A3B8' } },
-        left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-        bottom: { style: 'double', color: { argb: 'FF475569' } },
-        right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
-      };
-    });
-    totalRow.getCell(3).numFmt = '#,##0';
-    totalRow.getCell(4).numFmt = '#,##0';
-    totalRow.getCell(5).numFmt = '#,##0';
-    totalRow.getCell(6).numFmt = '#,##0.00';
-    totalRow.getCell(7).numFmt = '#,##0.00';
-    totalRow.getCell(8).numFmt = '#,##0.00';
-    totalRow.getCell(9).numFmt = '0.00"%"';
-    totalRow.getCell(10).numFmt = '#,##0.00';
-    totalRow.getCell(11).numFmt = '0.00"%"';
+    applyTotalRowStyle(totalRow, 3);
+    for (const c of [3, 4, 5, 6, 7, 8]) totalRow.getCell(c).numFmt = '#,##0';
+    for (const c of [9, 10, 11, 13, 15, 16]) totalRow.getCell(c).numFmt = '#,##0.00';
+    totalRow.getCell(12).numFmt = '0.00"%"';
+    totalRow.getCell(14).numFmt = '0.00"%"';
 
     // =========================================================================
     // SHEET 2: Детализация квартир
@@ -1393,32 +1804,38 @@ export class ApartmentSalesReportService {
 
     detailsSheet.columns = [
       { key: 'index', width: 6 },
-      { key: 'contractDate', width: 14 },
-      { key: 'contractNumber', width: 18 },
-      { key: 'projectName', width: 18 },
+      { key: 'contractDate', width: 13 },
+      { key: 'contractNumber', width: 15 },
+      { key: 'projectName', width: 16 },
       { key: 'blockCode', width: 8 },
-      { key: 'unitNumber', width: 12 },
+      { key: 'unitNumber', width: 10 },
       { key: 'floorNumber', width: 8 },
-      { key: 'areaM2', width: 14 },
-      { key: 'contractPriceUsd', width: 18 },
-      { key: 'paidCashUsd', width: 18 },
-      { key: 'paidBarterUsd', width: 16 },
-      { key: 'totalSettledUsd', width: 18 },
-      { key: 'remainingDebtUsd', width: 18 },
-      { key: 'paidPercent', width: 13 },
-      { key: 'debtPercent', width: 13 }
+      { key: 'areaM2', width: 12 },
+      { key: 'contractPriceUsd', width: 16 },
+      { key: 'paidCashUsd', width: 16 },
+      { key: 'paidBarterUsd', width: 15 },
+      { key: 'totalSettledUsd', width: 16 },
+      { key: 'remainingDebtUsd', width: 16 },
+      { key: 'salesSourceLabel', width: 24 },
+      { key: 'marketingPartnerName', width: 20 },
+      { key: 'managerName', width: 20 },
+      { key: 'commissionRatePercent', width: 12 },
+      { key: 'calculatedCommissionUsd', width: 15 },
+      { key: 'approvedCommissionUsd', width: 15 },
+      { key: 'paidCommissionUsd', width: 15 },
+      { key: 'remainingCommissionUsd', width: 15 }
     ];
 
     const detailTitle = detailsSheet.addRow([
       `ДЕТАЛИЗАЦИЯ ПРОДАННЫХ КВАРТИР (${periodLabel})`
     ]);
-    detailsSheet.mergeCells('A1:O1');
+    detailsSheet.mergeCells('A1:U1');
     detailTitle.font = { name: 'Arial', size: 13, bold: true, color: { argb: 'FF0F172A' } };
     detailTitle.height = 24;
 
     detailsSheet.addRow([
       'Фильтры:',
-      `ЖК: ${complexFilterLabel}; Блок: ${blockFilterLabel}`,
+      `ЖК: ${complexFilterLabel}; Блок: ${blockFilterLabel}; Источник: ${sourceFilterLabel}`,
       '',
       '',
       'Сформировано:',
@@ -1432,33 +1849,27 @@ export class ApartmentSalesReportService {
       'Номер договора',
       'Жилой комплекс',
       'Блок',
-      'Номер квартиры',
+      'Квартира',
       'Этаж',
       'Площадь, м²',
       'Договорная стоимость, USD',
       'Получено деньгами, USD',
       'Зачтено бартером, USD',
       'Всего погашено, USD',
-      'Остаток задолженности, USD',
-      'Оплачено, %',
-      'Долг, %'
+      'Остаток долга, USD',
+      'Источник продажи',
+      'Маркетинговый партнёр',
+      'Ответственный менеджер TOZON',
+      'Ставка комиссии, %',
+      'Начисленная комиссия, USD',
+      'Утверждённая комиссия, USD',
+      'Выплаченная комиссия, USD',
+      'Остаток комиссии, USD'
     ]);
-    detailHeader.height = 28;
-    detailHeader.eachCell((cell, colNumber) => {
-      cell.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FFFFFFFF' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
-      cell.alignment = {
-        vertical: 'middle',
-        horizontal: colNumber >= 8 ? 'right' : [1, 2, 5, 6, 7].includes(colNumber) ? 'center' : 'left',
-        wrapText: true
-      };
-      cell.border = {
-        top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-        left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-        bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-        right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
-      };
-    });
+    applyHeaderStyle(detailHeader, 8, [1, 2, 5, 6, 7]);
+    for (const c of [14, 15, 16]) {
+      detailHeader.getCell(c).alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
+    }
 
     report.apartments.forEach((apt, idx) => {
       const row = detailsSheet.addRow([
@@ -1475,37 +1886,24 @@ export class ApartmentSalesReportService {
         apt.paidBarterUsd,
         apt.totalSettledUsd,
         apt.remainingDebtUsd,
-        apt.paidPercent,
-        apt.debtPercent
+        apt.salesSourceLabel,
+        apt.marketingPartnerName || '—',
+        apt.managerName || '—',
+        apt.commissionRatePercent || 0,
+        apt.calculatedCommissionUsd || 0,
+        apt.approvedCommissionUsd || 0,
+        apt.paidCommissionUsd || 0,
+        apt.remainingCommissionUsd || 0
       ]);
       row.height = 19;
-      row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
-      row.getCell(2).alignment = { vertical: 'middle', horizontal: 'center' };
-      row.getCell(3).alignment = { vertical: 'middle', horizontal: 'left' };
-      row.getCell(4).alignment = { vertical: 'middle', horizontal: 'left' };
-      row.getCell(5).alignment = { vertical: 'middle', horizontal: 'center' };
-      row.getCell(6).alignment = { vertical: 'middle', horizontal: 'center' };
-      row.getCell(7).alignment = { vertical: 'middle', horizontal: 'center' };
-      for (let c = 8; c <= 15; c += 1) {
+      for (const c of [1, 2, 5, 6, 7]) row.getCell(c).alignment = { vertical: 'middle', horizontal: 'center' };
+      for (const c of [3, 4, 14, 15, 16]) row.getCell(c).alignment = { vertical: 'middle', horizontal: 'left' };
+      for (const c of [8, 9, 10, 11, 12, 13, 17, 18, 19, 20, 21]) {
         row.getCell(c).alignment = { vertical: 'middle', horizontal: 'right' };
       }
-      row.getCell(8).numFmt = '#,##0.00';
-      row.getCell(9).numFmt = '#,##0.00';
-      row.getCell(10).numFmt = '#,##0.00';
-      row.getCell(11).numFmt = '#,##0.00';
-      row.getCell(12).numFmt = '#,##0.00';
-      row.getCell(13).numFmt = '#,##0.00';
-      row.getCell(14).numFmt = '0.00"%"';
-      row.getCell(15).numFmt = '0.00"%"';
-
-      row.eachCell((cell) => {
-        cell.border = {
-          top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-          left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-          bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-          right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
-        };
-      });
+      for (const c of [8, 9, 10, 11, 12, 13, 18, 19, 20, 21]) row.getCell(c).numFmt = '#,##0.00';
+      row.getCell(17).numFmt = '0.00"%"';
+      applyDataRowBorders(row);
     });
 
     const detailTotalRow = detailsSheet.addRow([
@@ -1522,32 +1920,237 @@ export class ApartmentSalesReportService {
       report.totals.paidBarterUsd,
       report.totals.totalSettledUsd,
       report.totals.remainingDebtUsd,
-      report.totals.paidPercent,
-      report.totals.debtPercent
+      `Прямых: ${report.totals.directSoldCount} | Маркетол.: ${report.totals.marketerSoldCount} | Не опр.: ${report.totals.unspecifiedSoldCount}`,
+      '',
+      '',
+      '',
+      report.totals.calculatedCommissionUsd,
+      report.totals.approvedCommissionUsd,
+      report.totals.paidCommissionUsd,
+      report.totals.remainingCommissionUsd
     ]);
-    detailTotalRow.height = 22;
-    detailTotalRow.eachCell((cell, colNumber) => {
-      cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0F172A' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
-      cell.alignment = {
-        vertical: 'middle',
-        horizontal: colNumber >= 8 ? 'right' : 'left'
-      };
-      cell.border = {
-        top: { style: 'medium', color: { argb: 'FF94A3B8' } },
-        left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
-        bottom: { style: 'double', color: { argb: 'FF475569' } },
-        right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
-      };
+    applyTotalRowStyle(detailTotalRow, 8);
+    detailTotalRow.getCell(14).alignment = { vertical: 'middle', horizontal: 'left' };
+    for (const c of [8, 9, 10, 11, 12, 13, 18, 19, 20, 21]) detailTotalRow.getCell(c).numFmt = '#,##0.00';
+
+    // =========================================================================
+    // SHEET 3: Источники продаж
+    // =========================================================================
+    const sourcesSheet = workbook.addWorksheet('Источники продаж', {
+      pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 }
     });
-    detailTotalRow.getCell(8).numFmt = '#,##0.00';
-    detailTotalRow.getCell(9).numFmt = '#,##0.00';
-    detailTotalRow.getCell(10).numFmt = '#,##0.00';
-    detailTotalRow.getCell(11).numFmt = '#,##0.00';
-    detailTotalRow.getCell(12).numFmt = '#,##0.00';
-    detailTotalRow.getCell(13).numFmt = '#,##0.00';
-    detailTotalRow.getCell(14).numFmt = '0.00"%"';
-    detailTotalRow.getCell(15).numFmt = '0.00"%"';
+
+    sourcesSheet.columns = [
+      { key: 'channel', width: 28 },
+      { key: 'soldCount', width: 16 },
+      { key: 'shareCount', width: 14 },
+      { key: 'soldArea', width: 16 },
+      { key: 'salesAmount', width: 18 },
+      { key: 'shareAmount', width: 14 },
+      { key: 'totalSettled', width: 18 },
+      { key: 'remainingDebt', width: 18 },
+      { key: 'calculatedCommission', width: 18 },
+      { key: 'approvedCommission', width: 18 },
+      { key: 'paidCommission', width: 18 },
+      { key: 'remainingCommission', width: 18 }
+    ];
+
+    const sourcesTitle = sourcesSheet.addRow([`АНАЛИТИКА ПО ИСТОЧНИКАМ ПРОДАЖ (${periodLabel})`]);
+    sourcesSheet.mergeCells('A1:L1');
+    sourcesTitle.font = { name: 'Arial', size: 13, bold: true, color: { argb: 'FF0F172A' } };
+    sourcesTitle.height = 24;
+    sourcesSheet.addRow([]);
+
+    const sourcesHeader = sourcesSheet.addRow([
+      'Канал / Источник продажи',
+      'Продано квартир, шт.',
+      'Доля в шт., %',
+      'Проданная площадь, м²',
+      'Сумма продаж, USD',
+      'Доля в сумме, %',
+      'Получено оплат, USD',
+      'Остаток долга, USD',
+      'Начисленная комиссия, USD',
+      'Утверждённая комиссия, USD',
+      'Выплаченная комиссия, USD',
+      'Остаток комиссии к выплате, USD'
+    ]);
+    applyHeaderStyle(sourcesHeader, 2, []);
+
+    for (const src of report.bySource) {
+      const row = sourcesSheet.addRow([
+        src.salesSourceLabel,
+        src.soldCount,
+        src.shareCountPercent,
+        src.soldAreaM2,
+        src.salesAmountUsd,
+        src.shareAmountPercent,
+        src.totalSettledUsd,
+        src.remainingDebtUsd,
+        src.calculatedCommissionUsd,
+        src.approvedCommissionUsd,
+        src.paidCommissionUsd,
+        src.remainingCommissionUsd
+      ]);
+      row.height = 20;
+      row.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+      for (let c = 2; c <= 12; c += 1) row.getCell(c).alignment = { vertical: 'middle', horizontal: 'right' };
+      row.getCell(2).numFmt = '#,##0';
+      row.getCell(3).numFmt = '0.00"%"';
+      row.getCell(6).numFmt = '0.00"%"';
+      for (const c of [4, 5, 7, 8, 9, 10, 11, 12]) row.getCell(c).numFmt = '#,##0.00';
+      applyDataRowBorders(row);
+    }
+
+    const sourcesTotalRow = sourcesSheet.addRow([
+      'ИТОГО',
+      report.totals.soldCount,
+      report.totals.soldCount > 0 ? 100 : 0,
+      report.totals.soldAreaM2,
+      report.totals.salesAmountUsd,
+      report.totals.salesAmountUsd > 0 ? 100 : 0,
+      report.totals.totalSettledUsd,
+      report.totals.remainingDebtUsd,
+      report.totals.calculatedCommissionUsd,
+      report.totals.approvedCommissionUsd,
+      report.totals.paidCommissionUsd,
+      report.totals.remainingCommissionUsd
+    ]);
+    applyTotalRowStyle(sourcesTotalRow, 2);
+    sourcesTotalRow.getCell(2).numFmt = '#,##0';
+    sourcesTotalRow.getCell(3).numFmt = '0.00"%"';
+    sourcesTotalRow.getCell(6).numFmt = '0.00"%"';
+    for (const c of [4, 5, 7, 8, 9, 10, 11, 12]) sourcesTotalRow.getCell(c).numFmt = '#,##0.00';
+
+    // =========================================================================
+    // SHEET 4: Комиссии маркетологов
+    // =========================================================================
+    const commissionsSheet = workbook.addWorksheet('Комиссии маркетологов', {
+      pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1 }
+    });
+
+    commissionsSheet.columns = [
+      { key: 'partnerName', width: 24 },
+      { key: 'contractNumber', width: 16 },
+      { key: 'contractDate', width: 14 },
+      { key: 'blockUnit', width: 16 },
+      { key: 'salesSourceLabel', width: 22 },
+      { key: 'contractPriceUsd', width: 18 },
+      { key: 'commissionRatePercent', width: 14 },
+      { key: 'calculatedCommissionUsd', width: 18 },
+      { key: 'approvedCommissionUsd', width: 18 },
+      { key: 'paidCommissionUsd', width: 18 },
+      { key: 'remainingCommissionUsd', width: 18 },
+      { key: 'commissionStatusLabel', width: 20 }
+    ];
+
+    const commTitle = commissionsSheet.addRow([`КОНТРОЛЬ КОМИССИЙ МАРКЕТОЛОГОВ (${periodLabel})`]);
+    commissionsSheet.mergeCells('A1:L1');
+    commTitle.font = { name: 'Arial', size: 13, bold: true, color: { argb: 'FF0F172A' } };
+    commTitle.height = 24;
+    commissionsSheet.addRow([]);
+
+    // Section A: Partner Summary
+    const partnerSubHeader = commissionsSheet.addRow(['1. Сводка по маркетинговым партнёрам']);
+    partnerSubHeader.font = { name: 'Arial', size: 11, bold: true };
+
+    const partnerHeaderRow = commissionsSheet.addRow([
+      'Маркетинговый партнёр',
+      'Контактное лицо / Телефон',
+      'Базовая ставка, %',
+      'Продано квартир, шт.',
+      'Проданная площадь, м²',
+      'Сумма договоров, USD',
+      'Получено от клиентов, USD',
+      'Начисленная комиссия, USD',
+      'Утверждённая комиссия, USD',
+      'Выплаченная комиссия, USD',
+      'Остаток к выплате, USD',
+      'Статус партнёра'
+    ]);
+    applyHeaderStyle(partnerHeaderRow, 3, [12]);
+
+    for (const pb of report.byPartner) {
+      const r = commissionsSheet.addRow([
+        pb.partnerName,
+        [pb.contactPerson, pb.phone].filter(Boolean).join(' / ') || '—',
+        pb.commissionRatePercent || 0,
+        pb.soldCount,
+        pb.soldAreaM2,
+        pb.salesAmountUsd,
+        pb.totalSettledUsd,
+        pb.calculatedCommissionUsd,
+        pb.approvedCommissionUsd,
+        pb.paidCommissionUsd,
+        pb.remainingCommissionUsd,
+        pb.isActive ? 'Активен' : 'Неактивен'
+      ]);
+      r.height = 19;
+      r.getCell(3).numFmt = '0.00"%"';
+      r.getCell(4).numFmt = '#,##0';
+      for (const c of [5, 6, 7, 8, 9, 10, 11]) r.getCell(c).numFmt = '#,##0.00';
+      applyDataRowBorders(r);
+    }
+
+    commissionsSheet.addRow([]);
+
+    // Section B: Deal-by-Deal Commission Registry
+    const dealCommSubHeader = commissionsSheet.addRow(['2. Реестр договоров и начислений комиссий']);
+    dealCommSubHeader.font = { name: 'Arial', size: 11, bold: true };
+
+    const commDealsHeader = commissionsSheet.addRow([
+      'Маркетинговый партнёр',
+      'Номер договора',
+      'Дата договора',
+      'Блок / Квартира',
+      'Источник продажи',
+      'Стоимость договора, USD',
+      'Ставка комиссии, %',
+      'Начислено, USD',
+      'Утверждено, USD',
+      'Выплачено, USD',
+      'Остаток к выплате, USD',
+      'Статус комиссии'
+    ]);
+    applyHeaderStyle(commDealsHeader, 6, [3, 4, 12]);
+
+    for (const apt of report.apartments) {
+      const r = commissionsSheet.addRow([
+        apt.marketingPartnerName || '—',
+        apt.contractNumber,
+        formatDateRu(apt.contractDate),
+        `Блок ${apt.blockCode}, кв. ${apt.unitNumber}`,
+        apt.salesSourceLabel,
+        apt.contractPriceUsd,
+        apt.commissionRatePercent || 0,
+        apt.calculatedCommissionUsd || 0,
+        apt.approvedCommissionUsd || 0,
+        apt.paidCommissionUsd || 0,
+        apt.remainingCommissionUsd || 0,
+        apt.commissionStatusLabel
+      ]);
+      r.height = 19;
+      for (const c of [6, 8, 9, 10, 11]) r.getCell(c).numFmt = '#,##0.00';
+      r.getCell(7).numFmt = '0.00"%"';
+      applyDataRowBorders(r);
+    }
+
+    const commTotalRow = commissionsSheet.addRow([
+      'ИТОГО ПО ОТЧЁТУ',
+      `Договоров: ${report.totals.soldCount}`,
+      '',
+      '',
+      '',
+      report.totals.salesAmountUsd,
+      '',
+      report.totals.calculatedCommissionUsd,
+      report.totals.approvedCommissionUsd,
+      report.totals.paidCommissionUsd,
+      report.totals.remainingCommissionUsd,
+      ''
+    ]);
+    applyTotalRowStyle(commTotalRow, 6);
+    for (const c of [6, 8, 9, 10, 11]) commTotalRow.getCell(c).numFmt = '#,##0.00';
 
     return workbook.xlsx.writeBuffer();
   }
