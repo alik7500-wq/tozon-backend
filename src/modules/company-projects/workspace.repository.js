@@ -18,3 +18,10 @@ export async function readWorkspaceOptions(actor, project, kind, { after = '', l
   if (error) throw error;
   return data;
 }
+
+export async function readWorkspaceOverview(actor,project){
+  const {data,error}=await getServiceDB().rpc('read_company_project_overview',{p_actor:actor,p_project:project});
+  if(error?.code==='42501')throw new AppError('Нет доступа к обзору этого проекта',403);
+  if(error)throw error;
+  return data;
+}

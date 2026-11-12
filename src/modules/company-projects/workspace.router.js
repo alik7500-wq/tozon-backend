@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { assertWorkspacePilotRuntime, isProjectOnlyUser } from './workspace.boundary.js';
-import { readWorkspace, readWorkspaceOptions } from './workspace.repository.js';
+import { readWorkspace, readWorkspaceOptions, readWorkspaceOverview } from './workspace.repository.js';
 import { parseWorkspaceCommand, executeWorkspaceCommand } from './workspace.commands.js';
 
 const router = express.Router();
@@ -73,6 +73,9 @@ router.post('/:project/documents/:deal/files',documentLimiter,async(req,res,next
 });
 router.get('/projects', async (req, res, next) => {
   try { parse(z.object({}).strict(), req.query); res.json({ status: 'success', data: await readWorkspace(req.user.id, null, 'projects') }); } catch (e) { next(e); }
+});
+router.get('/:project/overview',async(req,res,next)=>{
+ try{const project=parse(z.uuid(),req.params.project);parse(z.object({}).strict(),req.query);res.json({status:'success',data:await readWorkspaceOverview(req.user.id,project)});}catch(e){next(e);}
 });
 router.post('/:project/commands', async (req, res, next) => {
   try {

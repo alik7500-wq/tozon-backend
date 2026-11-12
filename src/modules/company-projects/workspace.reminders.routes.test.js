@@ -7,7 +7,7 @@ const m=vi.hoisted(()=>({rpc:vi.fn(),user:vi.fn(),from:vi.fn()}));
 vi.mock('../../db/connection.js',()=>({getServiceDB:()=>({rpc:m.rpc,from:m.from})}));
 vi.mock('../users/users.repository.js',()=>({UsersRepository:{findById:m.user}}));
 vi.mock('./company-projects.repository.js',()=>({projectRegistry:vi.fn(),saveCompanyProject:vi.fn()}));
-vi.mock('./workspace.repository.js',()=>({readWorkspace:vi.fn(),readWorkspaceOptions:vi.fn()}));
+vi.mock('./workspace.repository.js',()=>({readWorkspace:vi.fn(),readWorkspaceOptions:vi.fn(),readWorkspaceOverview:vi.fn()}));
 import admin from './company-projects.router.js';
 import workspace from './workspace.router.js';
 import scheduler from './workspace.reminders.router.js';

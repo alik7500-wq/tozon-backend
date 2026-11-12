@@ -3,10 +3,10 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
-const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn()}));
+const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn(),overview:vi.fn()}));
 vi.mock('../users/users.repository.js',()=>({UsersRepository:{findById:mocks.findUser}}));
 vi.mock('./workspace.commands.js',async original=>{const actual=await original();return {...actual,executeWorkspaceCommand:mocks.command};});
-vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options}));
+vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options,readWorkspaceOverview:mocks.overview}));
 vi.mock('../../db/connection.js',()=>({getServiceDB:vi.fn()}));
 import router from './workspace.router.js';
 import { workspaceBoundary } from './workspace.boundary.js';
@@ -94,4 +94,10 @@ describe('workspace route with real auth and global boundary',()=>{
   expect((await auth(request(app).post(`/api/project-workspace/${project}/commands`).send({...body,kind:'TERMINATE_UNPAID',payload:{...body.payload,basis:'Соглашение № 1',basis_date:'2026-11-10'}}))).status).toBe(201);
  });
 
+});
+
+it('loads overview only for the authenticated scoped actor and refuses actor overrides',async()=>{
+ mocks.overview.mockResolvedValue({inventory:{available:150}});const r=await auth(request(app).get(`/api/project-workspace/${project}/overview`));expect(r.status).toBe(200);expect(r.headers['cache-control']).toBe('no-store');expect(mocks.overview).toHaveBeenCalledWith(10,project);
+ expect((await auth(request(app).get(`/api/project-workspace/${project}/overview?actor=30`))).status).toBe(400);
+ mocks.findUser.mockResolvedValue({id:30,role:'ADMIN',is_active:1,permissions:[]});expect((await auth(request(app).get(`/api/project-workspace/${project}/overview`))).status).toBe(403);expect(mocks.overview).toHaveBeenCalledTimes(1);
 });
