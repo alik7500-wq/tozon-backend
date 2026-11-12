@@ -14,7 +14,7 @@ describe('Meta Facebook Login for Business', () => {
     process.env.META_INSTAGRAM_REDIRECT_URI = 'https://tozon-backend.onrender.com/api/integrations/instagram/callback';
     const url = new URL(facebookBusinessInstagramAuthorizationUrl('12345678901234567890123456789012'));
     expect(url.hostname).toBe('www.facebook.com');
-    expect(url.searchParams.get('config_id')).toBe('29138384382458786');
+    expect(url.searchParams.get('config_id')).toBe('1881770219479925');
     expect(url.searchParams.get('client_id')).toBe('1683937156688365');
     expect(url.searchParams.get('state')).toHaveLength(32);
   });

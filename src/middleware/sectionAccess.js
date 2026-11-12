@@ -52,6 +52,16 @@ export const authorizeSectionRequest = async req => {
     }
   }
   // Instagram OAuth is limited to administrator/director by its own router.
+  const instagramInboxRead = read && (/^\/api\/integrations\/instagram\/inbox\/conversations(?:\/page)?$/.test(path) ||
+    /^\/api\/integrations\/instagram\/inbox\/conversations\/\d+\/\d+\/messages$/.test(path));
+  const instagramInboxSend = req.method === 'POST' && /^\/api\/integrations\/instagram\/send\/\d+\/\d+$/.test(path);
+  if (instagramInboxRead || instagramInboxSend) {
+    if (!['ADMIN', 'DIRECTOR'].includes(user.role) || !hasSection(user, 'leads.view', instagramInboxSend)) {
+      throw new AppError('Нет доступа к перепискам Instagram', 403);
+    }
+    req.sectionAccessGranted = true;
+    return;
+  }
   // Permit only these exact routes through the section matrix; do not grant broad integration access.
   if ((path === '/api/integrations/instagram/connection' && read ||
        path === '/api/integrations/instagram/connect' && req.method === 'POST') &&
