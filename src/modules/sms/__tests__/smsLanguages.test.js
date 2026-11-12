@@ -27,3 +27,100 @@ test('Tajik texts retain the critical financial placeholders', () => {
 test('unsupported Tajik template fails closed instead of silently sending Russian', () => {
   assert.throws(() => resolveSmsTemplateLanguage({ code: 'UNSUPPORTED', language: 'tj', russianText: 'Russian' }), /unavailable/);
 });
+
+// Canonical placeholder sets captured from the 16 active production Russian templates.
+// This test never connects to production and never sends SMS.
+const CANONICAL_PLACEHOLDERS = {
+  "BIRTHDAY": [
+    "client_name"
+  ],
+  "CLIENT_WELCOME": [
+    "client_name"
+  ],
+  "CONTRACT_CHANGED": [
+    "apartment",
+    "apartment_area",
+    "client_name",
+    "contract_number",
+    "contract_total",
+    "currency"
+  ],
+  "CONTRACT_CREATED": [
+    "apartment",
+    "client_name",
+    "contract_number"
+  ],
+  "CONTRACT_PAID": [
+    "client_name",
+    "contract_number"
+  ],
+  "CONTRACT_TERMINATED": [
+    "client_name",
+    "contract_number"
+  ],
+  "DEAL_INFO": [
+    "apartment",
+    "apartment_area",
+    "client_name",
+    "contract_number",
+    "contract_total",
+    "currency",
+    "remaining_balance",
+    "total_paid"
+  ],
+  "DEBTOR_REMINDER": [
+    "client_name",
+    "contract_number",
+    "currency",
+    "overdue_amount"
+  ],
+  "MEETING_REMINDER": [
+    "client_name",
+    "meeting_date",
+    "meeting_time"
+  ],
+  "PAYMENT_CANCELLED": [
+    "client_name",
+    "contract_number"
+  ],
+  "PAYMENT_RECEIVED": [
+    "client_name",
+    "contract_currency",
+    "contract_number",
+    "payment_amount",
+    "payment_currency",
+    "remaining_balance",
+    "total_paid"
+  ],
+  "PAYMENT_REMINDER": [
+    "client_name",
+    "contract_number",
+    "currency",
+    "payment_amount",
+    "payment_date"
+  ],
+  "RESERVATION_CANCELLED": [
+    "apartment",
+    "client_name"
+  ],
+  "RESERVATION_CREATED": [
+    "apartment",
+    "client_name"
+  ],
+  "RESERVATION_EXPIRING": [
+    "apartment",
+    "client_name"
+  ],
+  "SCHEDULE_CHANGED": [
+    "client_name",
+    "contract_number"
+  ]
+};
+
+test('all Tajik translations retain exactly the same variable names as Russian canonical templates', () => {
+  assert.deepEqual(Object.keys(TAJIK_SMS_TEMPLATES).sort(), Object.keys(CANONICAL_PLACEHOLDERS).sort());
+  for (const [code, expected] of Object.entries(CANONICAL_PLACEHOLDERS)) {
+    const actual = [...new Set([...TAJIK_SMS_TEMPLATES[code].matchAll(/\\{\\{(\\w+)\\}\\}/g)].map(match => match[1]))].sort();
+    assert.deepEqual(actual, expected, 'Placeholder mismatch: ' + code);
+  }
+});
