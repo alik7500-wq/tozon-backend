@@ -48,6 +48,11 @@ export function createInstagramInboxClient({ accountId, token, request = fetch, 
     } catch { throw new InboxError(body ? 'INSTAGRAM_SEND_UNCONFIRMED' : 'INSTAGRAM_UNAVAILABLE', 503); }
     if (!response.ok || result?.error) {
       const code = result?.error?.code;
+      const subcode = result?.error?.error_subcode;
+      console.warn('[instagram-meta-inbox]', { operation: body ? 'send' : 'read', code, subcode });
+      // Do not conflate a policy/window refusal with a missing OAuth permission.
+      if (subcode === 2534022) throw new InboxError('INSTAGRAM_REPLY_WINDOW_CLOSED', 409);
+      if (subcode === 2534037) throw new InboxError('INSTAGRAM_THREAD_OWNER_REQUIRED', 409);
       throw new InboxError(code === 190 ? 'INSTAGRAM_RECONNECT_REQUIRED' : [10, 200].includes(code)
         ? 'INSTAGRAM_PERMISSION_REQUIRED' : [4, 17, 32, 613].includes(code)
           ? 'INSTAGRAM_RATE_LIMIT' : 'INSTAGRAM_REQUEST_FAILED', code === 190 ? 409 : 502);
@@ -126,12 +131,17 @@ export function createInstagramInboxClient({ accountId, token, request = fetch, 
     return { ...result, data: result.data.map(({ senderId: _senderId, ...m }) => m)
       .sort((a,b) => Date.parse(a.created_at) - Date.parse(b.created_at)) };
   }
-  async function send(contactId, text) {
+  async function send(contactId, text, verifiedInboundAt) {
     if (typeof text !== 'string' || !text.trim() || text.length > 1000) throw new InboxError('INVALID_MESSAGE', 400);
-    const c = await conversation(contactId, true);
-    let after, eligible = false;
+    const lastInbound = Date.parse(verifiedInboundAt);
+    // This optional timestamp comes only from private server-side storage, never
+    // from the HTTP body. Only recently verified account/participant mappings are reused.
+    const trusted = Number.isFinite(lastInbound) && lastInbound <= now() && now() - lastInbound < 24 * 3600000;
+    if (!/^\d{1,40}$/.test(contactId || '')) throw new InboxError('INVALID_CONTACT', 400);
+    const c = trusted ? null : await conversation(contactId, true);
+    let after, eligible = trusted;
     // Fail closed if the inbound message cannot be verified in the bounded history.
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; !eligible && i < 5; i++) {
       const result = await readMessages(c, after);
       eligible = result.data.some(m => m.senderId === contactId && !m.is_echo &&
         Date.parse(m.created_at) <= now() && now() - Date.parse(m.created_at) < 24 * 60 * 60 * 1000);

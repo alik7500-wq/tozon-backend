@@ -1,6 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { Router, raw } from 'express';
 import { getServiceDB } from '../../db/connection.js';
+import { liveInboxEnabled } from './instagram-live.repository.js';
+import { processInstagramWebhook } from './instagram-webhook.processor.js';
 
 const router = Router();
 // This endpoint is inert until a separate, explicit rollout flag is enabled.
@@ -26,6 +28,12 @@ router.post('/', raw({ type: 'application/json', limit: '1mb' }), async (req, re
     const { error } = await getServiceDB().from('tozon_instagram_webhook_events')
       .upsert({ event_key: eventKey, instagram_user_id: accountId, payload }, { onConflict: 'event_key', ignoreDuplicates: true });
     if (error) throw error;
+    if (liveInboxEnabled()) {
+      await processInstagramWebhook(payload, accountId);
+      const { error: processedError } = await getServiceDB().from('tozon_instagram_webhook_events')
+        .update({ status: 'processed', processed_at: new Date().toISOString() }).eq('event_key', eventKey);
+      if (processedError) throw processedError;
+    }
     return res.sendStatus(200);
   } catch {
     return res.status(503).json({ code: 'INSTAGRAM_WEBHOOK_STORAGE_UNAVAILABLE' });

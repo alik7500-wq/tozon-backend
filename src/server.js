@@ -3,6 +3,7 @@ import { connectDB } from './db/connection.js';
 import { runTour30StageIfEnabled } from './operations/runTour30Stage.js';
 import { startFinanceBot } from './modules/telegram-finance/start.js';
 import { DistributionSettingsService } from './modules/leads/distributionSettings.service.js';
+import { startInstagramInboxSync } from './modules/integrations/instagram-live.service.js';
 
 const PORT = process.env.PORT || 3000;
 
@@ -22,6 +23,7 @@ const startServer = async () => {
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
       startFinanceBot();
+      startInstagramInboxSync();
       runTour30StageIfEnabled().catch(error => console.error('TOUR30_STORAGE_STAGE_FAILED', error.message));
     });
   } catch (error) {
