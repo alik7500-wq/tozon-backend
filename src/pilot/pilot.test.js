@@ -2,7 +2,7 @@ import {it,expect,vi} from 'vitest';
 import request from 'supertest';
 import {pilotConfig,verifyPilotDatabase,TEST_REF,PILOT_ORIGIN} from './config.js';
 vi.mock('../modules/auth/auth.router.js',async()=>{const {Router}=await import('express');return {default:Router()};});
-vi.mock('../modules/company-projects/company-projects.router.js',async()=>{const {Router}=await import('express');return {default:Router()};});
+vi.mock('../modules/company-projects/company-projects.router.js',async()=>{const {Router}=await import('express');const router=Router();router.get('/error-test',(req,res,next)=>next({statusCode:req.query.code,message:'storage error'}));return {default:router};});
 vi.mock('../modules/company-projects/workspace.router.js',async()=>{const {Router}=await import('express');return {default:Router()};});
 vi.mock('../modules/company-projects/workspace.boundary.js',()=>({workspaceBoundary:(req,res,next)=>next()}));
 import {createPilotApp} from './app.js';
@@ -23,4 +23,9 @@ it('rejects untrusted browser origins before routing and returns no-store respon
 it('requires a successful database probe before the server starts listening',async()=>{
  const db={from:vi.fn(()=>({select:()=>({limit:async()=>({error:null})})}))};await expect(verifyPilotDatabase(db)).resolves.toBeUndefined();expect(db.from).toHaveBeenCalledWith('company_projects');
  await expect(verifyPilotDatabase({from:()=>({select:()=>({limit:async()=>({error:{message:'invalid key'}})})})})).rejects.toThrow('ISOLATED_PROJECT_PILOT_DATABASE_NOT_READY');
+});
+
+it('normalizes string Storage status codes and hides invalid upstream errors',async()=>{
+ const app=createPilotApp(config());const r=await request(app).get('/api/company-projects/error-test?code=404');expect(r.status).toBe(404);expect(r.body.message).toBe('storage error');
+ for(const code of ['NaN','200','999','503']){const e=await request(app).get('/api/company-projects/error-test?code='+code);expect(e.status).toBe(code==='503'?503:500);expect(e.body.message).toBe('Ошибка тестового сервиса');}
 });

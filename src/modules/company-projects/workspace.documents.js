@@ -70,9 +70,11 @@ export function printableCard(data){
 }
 export async function privateStorage(create=false){
  const storage=getServiceDB().storage;let {data,error}=await storage.getBucket(PRIVATE_BUCKET);
- if(error&&create&&String(error.status||error.statusCode)==='404'){
+ // Storage can return HTTP 400 with semantic statusCode "404" in the body.
+ const missing=error&&(Number(error.statusCode||error.status)===404||(Number(error.status)===400&&/bucket.*not found/i.test(error.message||'')));
+ if(missing&&create){
   const created=await storage.createBucket(PRIVATE_BUCKET,{public:false,fileSizeLimit:FILE_LIMIT,allowedMimeTypes:['application/pdf','image/jpeg','image/png']});
-  if(created.error&&String(created.error.status||created.error.statusCode)!=='409')throw created.error;
+  if(created.error&&String(created.error.statusCode||created.error.status)!=='409')throw created.error;
   ({data,error}=await storage.getBucket(PRIVATE_BUCKET));
  }
  if(error)throw error;if(!data||data.public!==false)throw new AppError('Защищённое хранилище недоступно: проверьте настройки доступа',503);

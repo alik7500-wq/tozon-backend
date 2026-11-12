@@ -24,6 +24,9 @@ export function createPilotApp(env=process.env){
  // No legacy CRM, public uploads, external webhooks, outbound SMS, bot or cron
  // routes are mounted. The pilot does not import the production server/app.
  app.use((req,res)=>res.status(404).json({status:'fail',message:'Маршрут не входит в тестовое пространство проектов'}));
- app.use((err,req,res,_next)=>res.status(err.statusCode||500).json({status:'error',message:err.statusCode&&err.statusCode<500?err.message:'Ошибка тестового сервиса'}));
+ app.use((err,req,res,_next)=>{
+  const raw=Number(err.statusCode||err.status),status=Number.isInteger(raw)&&raw>=400&&raw<=599?raw:500;
+  res.status(status).json({status:'error',message:status<500?err.message:'Ошибка тестового сервиса'});
+ });
  return app;
 }

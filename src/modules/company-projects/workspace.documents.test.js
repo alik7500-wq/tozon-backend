@@ -35,6 +35,11 @@ describe('document service and private storage',()=>{
   await uploadFile(10,project,1,id,{buffer,originalname:'contract.pdf'});
   expect(mock.createBucket).toHaveBeenCalledWith('company-project-private',expect.objectContaining({public:false,fileSizeLimit:10485760}));expect(mock.upload).toHaveBeenCalledWith(file.object_path,buffer,expect.objectContaining({upsert:false,contentType:'application/pdf'}));
  });
+ it('creates the bucket when Storage sends HTTP 400 with semantic string 404',async()=>{
+  mock.rpc.mockImplementation(name=>Promise.resolve(name==='read_company_project_files'?{error:{code:'P0002'}}:{data:{id}}));
+  mock.getBucket.mockResolvedValueOnce({error:{status:400,statusCode:'404',message:'Bucket not found'}}).mockResolvedValueOnce({data:{public:false}});mock.createBucket.mockResolvedValue({data:{}});
+  await uploadFile(10,project,1,id,{buffer,originalname:'contract.pdf'});expect(mock.createBucket).toHaveBeenCalledOnce();expect(mock.upload).toHaveBeenCalledOnce();
+ });
  it('reconciles an uploaded object after an uncertain registration response with the same key',async()=>{
   mock.rpc.mockImplementation(name=>Promise.resolve(name==='read_company_project_files'?{error:{code:'P0002'}}:{data:{id}}));mock.upload.mockResolvedValue({error:{statusCode:'409',message:'The resource already exists'}});
   await uploadFile(10,project,1,id,{buffer,originalname:'contract.pdf'});expect(mock.upload.mock.calls[0][2].upsert).toBe(false);expect(mock.download).toHaveBeenCalledWith(file.object_path);expect(mock.rpc.mock.calls.at(-1)[0]).toBe('register_company_project_file');
