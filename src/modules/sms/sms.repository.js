@@ -12,6 +12,7 @@ export class SmsRepository {
     contractId = null,
     paymentId = null,
     eventId = null,
+    language = null,
     phone,
     message,
     provider = 'PAYOM',
@@ -28,6 +29,7 @@ export class SmsRepository {
       contract_id: parseOptionalBigInt(contractId),
       payment_id: parseOptionalBigInt(paymentId),
       event_id: parseOptionalBigInt(eventId),
+      language,
       phone,
       message,
       provider,
@@ -122,6 +124,7 @@ export class SmsRepository {
    */
   static async updateMessageStatus(id, {
     status,
+    language = null,
     phone = null,
     message = null,
     providerMessageId = null,
@@ -140,6 +143,7 @@ export class SmsRepository {
       updated_at: now
     };
 
+    if (language !== null) updates.language = language;
     if (phone !== null) updates.phone = phone;
     if (message !== null) updates.message = message;
     if (providerMessageId !== null) updates.provider_message_id = providerMessageId;

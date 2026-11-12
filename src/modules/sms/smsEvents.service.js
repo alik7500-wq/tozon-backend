@@ -130,7 +130,7 @@ export class SmsEventsService {
    * Server-side preview of outbox event using authoritative DB state.
    * Payom calls = 0. Does NOT change event status.
    */
-  async previewEvent(id) {
+  async previewEvent(id, language = null) {
     const event = await this.getEventById(id);
     
     try {
@@ -158,7 +158,8 @@ export class SmsEventsService {
       clientId: event.client_id,
       dealId: event.deal_id,
       paymentId: event.payment_id,
-      taskId: event.task_id
+      taskId: event.task_id,
+      language
     });
 
     const previewHash = this.computePreviewHash(previewResult.text, event.id);
@@ -201,7 +202,7 @@ export class SmsEventsService {
   /**
    * Confirm and process event with atomic state claim & pre-send re-validation.
    */
-  async confirmEvent({ id, userId = null, previewHash = null }) {
+  async confirmEvent({ id, userId = null, previewHash = null, language = null }) {
     const checkEvent = await SmsEventsRepository.getById(id);
     if (!checkEvent) {
       throw new AppError(`Событие SMS Outbox с ID ${id} не найдено`, 404);
@@ -239,11 +240,12 @@ export class SmsEventsService {
         clientId: claimedEvent.client_id,
         dealId: claimedEvent.deal_id,
         paymentId: claimedEvent.payment_id,
-        taskId: claimedEvent.task_id
+        taskId: claimedEvent.task_id,
+        language
       });
 
       const currentHash = this.computePreviewHash(previewResult.text, claimedEvent.id);
-      if (previewHash && currentHash !== previewHash) {
+      if (!previewHash || currentHash !== previewHash) {
         // Preview text changed since manager viewed it! Revert status back to AWAITING_CONFIRMATION (0 Payom calls executed).
         await SmsEventsRepository.revertToAwaitingConfirmation(claimedEvent.id);
         throw new AppError('Текст сообщения изменился. Пожалуйста, проверьте обновлённый текст перед отправкой', 400, 'PREVIEW_CHANGED');
@@ -273,7 +275,10 @@ export class SmsEventsService {
         });
         preAttemptId = attemptMsg?.id || null;
       } catch (e) {
-        console.warn('Failed to pre-record sms_messages attempt:', e.message);
+        throw new AppError('Не удалось сохранить попытку SMS до отправки: ' + e.message, 500, 'SMS_PREATTEMPT_FAILED');
+      }
+      if (!preAttemptId) {
+        throw new AppError('Отсутствует сохранённая попытка SMS', 500, 'SMS_PREATTEMPT_FAILED');
       }
 
       // 6. Dispatch via SmsService reusing preAttemptId (Exactly ONE Payom POST call & ONE sms_message row)
@@ -284,7 +289,8 @@ export class SmsEventsService {
         dealId: claimedEvent.deal_id,
         paymentId: claimedEvent.payment_id,
         userId,
-        existingMessageId: preAttemptId
+        existingMessageId: preAttemptId,
+        language
       });
 
       if (!sendResult.success) {

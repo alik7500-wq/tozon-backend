@@ -1,0 +1,23 @@
+name: Bilingual SMS validation
+on:
+  push:
+    branches: [feature/sms-bilingual-tj-ru]
+  pull_request:
+    paths:
+      - 'src/modules/sms/**'
+      - '.github/workflows/sms-bilingual-validation.yml'
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check src/modules/sms/sms.service.js
+      - run: node --check src/modules/sms/sms.repository.js
+      - run: node --check src/modules/sms/smsEvents.service.js
+      - run: node --check src/modules/sms/smsLanguages.js
+      - run: node --test src/modules/sms/__tests__/smsLanguages.test.js
+      - run: npm ci
+      - run: npx vitest run src/modules/sms/__tests__/smsManualDispatch.test.js
