@@ -120,7 +120,7 @@ const CANONICAL_PLACEHOLDERS = {
 test('all Tajik translations retain exactly the same variable names as Russian canonical templates', () => {
   assert.deepEqual(Object.keys(TAJIK_SMS_TEMPLATES).sort(), Object.keys(CANONICAL_PLACEHOLDERS).sort());
   for (const [code, expected] of Object.entries(CANONICAL_PLACEHOLDERS)) {
-    const actual = [...new Set([...TAJIK_SMS_TEMPLATES[code].matchAll(/\\{\\{(\\w+)\\}\\}/g)].map(match => match[1]))].sort();
+    const actual = [...new Set([...TAJIK_SMS_TEMPLATES[code].matchAll(/\{\{(\w+)\}\}/g)].map(match => match[1]))].sort();
     assert.deepEqual(actual, expected, 'Placeholder mismatch: ' + code);
   }
 });
