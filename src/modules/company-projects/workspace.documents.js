@@ -1,4 +1,6 @@
 import {createHash} from 'node:crypto';
+import PizZip from 'pizzip';
+import {numberToRussianWords,numberToTajikWords} from './plaza-number-words.js';
 import {getServiceDB} from '../../db/connection.js';
 import {AppError} from '../../shared/errors/errorHandler.js';
 import {compileTemplate,renderTemplate,MIME} from '../document-settings/template.engine.js';
@@ -26,11 +28,15 @@ export async function documentDetails(actor,project,deal){
 }
 const money=v=>v==null?'—':(Number(v)/100).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2});
 const day=v=>String(v||'').slice(0,10).replace(/^(\d{4})-(\d{2})-(\d{2})$/,'$3.$2.$1')||'—';
-export function documentContext(data){
+export function documentContext(data,language='RU'){
  const {deal:d,client:c,unit:u,signer:s,company}=data;
  const context={...Object.fromEntries(['company_inn','company_address','company_phone','company_bank','company_account'].map(k=>[k,company?.[k]||''])),company_name:s?.company_name||'',director_name:s?.director_name||'',director_authority:s?.director_authority||'',branch_name:u.project_name,
  document_number:d.contract_number||'',document_date:day(d.deal_date),contract_number:d.contract_number||'',contract_date:day(d.deal_date),client_name:c.full_name,client_phone:c.phone,client_inn:c.inn,passport_number:[c.passport_series,c.passport_number].filter(Boolean).join(' '),passport_issued_by:c.passport_issued_by,passport_issue_date:day(c.passport_issue_date),client_address:c.registration_address,birth_date:day(c.birth_date),project_name:u.project_name,project_address:u.project_address,building_name:u.building_name,section_name:u.section_name,floor_number:u.floor_number,unit_number:u.unit_number,rooms:u.rooms,area:Number(u.area_m2_x100)/100,price_per_m2:money(d.deal_price_per_m2_minor),contract_total:money(d.final_price_minor),currency:d.currency,down_payment:money(d.down_payment_minor),total_paid:data.financial?money(data.total_paid_minor):'—',remaining_debt:data.financial?money(Math.max(0,Number(d.final_price_minor)-Number(data.total_paid_minor))):'—',payment_type:d.payment_type,
  schedules:(data.schedules||[]).map((r,i)=>({row_number:i+1,due_date:day(r.due_date),planned_amount:money(r.amount_minor),paid_amount:money(r.paid_amount_minor),balance:money(r.amount_minor-r.paid_amount_minor),status:r.status}))};
+ const date=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(d.deal_date||''));
+ const months=language==='TJ'?['январ','феврал','март','апрел','май','июн','июл','август','сентябр','октябр','ноябр','декабр']:['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+ const price=Number(d.deal_price_per_m2_minor||0),whole=Math.floor(price/100),cents=price%100;
+ Object.assign(context,{contract_day:date?.[3],contract_month:date?months[Number(date[2])-1]:null,contract_year:date?.[1],company_registration:company?.company_registration||'',price_per_m2_words:(language==='TJ'?numberToTajikWords(whole):numberToRussianWords(whole))+(cents?` ${String(cents).padStart(2,'0')}/100`:''),payment_plan_rows:data.financial?[...(Number(d.down_payment_minor)>0?[{due_date:day(d.deal_date),planned_amount:money(d.down_payment_minor),paid_amount:money(Math.min(Number(d.down_payment_minor),Number(data.total_paid_minor||0)))}]:[]),...context.schedules].map((r,i)=>({...r,row_number:i+1})):[]});
  return Object.fromEntries(Object.entries(context).map(([key,value])=>[key,value??null]));
 }
 export async function downloadTemplate(actor,project,deal,kind,language){
@@ -46,11 +52,13 @@ export async function downloadTemplate(actor,project,deal,kind,language){
  if(!row)throw new AppError('Для этого ЖК и языка нет действующего бланка. Администратор должен добавить его в настройках.',404);
  const buffer=Buffer.from(row.file_base64,'base64');
  const text=compileTemplate(buffer).getFullText();
- if(!data.financial&&/\{(?:#schedules|total_paid|remaining_debt|paid_amount|balance)\}/.test(text))throw new AppError('Для финансовых полей этого бланка нужен доступ к платежам',403);
+ const importedPlaza=new PizZip(buffer).file('docProps/core.xml')?.asText().includes('TOZON_PLAZA_APARTMENT_USD_V1');
+ if(importedPlaza&&(data.unit.unit_kind!=='APARTMENT'||data.deal.currency!=='USD'||!['FULL','INSTALLMENT'].includes(data.deal.payment_type)))throw new AppError('Этот бланк Plaza предназначен для квартир в USD с полной оплатой или рассрочкой. Для другого объекта или бартера нужен соответствующий бланк.',409);
+ if(!data.financial&&/\{(?:#schedules|#payment_plan_rows|total_paid|remaining_debt|paid_amount|balance)\}/.test(text))throw new AppError('Для финансовых полей этого бланка нужен доступ к платежам',403);
  if(kind==='CONTRACT'){
   if(!['company_name','director_name','director_authority'].every(k=>text.includes(`{${k}}`)))throw new AppError('Бланк договора должен содержать переменные компании, директора и основания полномочий',409);
  }
- const rendered=renderTemplate(buffer,documentContext(data));
+ const rendered=renderTemplate(buffer,documentContext(data,language));
  await authorizeDocument(actor,project,deal); // Check revocation after template retrieval/rendering.
  return {buffer:rendered,type:MIME,name:`TOZON-${kind}-${deal}-${language}.docx`};
 }

@@ -15,6 +15,7 @@ export const FIELDS = [
   'company_name', 'company_inn', 'company_address', 'company_phone', 'company_bank',
   'company_account', 'director_name', 'director_authority', 'accountant_name', 'cashier_name', 'branch_name',
   'schedules', 'row_number', 'due_date', 'planned_amount', 'paid_amount', 'balance', 'status'
+  , 'payment_plan_rows', 'contract_day', 'contract_month', 'contract_year', 'price_per_m2_words', 'company_registration'
 ];
 export const MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -51,10 +52,10 @@ export function cleanContext(input) {
   const result = Object.create(null);
   for (const [key, value] of Object.entries(input)) {
     if (!FIELDS.includes(key)) throw new AppError(`Неизвестная переменная: ${key}`, 400);
-    if (key === 'schedules') {
+    if (key === 'schedules' || key === 'payment_plan_rows') {
       if (!Array.isArray(value) || value.length > 600) throw new AppError('Некорректный график', 400);
       result[key] = value.map(row => {
-        if (row?.schedules !== undefined) throw new AppError('Вложенный график запрещён', 400);
+        if (row?.schedules !== undefined || row?.payment_plan_rows !== undefined) throw new AppError('Вложенный график запрещён', 400);
         return cleanContext(row);
       });
     } else {
