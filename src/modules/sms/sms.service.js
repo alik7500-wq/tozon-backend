@@ -1,4 +1,5 @@
 import { getDB } from '../../db/connection.js';
+import { normalizeSmsLanguage, resolveSmsTemplateLanguage } from './smsLanguages.js';
 import { PayomSmsProvider } from './sms.provider.js';
 import { SmsRepository } from './sms.repository.js';
 import { LeadsRepository } from '../leads/leads.repository.js';
@@ -288,7 +289,8 @@ export class SmsService {
     paymentId = null,
     taskId = null,
     meetingId = null,
-    todayStr = null
+    todayStr = null,
+    language = null
   }) {
     const normClientId = parseOptionalBigInt(clientId);
     const normDealId = parseOptionalBigInt(dealId);
@@ -431,7 +433,7 @@ export class SmsService {
       const templates = await SmsRepository.getTemplates();
       tmplObj = templates.find((t) => t.code === code && t.is_active);
       if (tmplObj) {
-        templateText = tmplObj.text;
+        templateText = language ? resolveSmsTemplateLanguage({ code, language: normalizeSmsLanguage(language), russianText: tmplObj.text }) : tmplObj.text;
       } else if (!templateText) {
         throw new AppError(`Шаблон ${code} не найден или неактивен`, 404);
       }
@@ -503,7 +505,7 @@ export class SmsService {
         throw new AppError(payCtx?.reason || 'Платёж не найден для формирования шаблона', 400);
       }
 
-      if (payCtx.isMultiCurrency && code === 'PAYMENT_RECEIVED' && !tmplObj?.customized_at && (!text || text === tmplObj?.text)) {
+      if ((!language || language === 'ru') && payCtx.isMultiCurrency && code === 'PAYMENT_RECEIVED' && !tmplObj?.customized_at && (!text || text === tmplObj?.text)) {
         resolvedText = 'Уважаемый(ая) {{client_name}}! По договору №{{contract_number}} принята оплата {{payment_amount}} TJS по курсу {{exchange_rate}} (эквивалент {{payment_equivalent}} USD). Всего оплачено {{total_paid}} USD. Остаток: {{remaining_balance}} USD. Спасибо! TOZON-PLAZA.';
         resolvedText = resolvedText.replace(/\{\{\s*client_name\s*\}\}/g, clientName);
       }
@@ -611,14 +613,15 @@ export class SmsService {
   /**
    * Preview template resolution (read-only, no DB insert, no Payom call).
    */
-  async previewSms({ templateCode = null, text = null, clientId = null, dealId = null, paymentId = null, taskId = null, meetingId = null }) {
+  async previewSms({ templateCode = null, text = null, clientId = null, dealId = null, paymentId = null, taskId = null, meetingId = null, language = null }) {
     return await this.resolveTemplate({
       templateCode,
       text,
       clientId,
       dealId,
       paymentId,
-      taskId: taskId || meetingId
+      taskId: taskId || meetingId,
+      language
     });
   }
 
@@ -637,7 +640,8 @@ export class SmsService {
     meetingId = null,
     userId = null,
     senderName = 'TOZON-PLAZA',
-    existingMessageId = null
+    existingMessageId = null,
+    language = null
   }) {
     const normClientId = parseOptionalBigInt(clientId);
     const normDealId = parseOptionalBigInt(dealId);
@@ -671,7 +675,8 @@ export class SmsService {
         clientId: normClientId,
         dealId: normDealId,
         paymentId: normPaymentId,
-        taskId: normTaskId
+        taskId: normTaskId,
+        language
       });
       messageText = resolvedInfo.text;
     }
