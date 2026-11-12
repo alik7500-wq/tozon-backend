@@ -7,6 +7,7 @@ import { DailyBriefingService } from './dailyBriefing.service.js';
 import { WeeklyDynamicsService } from './weeklyDynamics.service.js';
 import { BlockPlanFactService } from './blockPlanFact.service.js';
 import { SalesManagementExportService } from './salesManagementExport.service.js';
+import { ApartmentSalesReportService } from './apartmentSalesReport.service.js';
 import { protect } from '../../middleware/auth.middleware.js';
 
 const router = Router();
@@ -195,6 +196,29 @@ router.get('/sales-management/export.xlsx', async (req, res, next) => {
     const dateStr = req.query.date || new Date().toISOString().split('T')[0];
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="tozon-sales-management-${dateStr}.xlsx"`);
+    res.status(200).send(Buffer.from(buffer));
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Apartment Sales Report by Blocks (TOZON PLAZA / TOZON PLAZA-2)
+router.get('/apartment-sales', async (req, res, next) => {
+  try {
+    const data = await ApartmentSalesReportService.getApartmentSalesReport(req.query, req.user);
+    res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/apartment-sales/export.xlsx', async (req, res, next) => {
+  try {
+    const buffer = await ApartmentSalesReportService.generateExcelWorkbook(req.query, req.user);
+    const start = req.query.startDate || 'period';
+    const end = req.query.endDate || 'report';
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="tozon-apartment-sales-${start}-${end}.xlsx"`);
     res.status(200).send(Buffer.from(buffer));
   } catch (error) {
     next(error);

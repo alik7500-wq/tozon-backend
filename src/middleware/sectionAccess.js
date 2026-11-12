@@ -132,7 +132,9 @@ export const authorizeSectionRequest = async req => {
     key = 'automation.view';
     if (req.method === 'POST' && /\/preview$|\/template-availability$|\/events\/[^/]+\/preview$/.test(path)) allowed = hasSection(user,key);
   } else if (path.startsWith('/api/reports')) {
-    if (/\/sales-|\/apartment-demand/.test(path)) {
+    if (/\/apartment-sales(?:\/|$)/.test(path)) {
+      if (read) allowed = hasAny(user, ['analytics.view', 'analytics.reports', 'deals.view', 'contracts.view']);
+    } else if (/\/sales-|\/apartment-demand/.test(path)) {
       if (user.role === 'FINANCE_MANAGER') allowed = false;
       else if (read) allowed = hasAny(user, ['analytics.view', 'analytics.reports', 'leads.view', 'deals.view']);
     } else {
