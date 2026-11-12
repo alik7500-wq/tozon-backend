@@ -19,3 +19,5 @@ jobs:
       - run: node --check src/modules/sms/smsEvents.service.js
       - run: node --check src/modules/sms/smsLanguages.js
       - run: node --test src/modules/sms/__tests__/smsLanguages.test.js
+      - run: npm ci
+      - run: npx vitest run src/modules/sms/__tests__/smsManualDispatch.test.js
