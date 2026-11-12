@@ -152,6 +152,7 @@ export function resolveDealAttributionAndCommission({
   const contractPriceMinor = toMinorUnits(deal?.final_price_minor ?? deal?.total_amount_minor);
   const contractPriceUsd = minorToUsd(contractPriceMinor);
   const isDealCancelled = String(deal?.status || '').toUpperCase() === 'CANCELLED' || Boolean(deal?.cancelled_at);
+  const isDealNotSignedYet = Boolean(deal?.status) && !['SIGNED', 'CANCELLED'].includes(String(deal?.status || '').toUpperCase());
 
   // Sort audit logs chronologically (oldest -> newest)
   const sortedLogs = [...(auditLogs || [])].sort((a, b) => {
@@ -290,14 +291,16 @@ export function resolveDealAttributionAndCommission({
   let cancelReason = null;
   let notes = '';
 
-  if (commissionType === 'PERCENT' && commissionRateBp > 0) {
-    calculatedCommissionMinor = Math.round((contractPriceMinor * commissionRateBp) / 10000);
-    status = COMMISSION_STATUSES.CALCULATED;
-    accruedAt = sourceConfirmedAt || deal?.deal_date || deal?.created_at || null;
-  } else if (commissionType === 'FIXED_USD' && commissionFixedMinor > 0) {
-    calculatedCommissionMinor = commissionFixedMinor;
-    status = COMMISSION_STATUSES.CALCULATED;
-    accruedAt = sourceConfirmedAt || deal?.deal_date || deal?.created_at || null;
+  if (!isDealNotSignedYet) {
+    if (commissionType === 'PERCENT' && commissionRateBp > 0) {
+      calculatedCommissionMinor = Math.round((contractPriceMinor * commissionRateBp) / 10000);
+      status = COMMISSION_STATUSES.CALCULATED;
+      accruedAt = sourceConfirmedAt || deal?.deal_date || deal?.created_at || null;
+    } else if (commissionType === 'FIXED_USD' && commissionFixedMinor > 0) {
+      calculatedCommissionMinor = commissionFixedMinor;
+      status = COMMISSION_STATUSES.CALCULATED;
+      accruedAt = sourceConfirmedAt || deal?.deal_date || deal?.created_at || null;
+    }
   }
 
   // Support explicit deal-level commission overrides (for unit tests or migration 055)
@@ -479,19 +482,29 @@ export class MarketingAttributionService {
 
   async getMarketingPartners({ includeInactive = false, user = null } = {}) {
     const db = this.getDb(user);
+    const mergedById = new Map();
+    const seenNames = new Set();
 
-    // 1. Try dedicated `marketing_partners` table first (if migration 055 is applied)
-    const { data: dedicatedData, error: dedicatedError } = await db
-      .from('marketing_partners')
-      .select('*')
-      .order('name', { ascending: true });
+    // 1. Read from dedicated `marketing_partners` table if migration 055 is applied
+    try {
+      const { data: dedicatedData, error: dedicatedError } = await db
+        .from('marketing_partners')
+        .select('*')
+        .order('name', { ascending: true });
 
-    if (!dedicatedError && Array.isArray(dedicatedData)) {
-      const normalized = dedicatedData.map(normalizePartnerFromTableRow);
-      return includeInactive ? normalized : normalized.filter((p) => p.isActive);
+      if (!dedicatedError && Array.isArray(dedicatedData)) {
+        for (const row of dedicatedData) {
+          const norm = normalizePartnerFromTableRow(row);
+          mergedById.set(Number(norm.id), norm);
+          seenNames.add(String(norm.name || '').trim().toLowerCase());
+        }
+      }
+    } catch {
+      // Migration 055 not applied yet
     }
 
-    // 2. Fallback to `public.dictionaries` with `type = 'MARKETING_PARTNER'`
+    // 2. Also read from `public.dictionaries` (`type = 'MARKETING_PARTNER'`) so zero partners are lost
+    //    when transitioning from hybrid storage to dedicated tables
     let query = db
       .from('dictionaries')
       .select('*')
@@ -499,16 +512,24 @@ export class MarketingAttributionService {
       .order('sort_order', { ascending: true })
       .order('name', { ascending: true });
 
-    if (!includeInactive) {
-      query = query.eq('is_active', true);
-    }
-
     const { data, error } = await query;
-    if (error) {
+    if (error && mergedById.size === 0) {
       throw new AppError(`Ошибка загрузки маркетинговых партнёров: ${error.message}`, 500, 'MARKETING_PARTNERS_LOAD_FAILED');
     }
 
-    return (data || []).map(decodePartnerFromDictionaryRow);
+    for (const row of data || []) {
+      const norm = decodePartnerFromDictionaryRow(row);
+      const nameKey = String(norm.name || '').trim().toLowerCase();
+      if (!mergedById.has(Number(norm.id)) && !seenNames.has(nameKey)) {
+        mergedById.set(Number(norm.id), norm);
+        seenNames.add(nameKey);
+      }
+    }
+
+    const allPartners = Array.from(mergedById.values()).sort((a, b) =>
+      String(a.name || '').localeCompare(String(b.name || ''), 'ru')
+    );
+    return includeInactive ? allPartners : allPartners.filter((p) => p.isActive);
   }
 
   async getPartnersMap({ user = null } = {}) {
@@ -897,6 +918,17 @@ export class MarketingAttributionService {
       }
     }
 
+    // Protect against hiding an already-disbursed commission by changing sales source to DIRECT/UNSPECIFIED
+    if (nextSource !== SALES_SOURCES.MARKETER && currentAttr.commission.paidCommissionMinor > 0) {
+      throw new AppError(
+        `Невозможно изменить источник продажи на «${SALES_SOURCE_LABELS[nextSource]}», так как по договору уже выплачена комиссия (${currentAttr.commission.paidCommissionUsd} USD).`,
+        400,
+        'COMMISSION_ALREADY_PAID_CANNOT_CHANGE_SOURCE'
+      );
+    }
+
+    const nowIso = new Date().toISOString();
+    const effectiveReason = reason || (isInitialCreationOrSigning ? 'Указан при оформлении договора' : 'Уточнение источника продажи');
     const auditPayload = {
       old_source: currentAttr.salesSource,
       new_source: nextSource,
@@ -905,9 +937,9 @@ export class MarketingAttributionService {
       new_partner_id: partnerId,
       new_partner_name: partnerObj?.name || null,
       marketer_name: marketerName,
-      reason: reason || (isInitialCreationOrSigning ? 'Указан при оформлении договора' : 'Уточнение источника продажи'),
+      reason: effectiveReason,
       user_name: user?.fullName || user?.full_name || user?.email || null,
-      changed_at: new Date().toISOString(),
+      changed_at: nowIso,
     };
 
     const { error: logErr } = await db
@@ -921,6 +953,34 @@ export class MarketingAttributionService {
 
     if (logErr) {
       throw new AppError(`Не удалось записать аудит источника продажи: ${logErr.message}`, 500, 'AUDIT_LOG_FAILED');
+    }
+
+    // Dual-write to dedicated columns/tables if migration 055 is applied
+    try {
+      await db
+        .from('deals')
+        .update({
+          sales_source: nextSource,
+          marketing_partner_id: partnerId,
+          marketer_name: nextSource === SALES_SOURCES.MARKETER ? (marketerName || null) : null,
+          source_confirmed_by: user?.id ? Number(user.id) : null,
+          source_confirmed_at: nowIso,
+        })
+        .eq('id', id);
+
+      await db.from('deal_source_history').insert({
+        deal_id: id,
+        old_source: currentAttr.salesSource,
+        new_source: nextSource,
+        old_partner_id: currentAttr.marketingPartnerId,
+        new_partner_id: partnerId,
+        new_marketer_name: marketerName || null,
+        reason: effectiveReason,
+        changed_by: user?.id ? Number(user.id) : null,
+        changed_at: nowIso,
+      });
+    } catch {
+      // Migration 055 not applied yet; hybrid audit log is already persisted
     }
 
     // If switched to DIRECT or UNSPECIFIED, cancel/reset any unpaid commission
@@ -938,6 +998,19 @@ export class MarketingAttributionService {
           user_name: user?.fullName || user?.full_name || null,
         },
       });
+      try {
+        await db
+          .from('marketing_commissions')
+          .update({
+            status: COMMISSION_STATUSES.NOT_CALCULATED,
+            calculated_amount_minor: 0,
+            approved_amount_minor: 0,
+            updated_at: nowIso,
+          })
+          .eq('deal_id', id);
+      } catch {
+        // Migration 055 not applied yet
+      }
     }
 
     return this.enrichDealWithAttribution(deal, user);
@@ -1010,10 +1083,20 @@ export class MarketingAttributionService {
       throw new AppError('Невозможно начислить или выплатить комиссию по расторгнутому договору', 400, 'DEAL_CANCELLED');
     }
 
-    const { partnersMap, usersMap, logsByDealId } = await this.loadAttributionContextForDeals([id], user);
+    if (String(deal.status || '').toUpperCase() !== 'SIGNED') {
+      throw new AppError(
+        'Начисление, утверждение и выплата комиссии возможны только по действующему подписанному договору (SIGNED)',
+        400,
+        'DEAL_NOT_SIGNED'
+      );
+    }
+
+    const dealAuditLogs = (await this.loadAttributionContextForDeals([id], user));
+    const { partnersMap, usersMap, logsByDealId } = dealAuditLogs;
+    const existingLogs = logsByDealId.get(id) || [];
     const currentAttr = resolveDealAttributionAndCommission({
       deal,
-      auditLogs: logsByDealId.get(id) || [],
+      auditLogs: existingLogs,
       partnersMap,
       usersMap,
     });
@@ -1029,13 +1112,30 @@ export class MarketingAttributionService {
     const contractPriceMinor = currentAttr.commission.contractPriceMinor;
     const nowIso = new Date().toISOString();
     const notes = String(payload?.notes || payload?.reason || '').trim();
+    const idempotencyKey = payload?.idempotencyKey ? String(payload.idempotencyKey).trim() : null;
+
     let auditChanges = {
       action_type: actionType,
       notes,
+      idempotency_key: idempotencyKey,
       user_name: user?.fullName || user?.full_name || null,
     };
 
     if (actionType === 'SET_RATE') {
+      if (
+        [
+          COMMISSION_STATUSES.APPROVED,
+          COMMISSION_STATUSES.PARTIALLY_PAID,
+          COMMISSION_STATUSES.PAID,
+        ].includes(currentAttr.commission.status)
+      ) {
+        throw new AppError(
+          'Комиссия по данному договору уже утверждена или выплачена. Повторное начисление запрещено.',
+          400,
+          'COMMISSION_ALREADY_APPROVED_OR_PAID'
+        );
+      }
+
       const commissionType = ['PERCENT', 'FIXED_USD', 'NONE'].includes(payload?.commissionType)
         ? payload.commissionType
         : 'PERCENT';
@@ -1067,6 +1167,20 @@ export class MarketingAttributionService {
         accrued_at: calculatedMinor > 0 ? (currentAttr.commission.accruedAt || nowIso) : null,
       };
     } else if (actionType === 'SUBMIT_FOR_APPROVAL') {
+      if (
+        [
+          COMMISSION_STATUSES.PENDING_APPROVAL,
+          COMMISSION_STATUSES.APPROVED,
+          COMMISSION_STATUSES.PARTIALLY_PAID,
+          COMMISSION_STATUSES.PAID,
+        ].includes(currentAttr.commission.status)
+      ) {
+        throw new AppError(
+          `Комиссия уже находится в статусе «${currentAttr.commission.statusLabel}». Повторная отправка на утверждение запрещена.`,
+          400,
+          'COMMISSION_ALREADY_SUBMITTED_OR_APPROVED'
+        );
+      }
       if (currentAttr.commission.calculatedCommissionMinor <= 0) {
         throw new AppError(
           'Нельзя отправить на утверждение нулевую комиссию. Сначала укажите согласованную ставку комиссии.',
@@ -1080,6 +1194,20 @@ export class MarketingAttributionService {
         accrued_at: currentAttr.commission.accruedAt || nowIso,
       };
     } else if (actionType === 'APPROVE') {
+      if (
+        [
+          COMMISSION_STATUSES.APPROVED,
+          COMMISSION_STATUSES.PARTIALLY_PAID,
+          COMMISSION_STATUSES.PAID,
+        ].includes(currentAttr.commission.status)
+      ) {
+        throw new AppError(
+          `Комиссия по данному договору уже утверждена (статус «${currentAttr.commission.statusLabel}»). Двойное утверждение запрещено.`,
+          400,
+          'COMMISSION_ALREADY_APPROVED'
+        );
+      }
+
       const customApprovedUsd = payload?.approvedCommissionUsd;
       const approvedMinor = customApprovedUsd !== undefined && customApprovedUsd !== null && customApprovedUsd !== ''
         ? Math.round(Number(customApprovedUsd) * 100)
@@ -1108,6 +1236,13 @@ export class MarketingAttributionService {
         approved_by: user?.id ? Number(user.id) : null,
       };
     } else if (actionType === 'RECORD_PAYOUT') {
+      if (currentAttr.commission.status === COMMISSION_STATUSES.PAID) {
+        throw new AppError(
+          'Комиссия по данному договору уже полностью выплачена. Повторная выплата запрещена.',
+          400,
+          'COMMISSION_ALREADY_FULLY_PAID'
+        );
+      }
       if (
         ![
           COMMISSION_STATUSES.APPROVED,
@@ -1130,6 +1265,24 @@ export class MarketingAttributionService {
         throw new AppError('Сумма выплаты комиссии должна быть больше 0 USD', 400, 'INVALID_PAYOUT_AMOUNT');
       }
 
+      // Protection against duplicate payout request (explicit idempotencyKey)
+      if (idempotencyKey) {
+        const duplicateKeyExists = existingLogs.some((log) => {
+          if (log.action !== AUDIT_ACTION_COMMISSION) return false;
+          const p = typeof log.changes_json === 'string'
+            ? (() => { try { return JSON.parse(log.changes_json); } catch { return {}; } })()
+            : (log.changes_json || {});
+          return p.action_type === 'RECORD_PAYOUT' && p.idempotency_key === idempotencyKey;
+        });
+        if (duplicateKeyExists) {
+          throw new AppError(
+            'Повторный запрос на выплату комиссии с тем же ключом идемпотентности заблокирован',
+            409,
+            'DUPLICATE_COMMISSION_PAYOUT'
+          );
+        }
+      }
+
       const nextPaidMinor = currentAttr.commission.paidCommissionMinor + payoutMinor;
       if (nextPaidMinor > currentAttr.commission.approvedCommissionMinor) {
         throw new AppError(
@@ -1145,6 +1298,7 @@ export class MarketingAttributionService {
 
       auditChanges = {
         ...auditChanges,
+        payout_delta_minor: payoutMinor,
         paid_amount_minor: nextPaidMinor,
         status: nextStatus,
         paid_at: nowIso,
@@ -1175,7 +1329,40 @@ export class MarketingAttributionService {
       throw new AppError(`Не удалось сохранить статус комиссии: ${logErr.message}`, 500, 'COMMISSION_UPDATE_FAILED');
     }
 
-    return this.enrichDealWithAttribution(deal, user);
+    const enriched = await this.enrichDealWithAttribution(deal, user);
+
+    // Dual-write to dedicated `public.marketing_commissions` table if migration 055 is applied
+    try {
+      const c = enriched.commission;
+      await db
+        .from('marketing_commissions')
+        .upsert(
+          {
+            deal_id: id,
+            partner_id: enriched.marketing_partner_id,
+            contract_price_minor: c.contractPriceMinor,
+            commission_type: c.commissionType,
+            commission_rate_bp: c.commissionRateBp,
+            calculated_amount_minor: c.calculatedCommissionMinor,
+            approved_amount_minor: c.approvedCommissionMinor,
+            paid_amount_minor: c.paidCommissionMinor,
+            status: c.status,
+            accrued_at: c.accruedAt,
+            approved_at: c.approvedAt,
+            approved_by: c.approvedBy,
+            paid_at: c.paidAt,
+            cancelled_at: c.cancelledAt,
+            cancel_reason: c.cancelReason,
+            notes: c.notes,
+            updated_at: nowIso,
+          },
+          { onConflict: 'deal_id' }
+        );
+    } catch {
+      // Migration 055 not applied yet; hybrid audit log is already persisted
+    }
+
+    return enriched;
   }
 }
 

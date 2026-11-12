@@ -1218,4 +1218,203 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
     expect(partnerOnly.apartments[0].contractNumber).toBe('V3-MKT-1');
     expect(partnerOnly.apartments[0].marketingPartnerName).toBe('Media Дом');
   });
+
+  it('13. [V3 Audit] Защита от авто-начисления по неподписанным сделкам, двойного начисления, повторной выплаты и потери данных при переходе на таблицы 055', async () => {
+    const partnersMap = new Map([
+      [
+        801,
+        {
+          id: 801,
+          name: 'Partner Alpha',
+          isActive: true,
+          commissionType: 'PERCENT',
+          commissionRateBp: 300,
+          commissionRatePercent: 3,
+          commissionFixedMinor: 0,
+        },
+      ],
+    ]);
+
+    // 13a. RESERVED deal (not SIGNED yet) must NOT accrue commission even with MARKETER source
+    const reservedAttr = resolveDealAttributionAndCommission({
+      deal: { id: 8001, status: 'RESERVED', final_price_minor: 5000000 },
+      auditLogs: [
+        {
+          id: 1,
+          deal_id: 8001,
+          action: AUDIT_ACTION_SALES_SOURCE,
+          changes_json: { new_source: 'MARKETER', new_partner_id: 801 },
+          created_at: '2026-11-10T10:00:00Z',
+        },
+      ],
+      partnersMap,
+    });
+    expect(reservedAttr.salesSource).toBe('MARKETER');
+    expect(reservedAttr.commission.status).toBe(COMMISSION_STATUSES.NOT_CALCULATED);
+    expect(reservedAttr.commission.calculatedCommissionUsd).toBe(0);
+    expect(reservedAttr.commission.approvedCommissionUsd).toBe(0);
+
+    // 13b. Service-level guards against double accrual, double approval, duplicate payout, and source change after payout
+    const state = {
+      deal: { id: 8002, status: 'SIGNED', final_price_minor: 10000000 }, // $100,000
+      logs: [
+        {
+          id: 1,
+          deal_id: 8002,
+          user_id: 1,
+          action: AUDIT_ACTION_SALES_SOURCE,
+          changes_json: { new_source: 'MARKETER', new_partner_id: 801 },
+          created_at: '2026-11-10T10:00:00Z',
+        },
+      ],
+      dedicatedPartners: [
+        {
+          id: 801,
+          name: 'Partner Alpha',
+          is_active: true,
+          commission_type: 'PERCENT',
+          commission_rate_bp: 300,
+          commission_fixed_minor: 0,
+        },
+      ],
+      dictPartners: [
+        {
+          id: 802,
+          type: 'MARKETING_PARTNER',
+          name: 'Hybrid Partner Beta',
+          is_active: true,
+          code: JSON.stringify({ commissionType: 'NONE', commissionRateBp: 0 }),
+        },
+      ],
+    };
+
+    const mockDb = {
+      from: (table) => {
+        if (table === 'deals') {
+          return {
+            select: () => ({
+              eq: () => ({
+                maybeSingle: async () => ({ data: state.deal, error: null }),
+              }),
+            }),
+            update: (vals) => ({
+              eq: async () => {
+                Object.assign(state.deal, vals);
+                return { data: state.deal, error: null };
+              },
+            }),
+          };
+        }
+        if (table === 'marketing_partners') {
+          return {
+            select: () => ({
+              order: async () => ({ data: state.dedicatedPartners, error: null }),
+            }),
+          };
+        }
+        if (table === 'dictionaries') {
+          const q = {
+            eq: () => q,
+            order: () => q,
+            then: (resolve) => resolve({ data: state.dictPartners, error: null }),
+          };
+          return { select: () => q };
+        }
+        if (table === 'users') {
+          return {
+            select: async () => ({ data: [{ id: 1, name: 'Admin User', role: 'ADMIN' }], error: null }),
+          };
+        }
+        if (table === 'deal_audit_logs') {
+          const q = {
+            in: () => q,
+            order: async () => ({ data: state.logs, error: null }),
+          };
+          return {
+            select: () => q,
+            insert: async (row) => {
+              state.logs.push({
+                id: state.logs.length + 1,
+                ...row,
+                created_at: new Date().toISOString(),
+              });
+              return { error: null };
+            },
+          };
+        }
+        return {
+          insert: async () => ({ error: null }),
+          update: () => ({ eq: async () => ({ error: null }) }),
+          upsert: async () => ({ error: null }),
+        };
+      },
+    };
+
+    const svc = new MarketingAttributionService(() => mockDb);
+    const adminUser = { id: 1, role: 'ADMIN', fullName: 'Admin User' };
+
+    // Verify hybrid + dedicated partner merge (zero loss)
+    const mergedPartners = await svc.getMarketingPartners({ includeInactive: true, user: adminUser });
+    expect(mergedPartners.map((p) => p.id).sort()).toEqual([801, 802]);
+
+    // First approval succeeds ($3,000)
+    const approvedDeal = await svc.updateDealCommission(8002, { action: 'APPROVE' }, adminUser);
+    expect(approvedDeal.commission.status).toBe(COMMISSION_STATUSES.APPROVED);
+    expect(approvedDeal.commission.approvedCommissionUsd).toBe(3000);
+
+    // Double approval is blocked
+    await expect(
+      svc.updateDealCommission(8002, { action: 'APPROVE' }, adminUser)
+    ).rejects.toThrow(/уже утверждена/);
+
+    // Double accrual (SET_RATE after approval) is blocked
+    await expect(
+      svc.updateDealCommission(8002, { action: 'SET_RATE', commissionType: 'PERCENT', commissionRatePercent: 5 }, adminUser)
+    ).rejects.toThrow(/Повторное начисление запрещено/);
+
+    // First payout of $1,500 with idempotencyKey succeeds
+    const partialDeal = await svc.updateDealCommission(
+      8002,
+      { action: 'RECORD_PAYOUT', payoutAmountUsd: 1500, idempotencyKey: 'payout-8002-1' },
+      adminUser
+    );
+    expect(partialDeal.commission.status).toBe(COMMISSION_STATUSES.PARTIALLY_PAID);
+    expect(partialDeal.commission.paidCommissionUsd).toBe(1500);
+
+    // Duplicate payout with same idempotencyKey is blocked
+    await expect(
+      svc.updateDealCommission(
+        8002,
+        { action: 'RECORD_PAYOUT', payoutAmountUsd: 1500, idempotencyKey: 'payout-8002-1' },
+        adminUser
+      )
+    ).rejects.toThrow(/идемпотентности/);
+
+    // Changing source to DIRECT after commission payout is blocked
+    await expect(
+      svc.updateDealSalesSource(
+        8002,
+        { salesSource: 'DIRECT', reason: 'Попытка сменить источник после выплаты' },
+        adminUser
+      )
+    ).rejects.toThrow(/уже выплачена комиссия/);
+
+    // Pay remaining $1,500 -> PAID
+    const paidDeal = await svc.updateDealCommission(
+      8002,
+      { action: 'RECORD_PAYOUT', payoutAmountUsd: 1500, idempotencyKey: 'payout-8002-2' },
+      adminUser
+    );
+    expect(paidDeal.commission.status).toBe(COMMISSION_STATUSES.PAID);
+    expect(paidDeal.commission.remainingCommissionUsd).toBe(0);
+
+    // Any further payout after PAID is blocked
+    await expect(
+      svc.updateDealCommission(
+        8002,
+        { action: 'RECORD_PAYOUT', payoutAmountUsd: 100 },
+        adminUser
+      )
+    ).rejects.toThrow(/уже полностью выплачена/);
+  });
 });
