@@ -417,7 +417,8 @@ export class SmsService {
     paymentId = null,
     taskId = null,
     meetingId = null,
-    todayStr = null
+    todayStr = null,
+    language = null
   }) {
     const normClientId = parseOptionalBigInt(clientId);
     const normDealId = parseOptionalBigInt(dealId);
