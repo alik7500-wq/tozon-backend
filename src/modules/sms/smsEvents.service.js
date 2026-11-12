@@ -245,7 +245,7 @@ export class SmsEventsService {
       });
 
       const currentHash = this.computePreviewHash(previewResult.text, claimedEvent.id);
-      if (previewHash && currentHash !== previewHash) {
+      if (!previewHash || currentHash !== previewHash) {
         // Preview text changed since manager viewed it! Revert status back to AWAITING_CONFIRMATION (0 Payom calls executed).
         await SmsEventsRepository.revertToAwaitingConfirmation(claimedEvent.id);
         throw new AppError('Текст сообщения изменился. Пожалуйста, проверьте обновлённый текст перед отправкой', 400, 'PREVIEW_CHANGED');
@@ -275,7 +275,10 @@ export class SmsEventsService {
         });
         preAttemptId = attemptMsg?.id || null;
       } catch (e) {
-        console.warn('Failed to pre-record sms_messages attempt:', e.message);
+        throw new AppError('Не удалось сохранить попытку SMS до отправки: ' + e.message, 500, 'SMS_PREATTEMPT_FAILED');
+      }
+      if (!preAttemptId) {
+        throw new AppError('Отсутствует сохранённая попытка SMS', 500, 'SMS_PREATTEMPT_FAILED');
       }
 
       // 6. Dispatch via SmsService reusing preAttemptId (Exactly ONE Payom POST call & ONE sms_message row)
