@@ -1,4 +1,6 @@
+import { instagramMessageContent, instagramMessagePreview } from './instagram-message-content.js';
 const GRAPH = 'https://graph.facebook.com/v25.0';
+const CONTENT_FIELDS = 'message,attachments,shares,sticker,story,reactions,is_unsupported';
 export class InboxError extends Error {
   constructor(code, status = 502) { super(code); this.code = code; this.status = status; }
 }
@@ -51,13 +53,13 @@ export function createInstagramInboxClient({ accountId, token, request = fetch, 
   async function conversations(after) {
     const pageId = await page();
     const body = await graph(`/${pageId}/conversations`, { platform: 'instagram', limit: 50,
-      fields: 'id,participants,updated_time,messages.limit(1){message,created_time}', after: inboxCursor(after) });
+      fields: `id,participants,updated_time,messages.limit(1){created_time,${CONTENT_FIELDS}}`, after: inboxCursor(after) });
     if (!Array.isArray(body.data)) throw new InboxError('INSTAGRAM_INVALID_RESPONSE');
     return { data: body.data.flatMap(c => {
       const contact = contactOf(c, pageId);
       if (!contact || !validId(c.id)) return [];
       return [{ instagramAccountId: accountId, contactId: contact.id, name: contact.username || contact.name || null,
-        lastMessage: c.messages?.data?.[0]?.message || '', updatedAt: c.updated_time || null }];
+        lastMessage: instagramMessagePreview(c.messages?.data?.[0]), updatedAt: c.updated_time || null }];
     }), nextCursor: next(body) };
   }
   async function conversation(contactId) {
@@ -71,11 +73,10 @@ export function createInstagramInboxClient({ accountId, token, request = fetch, 
   }
   async function readMessages(conversationId, after) {
     const body = await graph(`/${encodeURIComponent(conversationId)}/messages`, {
-      fields: 'id,created_time,from,to,message,attachments', limit: 50, after: inboxCursor(after) });
+      fields: `id,created_time,from,to,${CONTENT_FIELDS}`, limit: 50, after: inboxCursor(after) });
     if (!Array.isArray(body.data)) throw new InboxError('INSTAGRAM_INVALID_RESPONSE');
     const pageId = await page();
-    return { data: body.data.map(m => ({ message_id: m.id, text_content: m.message || '',
-      has_attachments: Boolean(m.attachments?.data?.length), created_at: m.created_time,
+    return { data: body.data.map(m => ({ message_id: m.id, ...instagramMessageContent(m), created_at: m.created_time,
       senderId: m.from?.id, is_echo: [accountId, pageId].includes(m.from?.id) })), nextCursor: next(body) };
   }
   async function messages(contactId, after) {
