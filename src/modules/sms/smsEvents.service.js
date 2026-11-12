@@ -130,7 +130,7 @@ export class SmsEventsService {
    * Server-side preview of outbox event using authoritative DB state.
    * Payom calls = 0. Does NOT change event status.
    */
-  async previewEvent(id) {
+  async previewEvent(id, language = null) {
     const event = await this.getEventById(id);
     
     try {
@@ -158,7 +158,8 @@ export class SmsEventsService {
       clientId: event.client_id,
       dealId: event.deal_id,
       paymentId: event.payment_id,
-      taskId: event.task_id
+      taskId: event.task_id,
+      language
     });
 
     const previewHash = this.computePreviewHash(previewResult.text, event.id);
@@ -201,7 +202,7 @@ export class SmsEventsService {
   /**
    * Confirm and process event with atomic state claim & pre-send re-validation.
    */
-  async confirmEvent({ id, userId = null, previewHash = null }) {
+  async confirmEvent({ id, userId = null, previewHash = null, language = null }) {
     const checkEvent = await SmsEventsRepository.getById(id);
     if (!checkEvent) {
       throw new AppError(`Событие SMS Outbox с ID ${id} не найдено`, 404);
@@ -239,7 +240,8 @@ export class SmsEventsService {
         clientId: claimedEvent.client_id,
         dealId: claimedEvent.deal_id,
         paymentId: claimedEvent.payment_id,
-        taskId: claimedEvent.task_id
+        taskId: claimedEvent.task_id,
+        language
       });
 
       const currentHash = this.computePreviewHash(previewResult.text, claimedEvent.id);
@@ -284,7 +286,8 @@ export class SmsEventsService {
         dealId: claimedEvent.deal_id,
         paymentId: claimedEvent.payment_id,
         userId,
-        existingMessageId: preAttemptId
+        existingMessageId: preAttemptId,
+        language
       });
 
       if (!sendResult.success) {
