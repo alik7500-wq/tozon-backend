@@ -124,6 +124,7 @@ export class SmsRepository {
    */
   static async updateMessageStatus(id, {
     status,
+    language = null,
     phone = null,
     message = null,
     providerMessageId = null,
@@ -142,6 +143,7 @@ export class SmsRepository {
       updated_at: now
     };
 
+    if (language !== null) updates.language = language;
     if (phone !== null) updates.phone = phone;
     if (message !== null) updates.message = message;
     if (providerMessageId !== null) updates.provider_message_id = providerMessageId;
