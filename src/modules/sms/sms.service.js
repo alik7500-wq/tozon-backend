@@ -647,6 +647,8 @@ export class SmsService {
     const normDealId = parseOptionalBigInt(dealId);
     const normPaymentId = parseOptionalBigInt(paymentId);
     const normTaskId = parseOptionalBigInt(taskId || meetingId);
+    // Persist the actual language selected for this dispatch; null means legacy caller.
+    const smsLanguage = language ? normalizeSmsLanguage(language) : null;
 
     // Duplicate send protection for PAYMENT_RECEIVED
     if (templateCode === 'PAYMENT_RECEIVED' && normPaymentId) {
@@ -747,6 +749,7 @@ export class SmsService {
         dealId: normDealId,
         contractId,
         paymentId: normPaymentId,
+        language: smsLanguage,
         phone: normalizedPhone,
         message: cleanedText,
         provider: 'PAYOM',
