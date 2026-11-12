@@ -3,7 +3,7 @@ import { AppError } from '../../shared/errors/errorHandler.js';
 
 export async function sendSms(req, res, next) {
   try {
-    const { clientId, phone, text, templateCode, dealId, contractId, paymentId } = req.body;
+    const { clientId, phone, text, templateCode, dealId, contractId, paymentId, language } = req.body;
     const userId = req.user?.id;
 
     if (!clientId && !phone) {
@@ -23,6 +23,7 @@ export async function sendSms(req, res, next) {
       contractId,
       paymentId,
       userId,
+      language,
       senderName: 'TOZON-PLAZA'
     });
 
@@ -79,7 +80,7 @@ export async function getTemplates(req, res, next) {
 
 export async function previewSms(req, res, next) {
   try {
-    const { templateCode, text, clientId, dealId, paymentId, taskId, meetingId } = req.body;
+    const { templateCode, text, clientId, dealId, paymentId, taskId, meetingId, language } = req.body;
 
     const previewResult = await defaultSmsService.previewSms({
       templateCode,
@@ -87,7 +88,8 @@ export async function previewSms(req, res, next) {
       clientId,
       dealId,
       paymentId,
-      taskId: taskId || meetingId
+      taskId: taskId || meetingId,
+      language
     });
 
     return res.status(200).json({
