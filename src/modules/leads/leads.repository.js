@@ -153,6 +153,12 @@ export class LeadsRepository {
 
   static _prepareLeadData(data) {
     const payload = {};
+    if (data.sms_language !== undefined) {
+      if (!['tj', 'ru'].includes(data.sms_language)) {
+        throw new Error('Недопустимый язык SMS: разрешены tj или ru');
+      }
+      payload.sms_language = data.sms_language;
+    }
     
     if (data.full_name !== undefined) payload.full_name = data.full_name ? String(data.full_name).trim() : '';
     if (data.phone !== undefined) payload.phone = data.phone ? String(data.phone).trim() : '';
