@@ -1,4 +1,5 @@
 import {setupRpc,executeSetup} from './company-projects.setup.js';
+import {checkProjectStorage} from './storage.self-test.js';
 import rateLimit from 'express-rate-limit';
 import {projectReadiness} from './company-projects.readiness.js';
 import {assertWorkspacePilotRuntime} from './workspace.boundary.js';
@@ -27,6 +28,10 @@ function reminderOrigin(req){
  if((req.method!=='GET'||req.headers.origin)&&(!origin||req.headers.origin!==origin))throw new AppError('Недопустимый источник запроса',403);
 }
 const setupLimit=rateLimit({windowMs:60000,limit:20,standardHeaders:true,legacyHeaders:false});
+const storageLimit=rateLimit({windowMs:60000,limit:5,standardHeaders:true,legacyHeaders:false});
+router.post('/:id/storage-check',storageLimit,async(req,res,next)=>{
+ try{assertWorkspacePilotRuntime();reminderOrigin(req);const id=z.uuid().parse(req.params.id);z.object({}).strict().parse(req.query);z.object({}).strict().parse(req.body);res.json({status:'success',data:await checkProjectStorage(req.user.id,id)});}catch(e){next(e instanceof z.ZodError?new AppError('Некорректный запрос проверки хранилища',400):e);}
+});
 router.get('/:id/setup',async(req,res,next)=>{
  try{assertWorkspacePilotRuntime();reminderOrigin(req);const id=z.uuid().parse(req.params.id);z.object({}).strict().parse(req.query);res.json({status:'success',data:await setupRpc('read_company_project_setup',{p_actor:req.user.id,p_project:id})});}catch(e){next(e instanceof z.ZodError?new AppError('Некорректный проект',400):e);}
 });
