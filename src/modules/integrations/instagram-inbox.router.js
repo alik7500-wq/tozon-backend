@@ -3,6 +3,8 @@ import rateLimit from 'express-rate-limit';
 import { protect } from '../../middleware/auth.middleware.js';
 import { getInstagramInboxCredentials } from './instagram-connection.repository.js';
 import { createInstagramInboxClient, InboxError } from './instagram-inbox.client.js';
+import { liveInboxEnabled } from './instagram-live.repository.js';
+import { createInstagramLiveInbox } from './instagram-live.service.js';
 
 const router = Router();
 router.use(protect, (req, res, next) => {
@@ -19,7 +21,7 @@ const handle = operation => async (req, res) => {
     const credentials = await getInstagramInboxCredentials();
     if (!credentials) throw new InboxError('INSTAGRAM_RECONNECT_REQUIRED', 409);
     if (req.params.account && req.params.account !== credentials.accountId) throw new InboxError('INSTAGRAM_ACCOUNT_MISMATCH', 404);
-    const result = await operation(createInstagramInboxClient(credentials), req);
+    const result = await operation(liveInboxEnabled() ? createInstagramLiveInbox(credentials) : createInstagramInboxClient(credentials), req);
     return res.json({ status: 'success', ...result });
   } catch (error) {
     // Do not serialize Graph errors, tokens, customer text, or request URLs.

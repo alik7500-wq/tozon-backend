@@ -58,6 +58,17 @@ describe('Instagram Direct Graph adapter', () => {
   const api=createInstagramInboxClient({accountId,token,request});
   await expect(api.conversations()).rejects.toMatchObject({code:'INSTAGRAM_PERMISSION_REQUIRED'});
  });
+ it('maps Meta reply-window and thread-ownership subcodes separately from OAuth permissions',async()=>{
+  for(const [subcode,code] of [[2534022,'INSTAGRAM_REPLY_WINDOW_CLOSED'],[2534037,'INSTAGRAM_THREAD_OWNER_REQUIRED']]){
+   const request=vi.fn().mockResolvedValue({ok:false,json:async()=>({error:{code:10,error_subcode:subcode}})});
+   await expect(createInstagramInboxClient({accountId,token,request}).conversations()).rejects.toMatchObject({code,status:409});
+  }
+ });
+ it('sends using a trusted server-side inbound timestamp after verifying Page identity, without history reads',async()=>{
+  const now=Date.parse('2026-11-12T02:00:00Z');const {api,request}=client([page,{message_id:'sent'}],now);
+  await expect(api.send(contact,'answer','2026-11-12T01:00:00Z')).resolves.toEqual({messageId:'sent'});
+  expect(request).toHaveBeenCalledTimes(2);expect(request.mock.calls[0][0].pathname).toBe('/v25.0/me');expect(request.mock.calls[1][1].method).toBe('POST');
+ });
  it('rejects invalid ids, text and pagination input', async () => {
   const {api,request}=client([]);
   await expect(api.send(contact,'x'.repeat(1001))).rejects.toMatchObject({status:400});
