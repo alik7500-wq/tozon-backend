@@ -734,6 +734,9 @@ export class SmsService {
     const cleanExistingId = parseOptionalBigInt(existingMessageId);
     if (cleanExistingId) {
       dbRecord = await SmsRepository.getById(cleanExistingId);
+      if (!dbRecord) {
+        throw new AppError('Предварительно созданная запись SMS не найдена. Отправка отменена', 500, 'SMS_ATTEMPT_NOT_FOUND');
+      }
       if (dbRecord) {
         await SmsRepository.updateMessageStatus(dbRecord.id, {
           phone: normalizedPhone,
