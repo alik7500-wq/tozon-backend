@@ -1,17 +1,41 @@
 import { instagramMessageContent, instagramMessagePreview } from './instagram-message-content.js';
+import { createHash } from 'node:crypto';
 const GRAPH = 'https://graph.facebook.com/v25.0';
 const CONTENT_FIELDS = 'message,attachments,shares,sticker,story,reactions,is_unsupported';
 export class InboxError extends Error {
   constructor(code, status = 502) { super(code); this.code = code; this.status = status; }
 }
 const validId = value => typeof value === 'string' && /^[A-Za-z0-9_:-]{1,512}$/.test(value);
+
+// Only verified identifiers, no message bodies or plaintext tokens. Bound memory and lifetime.
+export function createInstagramLookupCache({ ttlMs = 60000, maxEntries = 1024 } = {}) {
+  const entries = new Map();
+  return {
+    get(key, time) {
+      const entry = entries.get(key);
+      if (!entry || entry.expires <= time) { entries.delete(key); return undefined; }
+      return entry.value;
+    },
+    set(key, value, time) {
+      entries.delete(key);
+      entries.set(key, { value, expires: time + ttlMs });
+      while (entries.size > maxEntries) entries.delete(entries.keys().next().value);
+    },
+    delete(key) { entries.delete(key); }
+  };
+}
+const lookupCache = createInstagramLookupCache();
 export function inboxCursor(value) {
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || !/^[A-Za-z0-9_=-]{1,2048}$/.test(value)) throw new InboxError('INVALID_CURSOR', 400);
   return value;
 }
 // Use only fixed-host requests and caller-supplied cursors, never Meta paging URLs.
-export function createInstagramInboxClient({ accountId, token, request = fetch, now = Date.now }) {
+export function createInstagramInboxClient({ accountId, token, request = fetch, now = Date.now,
+  cache = request === fetch ? lookupCache : null }) {
+  const identity = createHash('sha256').update(accountId + ':' + token).digest('hex');
+  const pageKey = identity + ':page';
+  const contactKey = contact => identity + ':contact:' + contact;
   async function graph(path, params = {}, body) {
     const url = new URL(GRAPH + path);
     for (const [k, v] of Object.entries(params)) if (v !== undefined) url.searchParams.set(k, String(v));
@@ -32,13 +56,17 @@ export function createInstagramInboxClient({ accountId, token, request = fetch, 
     return result;
   }
   let ownPage;
-  async function page() {
+  async function page(fresh = false) {
+    if (fresh) ownPage = undefined;
+    if (!ownPage && !fresh) ownPage = cache?.get(pageKey, now());
     if (!ownPage) {
+      cache?.delete(pageKey);
       const p = await graph('/me', { fields: 'id,instagram_business_account' });
       if (!/^\d+$/.test(p.id || '') || String(p.instagram_business_account?.id) !== accountId) {
         throw new InboxError('INSTAGRAM_ACCOUNT_MISMATCH', 409);
       }
       ownPage = p.id;
+      cache?.set(pageKey, ownPage, now());
     }
     return ownPage;
   }
@@ -58,17 +86,24 @@ export function createInstagramInboxClient({ accountId, token, request = fetch, 
     return { data: body.data.flatMap(c => {
       const contact = contactOf(c, pageId);
       if (!contact || !validId(c.id)) return [];
+      cache?.set(contactKey(contact.id), c.id, now());
       return [{ instagramAccountId: accountId, contactId: contact.id, name: contact.username || contact.name || null,
         lastMessage: instagramMessagePreview(c.messages?.data?.[0]), updatedAt: c.updated_time || null }];
     }), nextCursor: next(body) };
   }
-  async function conversation(contactId) {
+  async function conversation(contactId, fresh = false) {
     if (!/^\d{1,40}$/.test(contactId || '')) throw new InboxError('INVALID_CONTACT', 400);
-    const pageId = await page();
+    if (!fresh) {
+      const known = cache?.get(contactKey(contactId), now());
+      if (known) return known;
+    }
+    cache?.delete(contactKey(contactId));
+    const pageId = await page(fresh);
     const body = await graph(`/${pageId}/conversations`, { platform: 'instagram', user_id: contactId,
       fields: 'id,participants', limit: 2 });
     const matching = body.data?.filter(c => contactOf(c, pageId)?.id === contactId && validId(c.id));
     if (matching?.length !== 1) throw new InboxError('INSTAGRAM_CONVERSATION_NOT_FOUND', 404);
+    cache?.set(contactKey(contactId), matching[0].id, now());
     return matching[0].id;
   }
   async function readMessages(conversationId, after) {
@@ -81,13 +116,19 @@ export function createInstagramInboxClient({ accountId, token, request = fetch, 
   }
   async function messages(contactId, after) {
     const c = await conversation(contactId);
-    const result = await readMessages(c, after);
+    let result;
+    try { result = await readMessages(c, after); }
+    catch (error) {
+      cache?.delete(contactKey(contactId));
+      cache?.delete(pageKey);
+      throw error;
+    }
     return { ...result, data: result.data.map(({ senderId: _senderId, ...m }) => m)
       .sort((a,b) => Date.parse(a.created_at) - Date.parse(b.created_at)) };
   }
   async function send(contactId, text) {
     if (typeof text !== 'string' || !text.trim() || text.length > 1000) throw new InboxError('INVALID_MESSAGE', 400);
-    const c = await conversation(contactId);
+    const c = await conversation(contactId, true);
     let after, eligible = false;
     // Fail closed if the inbound message cannot be verified in the bounded history.
     for (let i = 0; i < 5; i++) {
