@@ -1,5 +1,18 @@
 import { getServiceDB } from '../../db/connection.js';
-import { encryptSocialToken } from './social-token-crypto.js';
+import { encryptSocialToken, decryptSocialToken } from './social-token-crypto.js';
+
+// Server-only credentials. Never return this object from an HTTP handler.
+export async function getInstagramInboxCredentials() {
+  const { data, error } = await getServiceDB().from('tozon_instagram_connections')
+    .select('instagram_user_id,encrypted_access_token,token_expires_at,granted_scopes')
+    .eq('status', 'connected').limit(2);
+  if (error) throw new Error('Connection lookup unavailable');
+  const row = data?.length === 1 ? data[0] : null;
+  if (!row || String(row.instagram_user_id) !== '17841447499018452' ||
+      (row.token_expires_at && !(Date.parse(row.token_expires_at) > Date.now()))) return null;
+  if (!row.granted_scopes?.includes('instagram_manage_messages')) return null;
+  return { accountId: String(row.instagram_user_id), token: decryptSocialToken(row.encrypted_access_token) };
+}
 
 export async function saveTozonInstagramConnection({ instagramUserId, username, accessToken, expiresIn, grantedScopes = [] }) {
   if (!instagramUserId || !accessToken) throw new TypeError('Instagram account and token are required');

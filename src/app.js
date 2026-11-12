@@ -6,6 +6,7 @@ import express from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import instagramIngestGatedRouter from './modules/integrations/instagram-ingest-gated.router.js';
 import instagramOAuthRouter from './modules/integrations/instagram.router.js';
+import instagramInboxRouter from './modules/integrations/instagram-inbox.router.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -124,6 +125,10 @@ app.use('/api', activityMiddleware);
 app.use('/api/auth/activity', activityRouter);
 // OAuth remains fail-closed until INSTAGRAM_OAUTH_ENABLED=true.
 app.use('/api/integrations/instagram', instagramOAuthRouter);
+app.use('/api/integrations/instagram', (req, res, next) => {
+  if (!req.path.startsWith('/inbox/') && !req.path.startsWith('/send/')) return next();
+  return instagramInboxRouter(req, res, next);
+});
 app.use('/api/leads/intake', leadIntakeRouter);
 app.use('/api/telegram-finance', telegramFinanceRouter);
 app.use('/api/construction', constructionRouter);
