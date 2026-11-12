@@ -737,6 +737,7 @@ export class SmsService {
         await SmsRepository.updateMessageStatus(dbRecord.id, {
           phone: normalizedPhone,
           message: cleanedText,
+          language: smsLanguage,
           status: 'sending'
         });
       }
