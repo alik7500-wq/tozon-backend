@@ -317,6 +317,18 @@ function createEmptyBlockRow(meta) {
     marketerSalesAmountUsd: 0,
     unspecifiedSalesAmountMinor: 0,
     unspecifiedSalesAmountUsd: 0,
+    paidDownPaymentMinor: 0,
+    paidDownPaymentUsd: 0,
+    paidDownPaymentPercent: 0,
+    directPaidDownPaymentMinor: 0,
+    directPaidDownPaymentUsd: 0,
+    directPaidDownPaymentPercent: 0,
+    marketerPaidDownPaymentMinor: 0,
+    marketerPaidDownPaymentUsd: 0,
+    marketerPaidDownPaymentPercent: 0,
+    unspecifiedPaidDownPaymentMinor: 0,
+    unspecifiedPaidDownPaymentUsd: 0,
+    unspecifiedPaidDownPaymentPercent: 0,
     paidCashMinor: 0,
     paidCashUsd: 0,
     paidBarterMinor: 0,
@@ -943,6 +955,9 @@ export class ApartmentSalesReportService {
 
       const paymentType = String(deal.payment_type || 'FULL').toUpperCase();
       const declaredDownMinor = Math.max(0, Math.round(Number(deal.down_payment_minor || 0)));
+      const paidDownPaymentMinor = Math.min(settlements.totalSettledMinor, declaredDownMinor);
+      const paidDownPaymentUsd = formatMoneyUsd(paidDownPaymentMinor);
+      const paidDownPaymentPercent = calculatePercent(paidDownPaymentMinor, settlements.contractPriceMinor);
       if (
         (declaredDownMinor > 0 || paymentType === 'PARTIAL_BARTER' || paymentType === 'BARTER') &&
         settlements.paidBarterMinor === 0 &&
@@ -1004,6 +1019,9 @@ export class ApartmentSalesReportService {
         commissionAccruedAt: attribution.commission.accruedAt,
         commissionApprovedAt: attribution.commission.approvedAt,
         commissionPaidAt: attribution.commission.paidAt,
+        paidDownPaymentMinor,
+        paidDownPaymentUsd,
+        paidDownPaymentPercent,
         ...settlements
       };
 
@@ -1142,15 +1160,19 @@ export class ApartmentSalesReportService {
       }
 
       blockRow.soldCount += 1;
+      blockRow.paidDownPaymentMinor += sale.paidDownPaymentMinor;
       if (sale.salesSource === SALES_SOURCES.DIRECT) {
         blockRow.directSoldCount += 1;
         blockRow.directSalesAmountMinor += sale.contractPriceMinor;
+        blockRow.directPaidDownPaymentMinor += sale.paidDownPaymentMinor;
       } else if (sale.salesSource === SALES_SOURCES.MARKETER) {
         blockRow.marketerSoldCount += 1;
         blockRow.marketerSalesAmountMinor += sale.contractPriceMinor;
+        blockRow.marketerPaidDownPaymentMinor += sale.paidDownPaymentMinor;
       } else {
         blockRow.unspecifiedSoldCount += 1;
         blockRow.unspecifiedSalesAmountMinor += sale.contractPriceMinor;
+        blockRow.unspecifiedPaidDownPaymentMinor += sale.paidDownPaymentMinor;
       }
 
       blockRow.soldAreaX100 += sale.areaX100;
@@ -1210,7 +1232,9 @@ export class ApartmentSalesReportService {
         remainingDebtUsd: sale.remainingDebtUsd,
         overpaidUsd: sale.overpaidUsd,
         paidPercent: sale.paidPercent,
-        debtPercent: sale.debtPercent
+        debtPercent: sale.debtPercent,
+        paidDownPaymentUsd: sale.paidDownPaymentUsd,
+        paidDownPaymentPercent: sale.paidDownPaymentPercent
       });
     }
 
@@ -1232,6 +1256,10 @@ export class ApartmentSalesReportService {
     let totalDirectSalesAmountMinor = 0;
     let totalMarketerSalesAmountMinor = 0;
     let totalUnspecifiedSalesAmountMinor = 0;
+    let totalPaidDownPaymentMinor = 0;
+    let totalDirectPaidDownPaymentMinor = 0;
+    let totalMarketerPaidDownPaymentMinor = 0;
+    let totalUnspecifiedPaidDownPaymentMinor = 0;
     let totalPaidCashMinor = 0;
     let totalPaidBarterMinor = 0;
     let totalSettledMinor = 0;
@@ -1253,6 +1281,40 @@ export class ApartmentSalesReportService {
       row.directSalesAmountUsd = formatMoneyUsd(row.directSalesAmountMinor);
       row.marketerSalesAmountUsd = formatMoneyUsd(row.marketerSalesAmountMinor);
       row.unspecifiedSalesAmountUsd = formatMoneyUsd(row.unspecifiedSalesAmountMinor);
+      row.paidDownPaymentUsd = formatMoneyUsd(row.paidDownPaymentMinor);
+      row.paidDownPaymentPercent = calculatePercent(row.paidDownPaymentMinor, row.salesAmountMinor);
+      row.directPaidDownPaymentUsd = formatMoneyUsd(row.directPaidDownPaymentMinor);
+      row.directPaidDownPaymentPercent = calculatePercent(row.directPaidDownPaymentMinor, row.directSalesAmountMinor);
+      row.marketerPaidDownPaymentUsd = formatMoneyUsd(row.marketerPaidDownPaymentMinor);
+      row.marketerPaidDownPaymentPercent = calculatePercent(row.marketerPaidDownPaymentMinor, row.marketerSalesAmountMinor);
+      row.unspecifiedPaidDownPaymentUsd = formatMoneyUsd(row.unspecifiedPaidDownPaymentMinor);
+      row.unspecifiedPaidDownPaymentPercent = calculatePercent(row.unspecifiedPaidDownPaymentMinor, row.unspecifiedSalesAmountMinor);
+      row.sourceBreakdown = [
+        {
+          salesSource: SALES_SOURCES.DIRECT,
+          salesSourceLabel: SALES_SOURCE_LABELS.DIRECT,
+          soldCount: row.directSoldCount,
+          salesAmountUsd: row.directSalesAmountUsd,
+          paidDownPaymentUsd: row.directPaidDownPaymentUsd,
+          paidDownPaymentPercent: row.directPaidDownPaymentPercent,
+        },
+        {
+          salesSource: SALES_SOURCES.MARKETER,
+          salesSourceLabel: SALES_SOURCE_LABELS.MARKETER,
+          soldCount: row.marketerSoldCount,
+          salesAmountUsd: row.marketerSalesAmountUsd,
+          paidDownPaymentUsd: row.marketerPaidDownPaymentUsd,
+          paidDownPaymentPercent: row.marketerPaidDownPaymentPercent,
+        },
+        {
+          salesSource: SALES_SOURCES.UNSPECIFIED,
+          salesSourceLabel: SALES_SOURCE_LABELS.UNSPECIFIED,
+          soldCount: row.unspecifiedSoldCount,
+          salesAmountUsd: row.unspecifiedSalesAmountUsd,
+          paidDownPaymentUsd: row.unspecifiedPaidDownPaymentUsd,
+          paidDownPaymentPercent: row.unspecifiedPaidDownPaymentPercent,
+        },
+      ];
       row.paidCashUsd = formatMoneyUsd(row.paidCashMinor);
       row.paidBarterUsd = formatMoneyUsd(row.paidBarterMinor);
       row.totalSettledUsd = formatMoneyUsd(row.totalSettledMinor);
@@ -1285,6 +1347,10 @@ export class ApartmentSalesReportService {
       totalDirectSalesAmountMinor += row.directSalesAmountMinor;
       totalMarketerSalesAmountMinor += row.marketerSalesAmountMinor;
       totalUnspecifiedSalesAmountMinor += row.unspecifiedSalesAmountMinor;
+      totalPaidDownPaymentMinor += row.paidDownPaymentMinor;
+      totalDirectPaidDownPaymentMinor += row.directPaidDownPaymentMinor;
+      totalMarketerPaidDownPaymentMinor += row.marketerPaidDownPaymentMinor;
+      totalUnspecifiedPaidDownPaymentMinor += row.unspecifiedPaidDownPaymentMinor;
       totalPaidCashMinor += row.paidCashMinor;
       totalPaidBarterMinor += row.paidBarterMinor;
       totalSettledMinor += row.totalSettledMinor;
@@ -1301,6 +1367,10 @@ export class ApartmentSalesReportService {
         directSalesAmountMinor: _dsam,
         marketerSalesAmountMinor: _msam,
         unspecifiedSalesAmountMinor: _usam,
+        paidDownPaymentMinor: _pdpm,
+        directPaidDownPaymentMinor: _dpdpm,
+        marketerPaidDownPaymentMinor: _mpdpm,
+        unspecifiedPaidDownPaymentMinor: _updpm,
         paidCashMinor: _pcm,
         paidBarterMinor: _pbm,
         totalSettledMinor: _tsm,
@@ -1324,6 +1394,14 @@ export class ApartmentSalesReportService {
     const directSalesAmountUsd = formatMoneyUsd(totalDirectSalesAmountMinor);
     const marketerSalesAmountUsd = formatMoneyUsd(totalMarketerSalesAmountMinor);
     const unspecifiedSalesAmountUsd = formatMoneyUsd(totalUnspecifiedSalesAmountMinor);
+    const totalPaidDownPaymentUsd = formatMoneyUsd(totalPaidDownPaymentMinor);
+    const totalPaidDownPaymentPercent = calculatePercent(totalPaidDownPaymentMinor, totalSalesAmountMinor);
+    const directPaidDownPaymentUsd = formatMoneyUsd(totalDirectPaidDownPaymentMinor);
+    const directPaidDownPaymentPercent = calculatePercent(totalDirectPaidDownPaymentMinor, totalDirectSalesAmountMinor);
+    const marketerPaidDownPaymentUsd = formatMoneyUsd(totalMarketerPaidDownPaymentMinor);
+    const marketerPaidDownPaymentPercent = calculatePercent(totalMarketerPaidDownPaymentMinor, totalMarketerSalesAmountMinor);
+    const unspecifiedPaidDownPaymentUsd = formatMoneyUsd(totalUnspecifiedPaidDownPaymentMinor);
+    const unspecifiedPaidDownPaymentPercent = calculatePercent(totalUnspecifiedPaidDownPaymentMinor, totalUnspecifiedSalesAmountMinor);
     const totalPaidCashUsd = formatMoneyUsd(totalPaidCashMinor);
     const totalPaidBarterUsd = formatMoneyUsd(totalPaidBarterMinor);
     const totalSettledUsd = formatMoneyUsd(totalSettledMinor);
@@ -1508,6 +1586,14 @@ export class ApartmentSalesReportService {
         directSalesAmountUsd,
         marketerSalesAmountUsd,
         unspecifiedSalesAmountUsd,
+        paidDownPaymentUsd: totalPaidDownPaymentUsd,
+        paidDownPaymentPercent: totalPaidDownPaymentPercent,
+        directPaidDownPaymentUsd,
+        directPaidDownPaymentPercent,
+        marketerPaidDownPaymentUsd,
+        marketerPaidDownPaymentPercent,
+        unspecifiedPaidDownPaymentUsd,
+        unspecifiedPaidDownPaymentPercent,
         totalPaidCashUsd,
         totalPaidBarterUsd,
         totalSettledUsd,
@@ -1539,6 +1625,40 @@ export class ApartmentSalesReportService {
         directSalesAmountUsd,
         marketerSalesAmountUsd,
         unspecifiedSalesAmountUsd,
+        paidDownPaymentUsd: totalPaidDownPaymentUsd,
+        paidDownPaymentPercent: totalPaidDownPaymentPercent,
+        directPaidDownPaymentUsd,
+        directPaidDownPaymentPercent,
+        marketerPaidDownPaymentUsd,
+        marketerPaidDownPaymentPercent,
+        unspecifiedPaidDownPaymentUsd,
+        unspecifiedPaidDownPaymentPercent,
+        sourceBreakdown: [
+          {
+            salesSource: SALES_SOURCES.DIRECT,
+            salesSourceLabel: SALES_SOURCE_LABELS.DIRECT,
+            soldCount: totalDirectSoldCount,
+            salesAmountUsd: directSalesAmountUsd,
+            paidDownPaymentUsd: directPaidDownPaymentUsd,
+            paidDownPaymentPercent: directPaidDownPaymentPercent,
+          },
+          {
+            salesSource: SALES_SOURCES.MARKETER,
+            salesSourceLabel: SALES_SOURCE_LABELS.MARKETER,
+            soldCount: totalMarketerSoldCount,
+            salesAmountUsd: marketerSalesAmountUsd,
+            paidDownPaymentUsd: marketerPaidDownPaymentUsd,
+            paidDownPaymentPercent: marketerPaidDownPaymentPercent,
+          },
+          {
+            salesSource: SALES_SOURCES.UNSPECIFIED,
+            salesSourceLabel: SALES_SOURCE_LABELS.UNSPECIFIED,
+            soldCount: totalUnspecifiedSoldCount,
+            salesAmountUsd: unspecifiedSalesAmountUsd,
+            paidDownPaymentUsd: unspecifiedPaidDownPaymentUsd,
+            paidDownPaymentPercent: unspecifiedPaidDownPaymentPercent,
+          },
+        ],
         paidCashUsd: totalPaidCashUsd,
         paidBarterUsd: totalPaidBarterUsd,
         totalSettledUsd,
@@ -1691,11 +1811,13 @@ export class ApartmentSalesReportService {
       { key: 'remainingDebt', width: 18 },
       { key: 'debtPercent', width: 13 },
       { key: 'approvedCommission', width: 18 },
-      { key: 'remainingCommission', width: 18 }
+      { key: 'remainingCommission', width: 18 },
+      { key: 'paidDownPaymentUsd', width: 18 },
+      { key: 'paidDownPaymentPercent', width: 13 }
     ];
 
     const titleRow = summarySheet.addRow(['ОТЧЁТ О ПРОДАЖАХ КВАРТИР И КОМИССИЯХ МАРКЕТОЛОГОВ']);
-    summarySheet.mergeCells('A1:P1');
+    summarySheet.mergeCells('A1:R1');
     titleRow.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FF0F172A' } };
     titleRow.height = 24;
 
@@ -1744,9 +1866,51 @@ export class ApartmentSalesReportService {
       'Остаток долга, USD',
       'Долг, %',
       'Утверждённая комиссия, USD',
-      'Остаток комиссии к выплате, USD'
+      'Остаток комиссии к выплате, USD',
+      'Оплаченный ПВ, USD',
+      'ПВ от суммы, %'
     ]);
     applyHeaderStyle(tableHeaderRow, 3, [2]);
+
+    const addSourceSubrows = (sourceItems, isTotal = false) => {
+      for (const item of sourceItems || []) {
+        if (item.salesSource === SALES_SOURCES.UNSPECIFIED && (item.soldCount || 0) === 0) {
+          continue;
+        }
+        const subRow = summarySheet.addRow([
+          `${isTotal ? 'ИТОГО — ' : '   ↳ '}${item.salesSourceLabel}`,
+          '',
+          '',
+          item.soldCount,
+          '',
+          '',
+          '',
+          '',
+          '',
+          item.salesAmountUsd,
+          '',
+          '',
+          '',
+          '',
+          '',
+          '',
+          item.paidDownPaymentUsd,
+          item.paidDownPaymentPercent
+        ]);
+        subRow.height = 18;
+        subRow.font = { name: 'Arial', size: 9, italic: !isTotal, bold: isTotal, color: { argb: 'FF475569' } };
+        subRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
+        subRow.getCell(4).alignment = { vertical: 'middle', horizontal: 'right' };
+        subRow.getCell(4).numFmt = '#,##0';
+        subRow.getCell(10).alignment = { vertical: 'middle', horizontal: 'right' };
+        subRow.getCell(10).numFmt = '#,##0.00';
+        subRow.getCell(17).alignment = { vertical: 'middle', horizontal: 'right' };
+        subRow.getCell(17).numFmt = '#,##0.00';
+        subRow.getCell(18).alignment = { vertical: 'middle', horizontal: 'right' };
+        subRow.getCell(18).numFmt = '0.00"%"';
+        applyDataRowBorders(subRow);
+      }
+    };
 
     for (const block of report.blocks) {
       const row = summarySheet.addRow([
@@ -1765,19 +1929,23 @@ export class ApartmentSalesReportService {
         block.remainingDebtUsd,
         block.debtPercent,
         block.approvedCommissionUsd,
-        block.remainingCommissionUsd
+        block.remainingCommissionUsd,
+        block.paidDownPaymentUsd,
+        block.paidDownPaymentPercent
       ]);
       row.height = 20;
       row.getCell(1).alignment = { vertical: 'middle', horizontal: 'left' };
       row.getCell(2).alignment = { vertical: 'middle', horizontal: 'center' };
-      for (let c = 3; c <= 16; c += 1) {
+      for (let c = 3; c <= 18; c += 1) {
         row.getCell(c).alignment = { vertical: 'middle', horizontal: 'right' };
       }
       for (const c of [3, 4, 5, 6, 7, 8]) row.getCell(c).numFmt = '#,##0';
-      for (const c of [9, 10, 11, 13, 15, 16]) row.getCell(c).numFmt = '#,##0.00';
+      for (const c of [9, 10, 11, 13, 15, 16, 17]) row.getCell(c).numFmt = '#,##0.00';
       row.getCell(12).numFmt = '0.00"%"';
       row.getCell(14).numFmt = '0.00"%"';
+      row.getCell(18).numFmt = '0.00"%"';
       applyDataRowBorders(row);
+      addSourceSubrows(block.sourceBreakdown, false);
     }
 
     const totalRow = summarySheet.addRow([
@@ -1796,13 +1964,17 @@ export class ApartmentSalesReportService {
       report.totals.remainingDebtUsd,
       report.totals.debtPercent,
       report.totals.approvedCommissionUsd,
-      report.totals.remainingCommissionUsd
+      report.totals.remainingCommissionUsd,
+      report.totals.paidDownPaymentUsd,
+      report.totals.paidDownPaymentPercent
     ]);
     applyTotalRowStyle(totalRow, 3);
     for (const c of [3, 4, 5, 6, 7, 8]) totalRow.getCell(c).numFmt = '#,##0';
-    for (const c of [9, 10, 11, 13, 15, 16]) totalRow.getCell(c).numFmt = '#,##0.00';
+    for (const c of [9, 10, 11, 13, 15, 16, 17]) totalRow.getCell(c).numFmt = '#,##0.00';
     totalRow.getCell(12).numFmt = '0.00"%"';
     totalRow.getCell(14).numFmt = '0.00"%"';
+    totalRow.getCell(18).numFmt = '0.00"%"';
+    addSourceSubrows(report.totals.sourceBreakdown, true);
 
     // =========================================================================
     // SHEET 2: Детализация квартир

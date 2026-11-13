@@ -1418,3 +1418,129 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
     ).rejects.toThrow(/уже полностью выплачена/);
   });
 });
+
+describe('ApartmentSalesReportService - Per-block & Totals Source Breakdown with Paid Down Payment', () => {
+  it('computes DIRECT, MARKETER, UNSPECIFIED sub-rows and confirmed paid down payment without trusting unpaid down_payment_minor', async () => {
+    const buildings = [
+      makeBuilding({ id: 1, name: 'Блок А', code: 'БЛОК-А', projectId: 1, projectName: 'ЖК Тозон', projectCode: 'TZN' }),
+    ];
+    const units = [
+      makeUnit({ id: 901, unitNumber: '1', areaX100: 5000, floorNumber: 1, buildingId: 1, buildingName: 'Блок А', buildingCode: 'БЛОК-А', projectId: 1, projectName: 'ЖК Тозон', projectCode: 'TZN', status: 'SOLD' }),
+      makeUnit({ id: 902, unitNumber: '2', areaX100: 6000, floorNumber: 2, buildingId: 1, buildingName: 'Блок А', buildingCode: 'БЛОК-А', projectId: 1, projectName: 'ЖК Тозон', projectCode: 'TZN', status: 'SOLD' }),
+      makeUnit({ id: 903, unitNumber: '3', areaX100: 7000, floorNumber: 3, buildingId: 1, buildingName: 'Блок А', buildingCode: 'БЛОК-А', projectId: 1, projectName: 'ЖК Тозон', projectCode: 'TZN', status: 'SOLD' }),
+    ];
+    const deals = [
+      // 1. DIRECT: $40,000 contract, $10,000 down payment declared, $10,000 confirmed cash paid + $2,000 voided (excluded) + $5,000 future (excluded)
+      {
+        ...makeDeal({
+          id: 9101,
+          unitId: 901,
+          unitNumber: '1',
+          buildingId: 1,
+          buildingName: 'Блок А',
+          buildingCode: 'БЛОК-А',
+          projectId: 1,
+          projectName: 'ЖК Тозон',
+          projectCode: 'TZN',
+          dealDate: '2026-09-01',
+          signedAt: '2026-09-01T10:00:00Z',
+          contractNumber: '9101',
+          finalPriceMinor: 4000000,
+          downPaymentMinor: 1000000,
+          payments: [
+            { id: 1, amount_minor: 1000000, payment_date: '2026-09-01', status: 'ACTIVE', settlement_method: 'CASH' },
+            { id: 2, amount_minor: 200000, payment_date: '2026-09-02', status: 'VOIDED', settlement_method: 'CASH' },
+            { id: 3, amount_minor: 500000, payment_date: '2026-12-31', status: 'ACTIVE', settlement_method: 'CASH' },
+          ],
+        }),
+        sales_source: 'DIRECT',
+      },
+      // 2. MARKETER: $50,000 contract, $15,000 down payment declared, $15,000 barter paid (barter_amount_minor with 0 barter rows -> no double count)
+      {
+        ...makeDeal({
+          id: 9102,
+          unitId: 902,
+          unitNumber: '2',
+          buildingId: 1,
+          buildingName: 'Блок А',
+          buildingCode: 'БЛОК-А',
+          projectId: 1,
+          projectName: 'ЖК Тозон',
+          projectCode: 'TZN',
+          dealDate: '2026-10-15',
+          signedAt: '2026-10-15T10:00:00Z',
+          contractNumber: '9102',
+          finalPriceMinor: 5000000,
+          downPaymentMinor: 1500000,
+          barterAmountMinor: 1500000,
+          paymentType: 'PARTIAL_BARTER',
+          payments: [],
+        }),
+        sales_source: 'MARKETER',
+        marketing_partner_id: 50,
+        marketing_partners: { id: 50, name: 'Партнёр 1', is_active: true, commission_type: 'PERCENT', commission_rate_bp: 300 },
+      },
+      // 3. UNSPECIFIED: $30,000 contract, $10,000 down payment declared, ZERO actual payments (like contract 0016 -> paidDownPayment must be 0!)
+      {
+        ...makeDeal({
+          id: 9103,
+          unitId: 903,
+          unitNumber: '3',
+          buildingId: 1,
+          buildingName: 'Блок А',
+          buildingCode: 'БЛОК-А',
+          projectId: 1,
+          projectName: 'ЖК Тозон',
+          projectCode: 'TZN',
+          dealDate: '2026-10-20',
+          signedAt: '2026-10-20T10:00:00Z',
+          contractNumber: '9103',
+          finalPriceMinor: 3000000,
+          downPaymentMinor: 1000000,
+          payments: [],
+        }),
+        sales_source: 'UNSPECIFIED',
+      },
+    ];
+
+    const report = ApartmentSalesReportService.computeReport({
+      deals,
+      buildings,
+      units,
+      query: { startDate: '2026-01-01', endDate: '2026-11-30', complex: 'ALL', block: 'ALL', salesSource: 'ALL', partnerId: 'ALL' },
+      now: new Date('2026-11-14T10:00:00Z'),
+    });
+
+    const blockA = report.blocks.find((b) => b.soldCount > 0);
+    expect(blockA).toBeDefined();
+    expect(blockA.soldCount).toBe(3);
+    expect(blockA.salesAmountUsd).toBe(120000);
+    expect(blockA.paidDownPaymentUsd).toBe(25000); // 10k + 15k + 0 (NOT 35k!)
+    expect(blockA.paidDownPaymentPercent).toBe(20.83); // 25000 / 120000 * 100
+
+    const directSub = blockA.sourceBreakdown.find((s) => s.salesSource === 'DIRECT');
+    const marketerSub = blockA.sourceBreakdown.find((s) => s.salesSource === 'MARKETER');
+    const unspecifiedSub = blockA.sourceBreakdown.find((s) => s.salesSource === 'UNSPECIFIED');
+
+    expect(directSub).toMatchObject({ soldCount: 1, salesAmountUsd: 40000, paidDownPaymentUsd: 10000, paidDownPaymentPercent: 25 });
+    expect(marketerSub).toMatchObject({ soldCount: 1, salesAmountUsd: 50000, paidDownPaymentUsd: 15000, paidDownPaymentPercent: 30 });
+    expect(unspecifiedSub).toMatchObject({ soldCount: 1, salesAmountUsd: 30000, paidDownPaymentUsd: 0, paidDownPaymentPercent: 0 });
+
+    // Totals match sum of categories
+    expect(report.totals.sourceBreakdown).toEqual(blockA.sourceBreakdown);
+
+    // Excel export includes sub-rows and down payment columns
+    const buffer = await ApartmentSalesReportService.generateExcelWorkbook(report.filters, null, null, report);
+    expect(buffer).toBeDefined();
+    expect(buffer.byteLength).toBeGreaterThan(1000);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buffer);
+    const summarySheet = wb.getWorksheet('Сводный отчёт');
+    const sheetTexts = [];
+    summarySheet.eachRow((r) => sheetTexts.push(r.values.filter(Boolean).map(String).join(' | ')));
+    expect(sheetTexts.some((t) => t.includes('Прямая продажа TOZON'))).toBe(true);
+    expect(sheetTexts.some((t) => t.includes('Продажа через маркетологов'))).toBe(true);
+    expect(sheetTexts.some((t) => t.includes('Источник не определён'))).toBe(true);
+    expect(sheetTexts.some((t) => t.includes('ИТОГО') && t.includes('Прямая продажа TOZON'))).toBe(true);
+  });
+});
