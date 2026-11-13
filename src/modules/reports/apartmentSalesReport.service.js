@@ -942,6 +942,7 @@ export class ApartmentSalesReportService {
         deal: {
           ...deal,
           final_price_minor: settlements.contractPriceMinor,
+          total_settled_minor: settlements.totalSettledMinor,
         },
         auditLogs: auditLogsByDealId.get(Number(deal.id)) || deal.audit_logs || [],
         partnersMap,
@@ -1016,6 +1017,9 @@ export class ApartmentSalesReportService {
         paidCommissionUsd: attribution.commission.paidCommissionUsd,
         remainingCommissionMinor: attribution.commission.remainingCommissionMinor,
         remainingCommissionUsd: attribution.commission.remainingCommissionUsd,
+        additionalAccrualUsd: attribution.commission.additionalAccrualUsd || 0,
+        overpaidCommissionUsd: attribution.commission.overpaidCommissionUsd || 0,
+        paymentPercent: attribution.commission.paymentPercent || 0,
         commissionAccruedAt: attribution.commission.accruedAt,
         commissionApprovedAt: attribution.commission.approvedAt,
         commissionPaidAt: attribution.commission.paidAt,

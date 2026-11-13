@@ -9,6 +9,7 @@ import {
 import {
   MarketingAttributionService,
   resolveDealAttributionAndCommission,
+  computeTieredCommissionRateBp,
   SALES_SOURCES,
   COMMISSION_STATUSES,
   AUDIT_ACTION_SALES_SOURCE,
@@ -794,9 +795,14 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
     expect(unspecifiedAttr.commission.calculatedCommissionUsd).toBe(0);
     expect(unspecifiedAttr.commission.status).toBe(COMMISSION_STATUSES.NOT_CALCULATED);
 
-    // 9c. Marketer sale with Partner #501 (3% of $50,000 = $1,500), approved and $500 paid -> $1,000 remaining
+    // 9c. Marketer sale with Partner #501 (10% paid -> 3% of $50,000 = $1,500), approved and $500 paid -> $1,000 remaining
     const marketerAttr = resolveDealAttributionAndCommission({
-      deal: { id: 1003, status: 'SIGNED', final_price_minor: 5000000 }, // $50,000
+      deal: {
+        id: 1003,
+        status: 'SIGNED',
+        final_price_minor: 5000000,
+        payments: [{ id: 1, amount_minor: 500000, payment_date: '2026-11-06', status: 'ACTIVE', settlement_method: 'CASH' }],
+      }, // $50,000, paid $5,000 (10%)
       auditLogs: [
         {
           id: 2,
@@ -925,6 +931,7 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
       unit_id: 101,
       status: 'SIGNED',
       final_price_minor: 4000000, // $40,000
+      payments: [{ id: 1, amount_minor: 400000, payment_date: '2026-11-05', status: 'ACTIVE', settlement_method: 'CASH' }], // 10% -> 3% = $1,200
     };
     const mockPartners = [
       {
@@ -1053,7 +1060,7 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
 
     expect(updatedDeal.sales_source).toBe('MARKETER');
     expect(updatedDeal.marketing_partner_name).toBe('Somon Marketing');
-    expect(updatedDeal.commission.calculatedCommissionUsd).toBe(1000);
+    expect(updatedDeal.commission.calculatedCommissionUsd).toBe(1200);
     expect(updatedDeal.commission.status).toBe('CALCULATED');
     expect(updatedDeal.source_history).toHaveLength(1);
     expect(updatedDeal.source_history[0].oldSource).toBe('UNSPECIFIED');
@@ -1083,8 +1090,8 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
       { id: 1, role: 'ADMIN' }
     );
     expect(afterApprove.commission.status).toBe('APPROVED');
-    expect(afterApprove.commission.approvedCommissionUsd).toBe(1000);
-    expect(afterApprove.commission.remainingCommissionUsd).toBe(1000);
+    expect(afterApprove.commission.approvedCommissionUsd).toBe(1200);
+    expect(afterApprove.commission.remainingCommissionUsd).toBe(1200);
 
     const afterPayout = await service.updateDealCommission(
       3001,
@@ -1093,7 +1100,7 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
     );
     expect(afterPayout.commission.status).toBe('PARTIALLY_PAID');
     expect(afterPayout.commission.paidCommissionUsd).toBe(400);
-    expect(afterPayout.commission.remainingCommissionUsd).toBe(600);
+    expect(afterPayout.commission.remainingCommissionUsd).toBe(800);
   });
 
   it('12. [V3] Фильтрация отчёта по источнику продажи (salesSource) и маркетинговому партнёру (partnerId)', () => {
@@ -1128,7 +1135,8 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
         projectName: 'TOZON PLAZA',
         dealDate: '2026-11-05',
         contractNumber: 'V3-MKT-1',
-        finalPriceMinor: 5000000, // $50,000 -> 3% = $1,500
+        finalPriceMinor: 5000000, // $50,000 -> 10% paid -> 3% = $1,500
+        payments: [{ id: 1, amount_minor: 500000, payment_date: '2026-11-05', status: 'ACTIVE', settlement_method: 'CASH' }],
       }),
       makeDeal({
         id: 403,
@@ -1256,7 +1264,12 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
 
     // 13b. Service-level guards against double accrual, double approval, duplicate payout, and source change after payout
     const state = {
-      deal: { id: 8002, status: 'SIGNED', final_price_minor: 10000000 }, // $100,000
+      deal: {
+        id: 8002,
+        status: 'SIGNED',
+        final_price_minor: 10000000, // $100,000
+        payments: [{ id: 1, amount_minor: 1000000, payment_date: '2026-11-10', status: 'ACTIVE', settlement_method: 'CASH' }], // 10% -> 3% = $3,000
+      },
       logs: [
         {
           id: 1,
@@ -1542,5 +1555,194 @@ describe('ApartmentSalesReportService - Per-block & Totals Source Breakdown with
     expect(sheetTexts.some((t) => t.includes('Продажа через маркетологов'))).toBe(true);
     expect(sheetTexts.some((t) => t.includes('Источник не определён'))).toBe(true);
     expect(sheetTexts.some((t) => t.includes('ИТОГО') && t.includes('Прямая продажа TOZON'))).toBe(true);
+  });
+});
+
+describe('Individual Per-Contract Tiered Marketer Commission Scale (0% / 2% / 3% / 4%)', () => {
+  it('applies exact integer threshold comparisons without intermediate float rounding', () => {
+    const price = 4000000; // $40,000.00
+    expect(computeTieredCommissionRateBp(0, price)).toBe(0);
+    expect(computeTieredCommissionRateBp(199999, price)).toBe(0); // 4.999975% (< 5%) -> 0%
+    expect(computeTieredCommissionRateBp(200000, price)).toBe(200); // 5.00% -> 2%
+    expect(computeTieredCommissionRateBp(399999, price)).toBe(200); // 9.999975% (< 10%) -> 2%
+    expect(computeTieredCommissionRateBp(400000, price)).toBe(300); // 10.00% -> 3%
+    expect(computeTieredCommissionRateBp(600000, price)).toBe(300); // 15.00% (<= 15%) -> 3%
+    expect(computeTieredCommissionRateBp(600001, price)).toBe(400); // > 15% -> 4%
+  });
+
+  it('tracks incremental accruals 2% -> 3% -> 4% ($800 -> +$400 -> +$400) without duplicate payouts, and handles overpayment safely', async () => {
+    const state = {
+      deal: {
+        id: 9501,
+        status: 'SIGNED',
+        final_price_minor: 4000000, // $40,000
+        sales_source: 'MARKETER',
+        marketing_partner_id: 1,
+        payments: [{ id: 1, amount_minor: 200000, payment_date: '2026-10-15', status: 'ACTIVE', settlement_method: 'CASH' }], // 5% -> $800 (2%)
+      },
+      logs: [],
+      partners: [{ id: 1, name: 'Партнёр 1', is_active: true, commission_type: 'NONE', commission_rate_bp: 0 }],
+    };
+
+    let nextLogId = 1;
+    const mockDb = {
+      from: (table) => {
+        if (table === 'deals') {
+          return {
+            select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: state.deal, error: null }) }) }),
+            update: (vals) => ({ eq: async () => { Object.assign(state.deal, vals); return { data: state.deal, error: null }; } }),
+          };
+        }
+        if (table === 'marketing_partners') {
+          const mpChain = {
+            eq: () => mpChain,
+            order: async () => ({ data: state.partners, error: null }),
+          };
+          return { select: () => mpChain };
+        }
+        if (table === 'dictionaries') {
+          const dictChain = {
+            eq: () => dictChain,
+            order: () => dictChain,
+            then: (resolve) => resolve({ data: [], error: null }),
+          };
+          return { select: () => dictChain };
+        }
+        if (table === 'deal_audit_logs') {
+          const makeChain = () => ({
+            eq: () => makeChain(),
+            in: () => makeChain(),
+            order: async () => ({ data: state.logs, error: null }),
+          });
+          return {
+            select: () => makeChain(),
+            insert: async (row) => {
+              state.logs.push({ id: nextLogId++, created_at: new Date().toISOString(), ...row });
+              return { error: null };
+            },
+          };
+        }
+        if (table === 'users') {
+          return { select: () => ({ in: async () => ({ data: [{ id: 1, name: 'Admin' }], error: null }) }) };
+        }
+        return {
+          select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }), order: async () => ({ data: [], error: null }) }),
+          upsert: async () => ({ error: null }),
+          update: () => ({ eq: async () => ({ error: null }) }),
+        };
+      },
+    };
+
+    const svc = new MarketingAttributionService(() => mockDb);
+    const admin = { id: 1, role: 'ADMIN', fullName: 'Admin' };
+
+    // Stage 1: 5% paid ($2,000) -> 2% ($800) -> approve & pay $800
+    await svc.updateDealCommission(9501, { action: 'APPROVE' }, admin);
+    const paid1 = await svc.updateDealCommission(9501, { action: 'RECORD_PAYOUT', payoutAmountUsd: 800 }, admin);
+    expect(paid1.commission.commissionRatePercent).toBe(2);
+    expect(paid1.commission.calculatedCommissionUsd).toBe(800);
+    expect(paid1.commission.paidCommissionUsd).toBe(800);
+    expect(paid1.commission.remainingCommissionUsd).toBe(0);
+
+    // Stage 2: Client pays another $2,000 -> total $4,000 (10%) -> 3% ($1,200), delta = +$400 ONLY
+    state.deal.payments.push({ id: 2, amount_minor: 200000, payment_date: '2026-10-20', status: 'ACTIVE', settlement_method: 'CASH' });
+    const stage2 = await svc.enrichDealWithAttribution(state.deal, admin);
+    expect(stage2.commission.commissionRatePercent).toBe(3);
+    expect(stage2.commission.calculatedCommissionUsd).toBe(1200);
+    expect(stage2.commission.approvedCommissionUsd).toBe(800);
+    expect(stage2.commission.additionalAccrualUsd).toBe(400);
+    expect(stage2.commission.status).toBe(COMMISSION_STATUSES.CALCULATED);
+
+    const approved2 = await svc.updateDealCommission(9501, { action: 'APPROVE' }, admin);
+    expect(approved2.commission.approvedCommissionUsd).toBe(1200);
+    expect(approved2.commission.remainingCommissionUsd).toBe(400);
+    const paid2 = await svc.updateDealCommission(9501, { action: 'RECORD_PAYOUT', payoutAmountUsd: 400 }, admin);
+    expect(paid2.commission.paidCommissionUsd).toBe(1200);
+    expect(paid2.commission.remainingCommissionUsd).toBe(0);
+
+    // Stage 3: Client pays another $2,001 -> total $6,001 (>15%) -> 4% ($1,600), delta = +$400 ONLY
+    state.deal.payments.push({ id: 3, amount_minor: 200100, payment_date: '2026-10-25', status: 'ACTIVE', settlement_method: 'CASH' });
+    const approved3 = await svc.updateDealCommission(9501, { action: 'APPROVE' }, admin);
+    expect(approved3.commission.commissionRatePercent).toBe(4);
+    expect(approved3.commission.calculatedCommissionUsd).toBe(1600);
+    expect(approved3.commission.remainingCommissionUsd).toBe(400);
+
+    // Stage 4: Refund / void reduces settled amount back to $1,000 (2.5% -> 0% commission) while $1,200 already paid
+    state.deal.payments = [{ id: 1, amount_minor: 100000, payment_date: '2026-10-15', status: 'ACTIVE', settlement_method: 'CASH' }];
+    const overpaidDeal = await svc.enrichDealWithAttribution(state.deal, admin);
+    expect(overpaidDeal.commission.commissionRatePercent).toBe(0);
+    expect(overpaidDeal.commission.calculatedCommissionUsd).toBe(0);
+    expect(overpaidDeal.commission.paidCommissionUsd).toBe(1200);
+    expect(overpaidDeal.commission.remainingCommissionUsd).toBe(0);
+    expect(overpaidDeal.commission.overpaidCommissionUsd).toBe(1200);
+
+    await expect(
+      svc.updateDealCommission(9501, { action: 'RECORD_PAYOUT', payoutAmountUsd: 100 }, admin)
+    ).rejects.toThrow(/переплата/i);
+  });
+
+  it('aggregates block commission as sum of individual deal commissions rather than block-level payment %', () => {
+    const buildings = [
+      makeBuilding({ id: 1, name: 'Блок А', code: 'БЛОК-А', projectId: 1, projectName: 'TOZON PLAZA', projectCode: 'TZN' }),
+    ];
+    const units = [
+      makeUnit({ id: 951, unitNumber: '1', areaX100: 5000, floorNumber: 1, buildingId: 1, buildingName: 'Блок А', buildingCode: 'БЛОК-А', projectId: 1, projectName: 'TOZON PLAZA', projectCode: 'TZN', status: 'SOLD' }),
+      makeUnit({ id: 952, unitNumber: '2', areaX100: 5000, floorNumber: 1, buildingId: 1, buildingName: 'Блок А', buildingCode: 'БЛОК-А', projectId: 1, projectName: 'TOZON PLAZA', projectCode: 'TZN', status: 'SOLD' }),
+    ];
+    // Deal 1: $50,000, paid $1,000 (2% < 5% -> 0% commission = $0)
+    // Deal 2: $50,000, paid $10,000 (20% > 15% -> 4% commission = $2,000)
+    // Block aggregate payment % = $11,000 / $100,000 = 11% (which would be 3% = $3,000 if mistakenly computed at block level!)
+    // Correct sum of individual commissions = $0 + $2,000 = $2,000!
+    const deals = [
+      {
+        ...makeDeal({
+          id: 9601,
+          unitId: 951,
+          unitNumber: '1',
+          buildingId: 1,
+          buildingName: 'Блок А',
+          buildingCode: 'БЛОК-А',
+          projectId: 1,
+          projectName: 'TOZON PLAZA',
+          projectCode: 'TZN',
+          dealDate: '2026-10-15',
+          finalPriceMinor: 5000000,
+          payments: [{ id: 1, amount_minor: 100000, payment_date: '2026-10-15', status: 'ACTIVE', settlement_method: 'CASH' }],
+        }),
+        sales_source: 'MARKETER',
+        marketing_partner_id: 1,
+      },
+      {
+        ...makeDeal({
+          id: 9602,
+          unitId: 952,
+          unitNumber: '2',
+          buildingId: 1,
+          buildingName: 'Блок А',
+          buildingCode: 'БЛОК-А',
+          projectId: 1,
+          projectName: 'TOZON PLAZA',
+          projectCode: 'TZN',
+          dealDate: '2026-10-16',
+          finalPriceMinor: 5000000,
+          payments: [{ id: 2, amount_minor: 1000000, payment_date: '2026-10-16', status: 'ACTIVE', settlement_method: 'CASH' }],
+        }),
+        sales_source: 'MARKETER',
+        marketing_partner_id: 1,
+      },
+    ];
+
+    const report = ApartmentSalesReportService.computeReport({
+      deals,
+      buildings,
+      units,
+      marketingPartners: [{ id: 1, name: 'Партнёр 1', is_active: true, commission_type: 'NONE', commission_rate_bp: 0 }],
+      query: { startDate: '2026-01-01', endDate: '2026-11-30', complex: 'ALL', block: 'ALL', salesSource: 'ALL', partnerId: 'ALL' },
+      now: new Date('2026-11-14T10:00:00Z'),
+    });
+
+    const blockA = report.blocks.find((b) => b.soldCount > 0);
+    expect(blockA.calculatedCommissionUsd).toBe(2000);
+    expect(report.totals.calculatedCommissionUsd).toBe(2000);
   });
 });
