@@ -1867,8 +1867,8 @@ export class ApartmentSalesReportService {
       'Долг, %',
       'Утверждённая комиссия, USD',
       'Остаток комиссии к выплате, USD',
-      'Оплаченный ПВ, USD',
-      'ПВ от суммы, %'
+      'Покрытие ПВ (расчётно), USD',
+      'Покрытие ПВ, %'
     ]);
     applyHeaderStyle(tableHeaderRow, 3, [2]);
 
@@ -1975,6 +1975,12 @@ export class ApartmentSalesReportService {
     totalRow.getCell(14).numFmt = '0.00"%"';
     totalRow.getCell(18).numFmt = '0.00"%"';
     addSourceSubrows(report.totals.sourceBreakdown, true);
+
+    summarySheet.addRow([]);
+    const noteRow = summarySheet.addRow([
+      'Примечание: «Покрытие ПВ (расчётно), USD» рассчитывается по каждой сделке как min(подтверждённые платежи деньгами и бартером, договорной ПВ). Показатель является расчётным и не подтверждает целевое назначение каждого отдельного платежа.'
+    ]);
+    noteRow.font = { name: 'Arial', size: 8, italic: true, color: { argb: 'FF64748B' } };
 
     // =========================================================================
     // SHEET 2: Детализация квартир
