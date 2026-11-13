@@ -13,8 +13,9 @@ export const FIELDS = [
   'payment_type', 'amount', 'amount_tjs', 'amount_usd', 'exchange_rate', 'amount_words',
   'payer_name', 'recipient_name', 'basis', 'attachment', 'cash_desk',
   'company_name', 'company_inn', 'company_address', 'company_phone', 'company_bank',
-  'company_account', 'director_name', 'accountant_name', 'cashier_name', 'branch_name',
+  'company_account', 'director_name', 'director_authority', 'accountant_name', 'cashier_name', 'branch_name',
   'schedules', 'row_number', 'due_date', 'planned_amount', 'paid_amount', 'balance', 'status'
+  , 'payment_plan_rows', 'contract_day', 'contract_month', 'contract_year', 'price_per_m2_words', 'company_registration'
 ];
 export const MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -51,10 +52,10 @@ export function cleanContext(input) {
   const result = Object.create(null);
   for (const [key, value] of Object.entries(input)) {
     if (!FIELDS.includes(key)) throw new AppError(`Неизвестная переменная: ${key}`, 400);
-    if (key === 'schedules') {
+    if (key === 'schedules' || key === 'payment_plan_rows') {
       if (!Array.isArray(value) || value.length > 600) throw new AppError('Некорректный график', 400);
       result[key] = value.map(row => {
-        if (row?.schedules !== undefined) throw new AppError('Вложенный график запрещён', 400);
+        if (row?.schedules !== undefined || row?.payment_plan_rows !== undefined) throw new AppError('Вложенный график запрещён', 400);
         return cleanContext(row);
       });
     } else {
@@ -87,7 +88,7 @@ export function sampleTemplate(type) {
     'Сумма операции: {amount}. Сомони: {amount_tjs}. USD: {amount_usd}. Курс: {exchange_rate}',
     '{amount_words}', 'Основание: {basis}',
     ...(type === 'SCHEDULE' ? ['{#schedules}', '{row_number}. {due_date} — план {planned_amount}, факт {paid_amount}, остаток {balance}', '{/schedules}'] : []),
-    'Руководитель: {director_name} __________', 'Бухгалтер: {accountant_name} __________'
+    'Руководитель: {director_name} __________', 'Основание полномочий: {director_authority}', 'Бухгалтер: {accountant_name} __________'
   ];
   const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   zip.file('[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');

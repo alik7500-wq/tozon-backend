@@ -1,0 +1,43 @@
+{
+  "source_repository": "alik7500-wq/tozon-crm",
+  "source_path": "src/features/deals/ContractPrintView.jsx",
+  "source_commit": "3d14b901b63b4e611cfe2f6574ba45c69782b824",
+  "source_sha256": "91a5388538f89f00c83c016768be3aa928750567dac81b8f2ca7a3f29036caec",
+  "test_company_project_id": "a1d3af61-af16-4e42-9be1-e6dc645929b3",
+  "complex_scope": "3",
+  "restriction": "APARTMENT / USD / FULL or INSTALLMENT only",
+  "templates": [
+    {
+      "id": "5c431cb6-947d-533d-8a05-e493c3e8f633",
+      "file": "CONTRACT-RU.docx",
+      "kind": "CONTRACT",
+      "language": "RU",
+      "sha256": "fb2e9b333762267659656d9f72ffe86c5b7d7996b10e2034adeebb7bc33e89c3",
+      "bytes": 40597
+    },
+    {
+      "id": "1bc3ac87-64fa-5e94-97bd-b0d54340d8b2",
+      "file": "CONTRACT-TJ.docx",
+      "kind": "CONTRACT",
+      "language": "TJ",
+      "sha256": "0f0f1cc05730c69052bd290b9931e824c3d92f8592ffa050016c472a7f626976",
+      "bytes": 41595
+    },
+    {
+      "id": "f1bb03b2-743c-598b-b4a8-feb2ac723305",
+      "file": "SCHEDULE-RU.docx",
+      "kind": "SCHEDULE",
+      "language": "RU",
+      "sha256": "fe98f8a04e3be3562cab3bf7c0043df330b88f17f5d5e46d4300ff1ef47018a3",
+      "bytes": 37526
+    },
+    {
+      "id": "a5ea7ace-d16b-500f-a754-a0e9261a9f9b",
+      "file": "SCHEDULE-TJ.docx",
+      "kind": "SCHEDULE",
+      "language": "TJ",
+      "sha256": "6ed79c6bbdd62d8b8731c7f696f8ceafc5aa7bc5b3e637e9102645c963095c88",
+      "bytes": 37497
+    }
+  ]
+}

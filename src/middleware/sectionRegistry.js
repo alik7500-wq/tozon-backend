@@ -2,6 +2,7 @@
 // New modules must register their API prefix and permission here before release.
 // Unknown API routes remain denied for users with an explicit access matrix.
 export const sectionRoutes = Object.freeze([
+  { prefix: '/api/company-projects', permission: 'settings.view' },
   { prefix: '/api/calls', permission: 'leads.view' },
   { prefix: '/api/sales-plans', permission: 'leads.view' },
   { prefix: '/api/tasks', permission: 'tasks.view' },

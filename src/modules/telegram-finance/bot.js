@@ -1,3 +1,4 @@
+import {assertLegacyAutomationAllowed} from '../company-projects/workspace.background.js';
 import { passportBridge } from '../passport-bridge/service.js';
 import {syncSheets} from './sheets-sync.js';
 import crypto from 'node:crypto';
@@ -23,6 +24,7 @@ export function keyboard(role) {
 export class TelegramAPI {
   constructor(token, fetchImpl = fetch) { this.token = token; this.fetch = fetchImpl; }
   async call(method, payload = {}) {
+    if(!['getUpdates','getWebhookInfo','setWebhook','deleteWebhook','getMe'].includes(method))await assertLegacyAutomationAllowed({global_export:true});
     let response;
     try {
       response = await this.fetch(`https://api.telegram.org/bot${this.token}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(method === 'getUpdates' ? 30000 : 15000) });

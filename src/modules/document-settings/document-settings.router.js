@@ -8,7 +8,7 @@ import { AppError } from '../../shared/errors/errorHandler.js';
 import { compileTemplate, renderTemplate, sampleTemplate, TYPES, LANGUAGES, FIELDS, MIME } from './template.engine.js';
 
 const text = z.string().max(500).default('');
-const company = z.object(Object.fromEntries(['company_name','company_inn','company_address','company_phone','company_bank','company_account','director_name','accountant_name','cashier_name','branch_name'].map(k => [k,text]))).strict();
+const company = z.object(Object.fromEntries(['company_name','company_inn','company_registration','company_address','company_phone','company_bank','company_account','director_name','accountant_name','cashier_name','branch_name'].map(k => [k,text]))).strict();
 const pattern = z.string().max(100).refine(s => !s || (/\{id(?:4)?\}/.test(s) && !/[{}]/.test(s.replace(/\{(id|id4|year|project_code|unit|building)\}/g,''))), 'Добавьте {id} или {id4}; используйте только доступные переменные');
 export const settingsSchema = z.object({
   company: company.default({}),
