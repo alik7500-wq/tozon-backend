@@ -14,3 +14,4 @@ ALTER TABLE public.deals
 DROP TABLE IF EXISTS public.unit_status_history;
 
 COMMIT;
+

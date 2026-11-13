@@ -43,6 +43,7 @@ FROM (
   SELECT deal_id, MIN(created_at) AS first_reserve_at
   FROM public.deal_audit_logs
   WHERE action IN ('RESERVE', 'RESERVE_DEAL', 'CREATE_RESERVATION')
+    AND deal_id IS NOT NULL
   GROUP BY deal_id
 ) sub
 WHERE d.id = sub.deal_id AND d.reserved_at IS NULL;

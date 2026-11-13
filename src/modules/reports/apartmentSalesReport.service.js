@@ -771,12 +771,15 @@ export class ApartmentSalesReportService {
     // Identify barter cash desk IDs and marketing partners from dictionaries / dedicated table
     const barterDeskIds = new Set();
     const partnersMap = new Map();
+    const uniquePartnersByName = new Map();
 
     for (const dict of dictionaries) {
       if (!dict) continue;
       if (dict.type === DICTIONARY_TYPE_PARTNER) {
         const decoded = decodePartnerFromDictionaryRow(dict);
-        partnersMap.set(Number(decoded.id), decoded);
+        partnersMap.set(decoded.id, decoded);
+        partnersMap.set(String(decoded.id), decoded);
+        uniquePartnersByName.set(String(decoded.name || '').trim().toLowerCase(), decoded);
         continue;
       }
       const nameLower = String(dict.name || '').toLowerCase();
@@ -790,7 +793,12 @@ export class ApartmentSalesReportService {
     for (const mp of marketingPartners) {
       if (!mp) continue;
       const normalized = mp.commissionRateBp !== undefined ? mp : normalizePartnerFromTableRow(mp);
-      partnersMap.set(Number(normalized.id), normalized);
+      partnersMap.set(normalized.id, normalized);
+      partnersMap.set(String(normalized.id), normalized);
+      if (normalized.legacyDictionaryId) {
+        partnersMap.set(String(normalized.legacyDictionaryId), normalized);
+      }
+      uniquePartnersByName.set(String(normalized.name || '').trim().toLowerCase(), normalized);
     }
 
     const usersMap = new Map();
@@ -934,8 +942,9 @@ export class ApartmentSalesReportService {
       const managerName = deal.manager_name || managerUser?.name || managerUser?.full_name || 'Не назначен';
 
       const paymentType = String(deal.payment_type || 'FULL').toUpperCase();
+      const declaredDownMinor = Math.max(0, Math.round(Number(deal.down_payment_minor || 0)));
       if (
-        (paymentType === 'PARTIAL_BARTER' || paymentType === 'BARTER') &&
+        (declaredDownMinor > 0 || paymentType === 'PARTIAL_BARTER' || paymentType === 'BARTER') &&
         settlements.paidBarterMinor === 0 &&
         settlements.paidCashMinor === 0
       ) {
@@ -946,8 +955,8 @@ export class ApartmentSalesReportService {
           unitNumber: String(unit.unit_number || ''),
           blockCode: hierarchy.blockCode,
           paymentType,
-          declaredDownPaymentUsd: formatMoneyUsd(deal.down_payment_minor || 0),
-          message: `Договор №${deal.contract_number || deal.id} (кв. №${unit.unit_number}) имеет тип ${paymentType}, но в таблице payments отсутствует проведённый ПКО и barter_amount_minor = 0.`
+          declaredDownPaymentUsd: formatMoneyUsd(declaredDownMinor),
+          message: `Договор №${deal.contract_number || deal.id} (Блок ${hierarchy.blockCode}, кв. №${unit.unit_number}, тип ${paymentType}): указан первоначальный взнос ${formatMoneyUsd(declaredDownMinor)} USD, но в таблице payments отсутствует проведённый ПКО и barter_amount_minor = 0.`
         });
       }
 
@@ -1544,7 +1553,7 @@ export class ApartmentSalesReportService {
       },
       bySource,
       byPartner,
-      marketingPartners: Array.from(partnersMap.values()),
+      marketingPartners: Array.from(uniquePartnersByName.values()),
       apartments: allApartments,
       inventoryHistoryMeta: {
         reconstructedFromDeals: !hasUnitStatusAuditLog,

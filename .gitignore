@@ -3,6 +3,9 @@ node_modules/
 .DS_Store
 data/backups/
 data/*.json
+backups/
+*backup*.json
+*backup*.sql
 scratch/
 
 supabase/.temp/

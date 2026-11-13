@@ -81,6 +81,25 @@ export function encodePartnerMetadata({
   });
 }
 
+export function normalizePartnerId(val) {
+  if (val === null || val === undefined) return null;
+  const s = String(val).trim();
+  if (!s) return null;
+  if (/^\d+$/.test(s)) return Number(s);
+  return s;
+}
+
+export function lookupPartnerInMap(partnersMap, id) {
+  const norm = normalizePartnerId(id);
+  if (norm === null || !partnersMap) return null;
+  return (
+    partnersMap.get(norm) ||
+    partnersMap.get(String(norm)) ||
+    (typeof norm === 'number' ? partnersMap.get(norm) : null) ||
+    null
+  );
+}
+
 export function decodePartnerFromDictionaryRow(row) {
   let meta = {};
   if (row?.code) {
@@ -90,23 +109,27 @@ export function decodePartnerFromDictionaryRow(row) {
       meta = { notes: String(row.code) };
     }
   }
-  const rateBp = Math.max(0, Math.min(10000, Math.round(Number(meta.commission_rate_bp) || 0)));
-  const fixedMinor = Math.max(0, Math.round(Number(meta.commission_fixed_minor) || 0));
+  const rawType = meta.commission_type || meta.commissionType || 'NONE';
+  const rawRateBp = meta.commission_rate_bp ?? meta.commissionRateBp ?? 0;
+  const rawFixedMinor = meta.commission_fixed_minor ?? meta.commissionFixedMinor ?? 0;
+  const rateBp = Math.max(0, Math.min(10000, Math.round(Number(rawRateBp) || 0)));
+  const fixedMinor = Math.max(0, Math.round(Number(rawFixedMinor) || 0));
   return {
-    id: Number(row.id),
+    id: normalizePartnerId(row.id),
+    legacyDictionaryId: String(row.id || ''),
     name: String(row.name || '').trim(),
-    contactPerson: meta.contact_person || '',
+    contactPerson: meta.contact_person ?? meta.contactPerson ?? '',
     phone: meta.phone || '',
     isActive: row.is_active !== false,
-    commissionType: ['NONE', 'PERCENT', 'FIXED_USD'].includes(meta.commission_type)
-      ? meta.commission_type
+    commissionType: ['NONE', 'PERCENT', 'FIXED_USD'].includes(rawType)
+      ? rawType
       : 'NONE',
     commissionRateBp: rateBp,
     commissionRatePercent: Number((rateBp / 100).toFixed(2)),
     commissionFixedMinor: fixedMinor,
     commissionFixedUsd: minorToUsd(fixedMinor),
-    commissionTerms: meta.commission_terms || '',
-    cooperationStartDate: meta.cooperation_start_date || null,
+    commissionTerms: meta.commission_terms ?? meta.commissionTerms ?? '',
+    cooperationStartDate: meta.cooperation_start_date ?? meta.cooperationStartDate ?? null,
     notes: meta.notes || '',
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null,
@@ -117,7 +140,8 @@ export function normalizePartnerFromTableRow(row) {
   const rateBp = Math.max(0, Math.min(10000, Math.round(Number(row.commission_rate_bp) || 0)));
   const fixedMinor = Math.max(0, Math.round(Number(row.commission_fixed_minor) || 0));
   return {
-    id: Number(row.id),
+    id: normalizePartnerId(row.id),
+    legacyDictionaryId: row.legacy_dictionary_id ? String(row.legacy_dictionary_id) : null,
     name: String(row.name || '').trim(),
     contactPerson: row.contact_person || '',
     phone: row.phone || '',
@@ -177,7 +201,7 @@ export function resolveDealAttributionAndCommission({
     [SALES_SOURCES.DIRECT, SALES_SOURCES.MARKETER, SALES_SOURCES.UNSPECIFIED].includes(deal.sales_source)
   ) {
     salesSource = deal.sales_source;
-    marketingPartnerId = deal.marketing_partner_id ? Number(deal.marketing_partner_id) : null;
+    marketingPartnerId = normalizePartnerId(deal.marketing_partner_id);
     marketerName = deal.marketer_name || '';
     sourceConfirmedBy = deal.source_confirmed_by ? Number(deal.source_confirmed_by) : null;
     sourceConfirmedAt = deal.source_confirmed_at || null;
@@ -193,8 +217,8 @@ export function resolveDealAttributionAndCommission({
       ? payload.new_source
       : SALES_SOURCES.UNSPECIFIED;
 
-    const oldPartner = payload.old_partner_id ? partnersMap.get(Number(payload.old_partner_id)) : null;
-    const newPartner = payload.new_partner_id ? partnersMap.get(Number(payload.new_partner_id)) : null;
+    const oldPartner = lookupPartnerInMap(partnersMap, payload.old_partner_id);
+    const newPartner = lookupPartnerInMap(partnersMap, payload.new_partner_id);
     const userObj = log.user_id ? usersMap.get(Number(log.user_id)) : null;
 
     sourceHistory.push({
@@ -204,9 +228,9 @@ export function resolveDealAttributionAndCommission({
       oldSourceLabel: SALES_SOURCE_LABELS[payload.old_source || SALES_SOURCES.UNSPECIFIED] || 'Источник не определён',
       newSource: nextSource,
       newSourceLabel: SALES_SOURCE_LABELS[nextSource],
-      oldPartnerId: payload.old_partner_id ? Number(payload.old_partner_id) : null,
+      oldPartnerId: oldPartner ? oldPartner.id : normalizePartnerId(payload.old_partner_id),
       oldPartnerName: oldPartner?.name || payload.old_partner_name || null,
-      newPartnerId: payload.new_partner_id ? Number(payload.new_partner_id) : null,
+      newPartnerId: newPartner ? newPartner.id : normalizePartnerId(payload.new_partner_id),
       newPartnerName: newPartner?.name || payload.new_partner_name || null,
       marketerName: payload.marketer_name || '',
       reason: payload.reason || '',
@@ -217,14 +241,17 @@ export function resolveDealAttributionAndCommission({
 
     salesSource = nextSource;
     marketingPartnerId = nextSource === SALES_SOURCES.MARKETER && payload.new_partner_id
-      ? Number(payload.new_partner_id)
+      ? (newPartner ? newPartner.id : normalizePartnerId(payload.new_partner_id))
       : null;
     marketerName = nextSource === SALES_SOURCES.MARKETER ? String(payload.marketer_name || '').trim() : '';
     sourceConfirmedBy = log.user_id ? Number(log.user_id) : null;
     sourceConfirmedAt = log.created_at || payload.changed_at || null;
   }
 
-  const partner = marketingPartnerId ? partnersMap.get(Number(marketingPartnerId)) || null : null;
+  const partner = lookupPartnerInMap(partnersMap, marketingPartnerId);
+  if (partner) {
+    marketingPartnerId = partner.id;
+  }
   const marketingPartnerName = partner?.name || deal?.marketing_partner_name || null;
 
   // Rule 1: Direct sales or Unspecified sales NEVER accrue marketer commission
@@ -436,7 +463,7 @@ export function resolveDealAttributionAndCommission({
   return {
     salesSource,
     salesSourceLabel: SALES_SOURCE_LABELS[salesSource],
-    marketingPartnerId: marketingPartnerId ? Number(marketingPartnerId) : null,
+    marketingPartnerId: normalizePartnerId(marketingPartnerId),
     marketingPartnerName,
     marketerName,
     sourceConfirmedBy,
@@ -495,7 +522,7 @@ export class MarketingAttributionService {
       if (!dedicatedError && Array.isArray(dedicatedData)) {
         for (const row of dedicatedData) {
           const norm = normalizePartnerFromTableRow(row);
-          mergedById.set(Number(norm.id), norm);
+          mergedById.set(String(norm.id), norm);
           seenNames.add(String(norm.name || '').trim().toLowerCase());
         }
       }
@@ -520,8 +547,8 @@ export class MarketingAttributionService {
     for (const row of data || []) {
       const norm = decodePartnerFromDictionaryRow(row);
       const nameKey = String(norm.name || '').trim().toLowerCase();
-      if (!mergedById.has(Number(norm.id)) && !seenNames.has(nameKey)) {
-        mergedById.set(Number(norm.id), norm);
+      if (!mergedById.has(String(norm.id)) && !seenNames.has(nameKey)) {
+        mergedById.set(String(norm.id), norm);
         seenNames.add(nameKey);
       }
     }
@@ -534,7 +561,15 @@ export class MarketingAttributionService {
 
   async getPartnersMap({ user = null } = {}) {
     const partners = await this.getMarketingPartners({ includeInactive: true, user });
-    return new Map(partners.map((p) => [Number(p.id), p]));
+    const map = new Map();
+    for (const p of partners) {
+      map.set(p.id, p);
+      map.set(String(p.id), p);
+      if (p.legacyDictionaryId) {
+        map.set(String(p.legacyDictionaryId), p);
+      }
+    }
+    return map;
   }
 
   async createMarketingPartner(payload, user) {
@@ -633,13 +668,13 @@ export class MarketingAttributionService {
       throw new AppError('Только администратор (ADMIN) может редактировать маркетинговых партнёров', 403, 'FORBIDDEN');
     }
 
-    const id = Number(partnerId);
-    if (!Number.isInteger(id) || id <= 0) {
+    const id = normalizePartnerId(partnerId);
+    if (id === null) {
       throw new AppError('Некорректный ID партнёра', 400, 'INVALID_PARTNER_ID');
     }
 
     const partnersMap = await this.getPartnersMap({ user });
-    const existing = partnersMap.get(id);
+    const existing = lookupPartnerInMap(partnersMap, id);
     if (!existing) {
       throw new AppError('Маркетинговый партнёр не найден', 404, 'PARTNER_NOT_FOUND');
     }
@@ -904,18 +939,19 @@ export class MarketingAttributionService {
       : '';
 
     if (nextSource === SALES_SOURCES.MARKETER) {
-      partnerId = Number(payload?.marketingPartnerId ?? payload?.marketing_partner_id);
-      if (!Number.isInteger(partnerId) || partnerId <= 0) {
+      const requestedPartnerId = normalizePartnerId(payload?.marketingPartnerId ?? payload?.marketing_partner_id);
+      if (requestedPartnerId === null) {
         throw new AppError(
           'При выборе «Продажа через маркетологов» необходимо выбрать маркетингового партнёра',
           400,
           'MARKETING_PARTNER_REQUIRED'
         );
       }
-      partnerObj = partnersMap.get(partnerId);
+      partnerObj = lookupPartnerInMap(partnersMap, requestedPartnerId);
       if (!partnerObj) {
         throw new AppError('Выбранный маркетинговый партнёр не найден в справочнике', 404, 'MARKETING_PARTNER_NOT_FOUND');
       }
+      partnerId = partnerObj.id;
     }
 
     // Protect against hiding an already-disbursed commission by changing sales source to DIRECT/UNSPECIFIED
