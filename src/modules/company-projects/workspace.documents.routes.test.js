@@ -6,7 +6,7 @@ import jwt from 'jsonwebtoken';
 const m=vi.hoisted(()=>({user:vi.fn(),authorize:vi.fn(),details:vi.fn(),files:vi.fn(),upload:vi.fn(),download:vi.fn(),template:vi.fn(),read:vi.fn(),card:vi.fn()}));
 vi.mock('../users/users.repository.js',()=>({UsersRepository:{findById:m.user}}));
 vi.mock('../../db/connection.js',()=>({getServiceDB:vi.fn()}));
-vi.mock('./workspace.repository.js',()=>({readWorkspace:vi.fn(),readWorkspaceOptions:vi.fn(),readWorkspaceOverview:vi.fn()}));
+vi.mock('./workspace.repository.js',()=>({readWorkspace:vi.fn(),readWorkspaceOptions:vi.fn(),readWorkspaceInventory:vi.fn(),readWorkspaceOverview:vi.fn()}));
 vi.mock('./workspace.documents.js',()=>({authorizeDocument:m.authorize,documentDetails:m.details,readFiles:m.files,uploadFile:m.upload,downloadFile:m.download,downloadTemplate:m.template,readDocument:m.read,printableCard:m.card,FILE_LIMIT:10*1024*1024}));
 import router from './workspace.router.js';
 import {workspaceBoundary} from './workspace.boundary.js';

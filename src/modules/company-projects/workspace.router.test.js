@@ -3,10 +3,10 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
-const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn(),overview:vi.fn()}));
+const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn(),overview:vi.fn(),inventory:vi.fn()}));
 vi.mock('../users/users.repository.js',()=>({UsersRepository:{findById:mocks.findUser}}));
 vi.mock('./workspace.commands.js',async original=>{const actual=await original();return {...actual,executeWorkspaceCommand:mocks.command};});
-vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options,readWorkspaceOverview:mocks.overview}));
+vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options,readWorkspaceInventory:mocks.inventory,readWorkspaceOverview:mocks.overview}));
 vi.mock('../../db/connection.js',()=>({getServiceDB:vi.fn()}));
 import router from './workspace.router.js';
 import { workspaceBoundary } from './workspace.boundary.js';
@@ -100,4 +100,10 @@ it('loads overview only for the authenticated scoped actor and refuses actor ove
  mocks.overview.mockResolvedValue({inventory:{available:150}});const r=await auth(request(app).get(`/api/project-workspace/${project}/overview`));expect(r.status).toBe(200);expect(r.headers['cache-control']).toBe('no-store');expect(mocks.overview).toHaveBeenCalledWith(10,project);
  expect((await auth(request(app).get(`/api/project-workspace/${project}/overview?actor=30`))).status).toBe(400);
  mocks.findUser.mockResolvedValue({id:30,role:'ADMIN',is_active:1,permissions:[]});expect((await auth(request(app).get(`/api/project-workspace/${project}/overview`))).status).toBe(403);expect(mocks.overview).toHaveBeenCalledTimes(1);
+});
+
+it('uses authenticated actor for inventory and validates complex selector strictly',async()=>{
+ mocks.inventory.mockResolvedValue({records:[],complexes:[]});let r=await auth(request(app).get(`/api/project-workspace/${project}/inventory?complex_id=3`));expect(r.status).toBe(200);expect(mocks.inventory).toHaveBeenCalledWith(10,project,3);
+ for(const query of ['actor=30','complex_id=-1','complex_id=0','complex_id=2147483648','complex_id=1&complex_id=2'])expect((await auth(request(app).get(`/api/project-workspace/${project}/inventory?${query}`))).status).toBe(400);
+ expect(mocks.inventory).toHaveBeenCalledTimes(1);
 });

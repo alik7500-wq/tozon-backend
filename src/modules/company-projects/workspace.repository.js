@@ -25,3 +25,12 @@ export async function readWorkspaceOverview(actor,project){
   if(error)throw error;
   return data;
 }
+
+export async function readWorkspaceInventory(actor,project,complex=null){
+  const {data,error}=await getServiceDB().rpc('read_company_project_inventory',{p_actor:actor,p_project:project,p_complex:complex});
+  if(error?.code==='42501')throw new AppError('Нет доступа к помещениям этого проекта',403);
+  if(error?.code==='P0002')throw new AppError('Жилой комплекс не найден в выбранном проекте',404);
+  if(error?.code==='54000')throw new AppError('В ЖК более 5000 помещений. Обратитесь к администратору для разделения шахматки.',422);
+  if(error)throw error;
+  return data;
+}
