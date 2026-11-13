@@ -340,4 +340,141 @@ describe('PostgreSQL (PGlite) Verification — Full Backup Restore + Migrations 
       { deal_id: 12, status: 'PAID', paid_amount_minor: 150000 },
     ]);
   });
+
+  it('handles production TEXT date columns (deals.created_at, units.created_at), invalid/empty strings without substituting NOW(), and prioritizes audit reservation timestamps', async () => {
+    const db = new PGlite();
+
+    await db.exec(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres') THEN CREATE ROLE postgres SUPERUSER NOLOGIN; END IF;
+      END $$;
+
+      CREATE TABLE public.users (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, role TEXT NOT NULL);
+      CREATE TABLE public.units (
+        id BIGSERIAL PRIMARY KEY,
+        unit_number TEXT NOT NULL,
+        unit_kind TEXT DEFAULT 'APARTMENT',
+        status TEXT DEFAULT 'AVAILABLE',
+        archived_at TEXT,
+        created_at TEXT
+      );
+      CREATE TABLE public.deals (
+        id BIGSERIAL PRIMARY KEY,
+        unit_id BIGINT REFERENCES public.units(id),
+        status TEXT DEFAULT 'SIGNED',
+        deal_date TEXT,
+        signed_at TEXT,
+        cancelled_at TEXT,
+        reservation_expires_at TEXT,
+        final_price_minor BIGINT DEFAULT 5000000,
+        created_at TEXT,
+        updated_at TEXT
+      );
+      CREATE TABLE public.dictionaries (
+        id TEXT PRIMARY KEY DEFAULT md5(random()::text),
+        type TEXT NOT NULL,
+        code TEXT,
+        name TEXT NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        sort_order INT DEFAULT 100,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE public.deal_audit_logs (
+        id BIGSERIAL PRIMARY KEY,
+        deal_id BIGINT REFERENCES public.deals(id) ON DELETE CASCADE,
+        user_id BIGINT,
+        action VARCHAR(50) NOT NULL,
+        changes_json JSONB NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      INSERT INTO public.users (id, name, role) VALUES (1, 'Admin', 'ADMIN');
+      INSERT INTO public.units (id, unit_number, status, created_at) VALUES
+        (1, '101', 'RESERVED', '2026-08-27T19:41:17.590Z'),
+        (2, '102', 'RESERVED', '2026-09-10T11:57:22.416Z'),
+        (3, '103', 'RESERVED', ''),
+        (4, '104', 'RESERVED', 'invalid-date'),
+        (5, '105', 'RESERVED', NULL),
+        (6, '106', 'SOLD', '2026-10-01T10:00:00.000Z');
+
+      INSERT INTO public.deals (id, unit_id, status, deal_date, signed_at, reservation_expires_at, created_at) VALUES
+        (101, 1, 'RESERVED', '2026-08-27', NULL, '2026-12-31', '2026-08-27T19:41:17.590Z'),
+        (102, 2, 'RESERVED', '2026-09-10', NULL, '2026-12-31', '2026-09-10T11:57:22.416Z'),
+        (103, 3, 'RESERVED', '2026-10-03', NULL, '2026-11-01', ''),
+        (104, 4, 'RESERVED', '2026-10-03', NULL, '2026-11-01', 'invalid-date'),
+        (105, 5, 'RESERVED', '2026-10-03', NULL, '2026-11-01', NULL),
+        (106, 6, 'SIGNED', '2026-10-01', '2026-10-01T10:05:00.000Z', NULL, '2026-10-01T10:00:00.000Z');
+
+      -- Actual reservation timestamp recorded in audit log for deal #102 (should override created_at)
+      INSERT INTO public.deal_audit_logs (deal_id, user_id, action, changes_json, created_at) VALUES
+        (102, 1, 'UPDATE_DEAL', '{"updates":{"status":"RESERVED"}}'::jsonb, '2026-09-11T08:15:00Z');
+    `);
+
+    const mig055Sql = fs.readFileSync(
+      path.join(migrationsDir, '055_sales_sources_and_marketing_commissions.sql'),
+      'utf8'
+    );
+    const mig056Sql = fs.readFileSync(
+      path.join(migrationsDir, '056_unit_status_history_and_reserved_at.sql'),
+      'utf8'
+    );
+
+    await db.exec(mig055Sql);
+    await db.exec(mig056Sql);
+
+    const dealsRes = await db.query(
+      `SELECT id, reserved_at IS NOT NULL AS has_reserved_at, reserved_at::TEXT AS reserved_at_text
+       FROM public.deals ORDER BY id`
+    );
+    const byId = Object.fromEntries(dealsRes.rows.map((r) => [Number(r.id), r]));
+
+    // Deal 101: valid TEXT created_at -> parsed to TIMESTAMPTZ
+    expect(byId[101].has_reserved_at).toBe(true);
+    expect(new Date(byId[101].reserved_at_text).toISOString()).toBe('2026-08-27T19:41:17.590Z');
+
+    // Deal 102: actual audit log reservation timestamp takes priority over created_at
+    expect(byId[102].has_reserved_at).toBe(true);
+    expect(new Date(byId[102].reserved_at_text).toISOString()).toBe('2026-09-11T08:15:00.000Z');
+
+    // Deals 103, 104, 105: empty/invalid/NULL created_at -> MUST stay NULL (never NOW())
+    expect(byId[103].has_reserved_at).toBe(false);
+    expect(byId[104].has_reserved_at).toBe(false);
+    expect(byId[105].has_reserved_at).toBe(false);
+
+    // Deal 106: direct SIGNED contract without reservation -> stays NULL
+    expect(byId[106].has_reserved_at).toBe(false);
+
+    // Trigger on units with TEXT created_at: both valid & invalid TEXT created_at work on INSERT & UPDATE
+    await db.query(
+      `INSERT INTO public.units (id, unit_number, status, created_at) VALUES (201, '201', 'AVAILABLE', '2026-10-18T11:57:49.445Z')`
+    );
+    await db.query(
+      `INSERT INTO public.units (id, unit_number, status, created_at) VALUES (202, '202', 'AVAILABLE', 'not-a-date')`
+    );
+    await db.query(`UPDATE public.units SET status = 'RESERVED' WHERE id = 201`);
+
+    const histRes = await db.query(
+      `SELECT unit_id, old_status, new_status, reason, changed_at FROM public.unit_status_history ORDER BY id`
+    );
+    expect(histRes.rows.length).toBe(3);
+    expect(new Date(histRes.rows[0].changed_at).toISOString()).toBe('2026-10-18T11:57:49.445Z');
+    expect(histRes.rows[2].old_status).toBe('AVAILABLE');
+    expect(histRes.rows[2].new_status).toBe('RESERVED');
+
+    // Verify rollback_056 cleanly removes fn_safe_parse_timestamptz and unit_status_history
+    const rollback056Sql = fs.readFileSync(
+      path.join(migrationsDir, 'rollback_056_unit_status_history_and_reserved_at.sql'),
+      'utf8'
+    );
+    await db.exec(rollback056Sql);
+    const fnAfterRollback = await db.query(
+      `SELECT proname FROM pg_proc WHERE proname IN ('fn_safe_parse_timestamptz', 'fn_log_unit_status_change')`
+    );
+    expect(fnAfterRollback.rows.length).toBe(0);
+  });
 });

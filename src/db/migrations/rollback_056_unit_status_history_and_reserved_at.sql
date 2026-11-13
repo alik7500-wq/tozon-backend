@@ -12,6 +12,7 @@ ALTER TABLE public.deals
   DROP COLUMN IF EXISTS reserved_at;
 
 DROP TABLE IF EXISTS public.unit_status_history;
+DROP FUNCTION IF EXISTS public.fn_safe_parse_timestamptz(TEXT);
 
 COMMIT;
 
