@@ -107,3 +107,17 @@ it('uses authenticated actor for inventory and validates complex selector strict
  for(const query of ['actor=30','complex_id=-1','complex_id=0','complex_id=2147483648','complex_id=1&complex_id=2'])expect((await auth(request(app).get(`/api/project-workspace/${project}/inventory?${query}`))).status).toBe(400);
  expect(mocks.inventory).toHaveBeenCalledTimes(1);
 });
+it('prepares an offer without writes and rejects forged fields, missing print rights and cookie origins',async()=>{
+ vi.stubEnv('PROJECT_WORKSPACE_DOCUMENTS_ENABLED','true');vi.stubEnv('FRONTEND_ORIGIN','https://trusted.example');
+ mocks.read.mockResolvedValue({projects:[{id:project,name:'Plaza',sections:['inventory.view','documents.print']}]});
+ mocks.inventory.mockResolvedValue({records:[{id:1,unit_kind:'APARTMENT',unit_number:'101',area_m2_x100:6000,price_per_m2_minor:70000,status:'AVAILABLE'}],complexes:[{id:3,name:'Own',currency:'USD'}],schemes:[]});
+ const body={complex_id:3,unit_id:1,language:'RU',expected_unit_price_minor:70000,expected_area_x100:6000,expected_total_minor:4200000,scheme_id:null,scheme_updated_at:null,rule_key:null,down_payment_minor:0,installment_months:36,reference_rate:null};
+ const path=`/api/project-workspace/${project}/offers/preview`;
+ const r=await auth(request(app).post(path).send(body));expect(r.status).toBe(200);expect(r.headers['cache-control']).toBe('no-store');expect(r.body.data.quote.total_minor).toBe(4200000);expect(mocks.command).not.toHaveBeenCalled();
+ expect((await auth(request(app).post(path.replace('/preview','/save')).send(body))).status).toBe(403);
+ vi.stubEnv('PROJECT_WORKSPACE_DOCUMENTS_ENABLED','false');expect((await auth(request(app).post(path).send(body))).status).toBe(403);vi.stubEnv('PROJECT_WORKSPACE_DOCUMENTS_ENABLED','true');
+ expect((await auth(request(app).post(path).send({...body,actor:20}))).status).toBe(400);
+ expect((await auth(request(app).post(path+'?actor=20').send(body))).status).toBe(400);
+ const cookie='jwt='+jwt.sign({id:10},'synthetic-workspace-api-test-only');expect((await request(app).post(path).set('Cookie',cookie).set('Origin','https://evil.example').send(body)).status).toBe(403);
+ mocks.read.mockResolvedValue({projects:[]});expect((await auth(request(app).post(path).send(body))).status).toBe(403);
+});

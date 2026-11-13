@@ -9,6 +9,7 @@ import { AppError } from '../../shared/errors/errorHandler.js';
 import { assertWorkspacePilotRuntime, isProjectOnlyUser } from './workspace.boundary.js';
 import { readWorkspace, readWorkspaceOptions, readWorkspaceOverview, readWorkspaceInventory } from './workspace.repository.js';
 import { parseWorkspaceCommand, executeWorkspaceCommand } from './workspace.commands.js';
+import {offerSchema,prepareOffer} from './workspace.offer.js';
 
 const router = express.Router();
 const resource = z.enum(['complexes', 'units', 'leads', 'deals', 'payments', 'schedules', 'expenses', 'warehouses']);
@@ -43,6 +44,14 @@ const sendBinary=(res,result)=>{
   res.send(result.buffer);
 };
 const documentLimiter=rateLimit({windowMs:60000,max:30,standardHeaders:true,legacyHeaders:false});
+router.post('/:project/offers/preview',documentLimiter,async(req,res,next)=>{
+ try{
+  if(process.env.PROJECT_WORKSPACE_DOCUMENTS_ENABLED!=='true')throw new AppError('Печать предложений ещё не включена',403);
+  trustedWriteOrigin(req);parse(z.object({}).strict(),req.query);
+  const project=parse(z.uuid(),req.params.project),input=parse(offerSchema,req.body);
+  res.json({status:'success',data:await prepareOffer(req.user.id,project,input,req.user.name)});
+ }catch(e){next(e);}
+});
 const fileUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:FILE_LIMIT,files:1,fields:0}}).single('file');
 router.get('/:project/documents/:deal',documentLimiter,async(req,res,next)=>{
  try {const [project,deal]=documentParams(req);parse(z.object({}).strict(),req.query);res.json({status:'success',data:await documentDetails(req.user.id,project,deal)});}catch(e){next(e);}
