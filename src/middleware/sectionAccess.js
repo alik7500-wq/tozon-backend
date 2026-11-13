@@ -139,7 +139,8 @@ export const authorizeSectionRequest = async req => {
     if (/\/apartment-sales(?:\/|$)/.test(path)) {
       if (read) allowed = hasAny(user, ['analytics.view', 'analytics.reports', 'deals.view', 'contracts.view']);
     } else if (/\/marketing-partners(?:\/|$)/.test(path)) {
-      if (read) allowed = hasAny(user, ['analytics.view', 'analytics.reports', 'deals.view', 'contracts.view', 'settings.view', ...financeReads]);
+      if (user.role === 'WAREHOUSE_MANAGER') allowed = false;
+      else if (read) allowed = hasAny(user, ['analytics.view', 'analytics.reports', 'deals.view', 'contracts.view', 'settings.view', ...financeReads]);
       else allowed = user.role === 'ADMIN';
     } else if (/\/sales-|\/apartment-demand/.test(path)) {
       if (user.role === 'FINANCE_MANAGER') allowed = false;
