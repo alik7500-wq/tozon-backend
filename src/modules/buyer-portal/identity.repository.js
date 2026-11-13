@@ -26,6 +26,11 @@ export class BuyerIdentityRepository {
   }
   async contractList(telegramId){return data(await this.db.rpc('buyer_portal_contracts',{p_telegram_id:telegramId}));}
   async contractSnapshot(telegramId,dealId){return data(await this.db.rpc('buyer_portal_contract_snapshot',{p_telegram_id:telegramId,p_deal_id:dealId}));}
+  async materials(telegramId,dealId){return data(await this.db.rpc('buyer_portal_materials',{p_telegram_id:telegramId,p_deal_id:dealId}));}
+  async documentList(dealId,owner){return data(await this.db.from('buyer_portal_documents').select('id,title,kind,language,version,is_signed_original,status,created_at,published_at').eq('deal_id',dealId).eq('owner_lead_id',owner).order('created_at',{ascending:false}));}
+  async staffDocument(dealId,id,owner){return data(await this.db.from('buyer_portal_documents').select('storage_path,mime_type,file_size,sha256').eq('deal_id',dealId).eq('id',id).eq('owner_lead_id',owner).maybeSingle());}
+  async createDocument(row){return data(await this.db.rpc('buyer_portal_register_document',{p_document:row}));}
+  async publishDocument(dealId,id,owner,actor,action){return data(await this.db.rpc('buyer_portal_publish_document',{p_deal_id:dealId,p_id:id,p_owner:owner,p_actor:actor,p_action:action}));}
   async unlink(leadId,userId) {
     data(await this.db.rpc('buyer_portal_unlink',{p_lead_id:leadId,p_actor_user_id:userId}));
   }

@@ -12,10 +12,11 @@ function auth(id=101) {
   const key=createHmac('sha256','WebAppData').update(botToken).digest();
   return new URLSearchParams({...fields,hash:createHmac('sha256',key).update(check).digest('hex')}).toString();
 }
-let app,service;
+let app,service,materials;
 beforeEach(()=>{
   service={requestCode:vi.fn(async()=>({challengeId:'safe'})),confirmCode:vi.fn(async()=>({verified:true})),contracts:vi.fn(async()=>[]),preferences:vi.fn(async()=>({language:'ru'})),contractList:vi.fn(async()=>[]),contract:vi.fn(async()=>({id:1}))};
-  app=express(); app.use(express.json()); app.use(createBuyerRouter(service,{enabled:()=>true,botToken:()=>botToken}));
+  materials={manifest:vi.fn(async()=>({plans:[],documents:[],tour:null})),asset:vi.fn(async()=>({buffer:Buffer.from('%PDF-1.7'),mime:'application/pdf',filename:'TOZON-document.pdf'}))};
+  app=express(); app.use(express.json()); app.use(createBuyerRouter(service,{enabled:()=>true,botToken:()=>botToken,materials}));
 });
 it('rejects staff JWTs and unsigned Telegram IDs as buyer authentication',async()=>{
   await request(app).post('/otp').set('Authorization','Bearer staff-token').send({telegramId:101,token:'x'}).expect(401);
@@ -57,4 +58,13 @@ it('uses signed identity on every financial read, even when payload tries to imp
   await request(app).post('/contract').set('X-Telegram-Init-Data',auth()).send({dealId:1,telegramId:202,leadId:999}).expect(200);
   expect(service.contract).toHaveBeenCalledWith('101',1);
   await request(app).post('/contract').send({dealId:1}).expect(401);
+});
+it('authenticates binary downloads and sends private attachment headers without a public URL',async()=>{
+ await request(app).post('/asset').send({dealId:1,type:'DOCUMENT',id:'x'}).expect(401);
+ const response=await request(app).post('/asset').set('X-Telegram-Init-Data',auth()).send({dealId:1,type:'DOCUMENT',id:'x',telegramId:202}).expect(200);
+ expect(materials.asset).toHaveBeenCalledWith('101',expect.objectContaining({dealId:1,id:'x'}));
+ expect(response.headers['content-type']).toBe('application/pdf');expect(response.headers['cache-control']).toBe('no-store');expect(response.headers['x-content-type-options']).toBe('nosniff');
+ expect(response.headers['content-disposition']).toContain('attachment');
+ await request(app).post('/materials').set('X-Telegram-Init-Data',auth()).send({dealId:1,telegramId:202}).expect(200);
+ expect(materials.manifest).toHaveBeenCalledWith('101',1);
 });

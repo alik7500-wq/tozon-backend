@@ -105,6 +105,8 @@ export const authorizeSectionRequest = async req => {
     allowed = user.role === 'ADMIN' || user.role === 'DIRECTOR' || (user.role === 'FINANCE_MANAGER' && hasAny(user, financeReads));
   } else if (/^\/api\/deals\/[^/]+\/sales-source(?:\/|$)/.test(path)) {
     allowed = ['ADMIN', 'DIRECTOR', 'SALES_MANAGER'].includes(user.role) && hasAny(user, ['deals.view', 'contracts.view']);
+  } else if (/^\/api\/deals\/[^/]+\/buyer-(?:status|invites|unlink|documents)(?:\/|$)/.test(path)) {
+    allowed = hasAny(user,['deals.view','contracts.view'],true);
   } else if (path.startsWith('/api/deals')) {
     key = /\/sign$/.test(path) ? 'contracts.view' : 'deals.view';
     if (user.role === 'WAREHOUSE_MANAGER') allowed = false;

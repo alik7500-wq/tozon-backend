@@ -21,6 +21,14 @@ const routes = [
  ['analytics.reports','analytics.reports.write','/api/reports']
 ];
 describe('per-section read/write matrix',()=>{
+ it('accepts either contracts or deals write for buyer management, but never finance/read-only access',async()=>{
+  for(const path of ['/api/deals/1/buyer-status','/api/deals/1/buyer-invites','/api/deals/1/buyer-documents/doc/action']){
+   await expect(authorizeSectionRequest(req('POST',path,['contracts.view','contracts.manage']))).resolves.toBeUndefined();
+   await expect(authorizeSectionRequest(req('POST',path,['deals.view','deals.manage']))).resolves.toBeUndefined();
+   await expect(authorizeSectionRequest(req('GET',path,['contracts.view']))).rejects.toMatchObject({statusCode:403});
+   await expect(authorizeSectionRequest(req('GET',path,['finance.view']))).rejects.toMatchObject({statusCode:403});
+  }
+ });
  it.each(routes)('allows reading but blocks mutations for %s',async(read,write,path)=>{
   await expect(authorizeSectionRequest(req('GET',path,[read]))).resolves.toBeUndefined();
   for(const method of ['POST','PATCH','PUT','DELETE']) await expect(authorizeSectionRequest(req(method,path,[read]))).rejects.toMatchObject({statusCode:403});

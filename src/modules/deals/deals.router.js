@@ -8,12 +8,30 @@ import { resolveCashDeskAccess } from '../../middleware/cashDeskAuth.middleware.
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 import rateLimit from 'express-rate-limit';
-import { buyerIdentity } from '../buyer-portal/instance.js';
+import { buyerIdentity,buyerMaterials } from '../buyer-portal/instance.js';
+import multer from 'multer';
 import { buyerEnabled, BuyerPortalError } from '../buyer-portal/identity.service.js';
 
 const router = express.Router();
 
 router.use(protect);
+const buyerUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024,files:1,fields:5}}).single('file');
+router.use('/:id/buyer-documents',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404));
+const buyerDocumentRun=fn=>async(req,res)=>{
+ res.set('Cache-Control','no-store');
+ try{res.json({data:await fn(req)});}catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_DOCUMENT_UNAVAILABLE'});}
+};
+router.get('/:id/buyer-documents',buyerDocumentRun(req=>buyerMaterials.staffList(parseRequiredBigInt(req.params.id,'id'),req.user)));
+router.post('/:id/buyer-documents',rateLimit({windowMs:15*60000,limit:20,keyGenerator:req=>String(req.user.id)}),async(req,res,next)=>{
+ try{const deal=await buyerIdentity.repo.deal(parseRequiredBigInt(req.params.id,'id'));buyerIdentity.assertStaff(req.user,deal);next();}
+ catch{res.status(403).json({message:'BUYER_ACCESS_DENIED'});}
+},(req,res,next)=>buyerUpload(req,res,error=>error?res.status(400).json({message:'BUYER_DOCUMENT_INVALID'}):next()),buyerDocumentRun(req=>buyerMaterials.upload(parseRequiredBigInt(req.params.id,'id'),req.user,req.body,req.file)));
+router.post('/:id/buyer-documents/:documentId/action',buyerDocumentRun(req=>buyerMaterials.publish(parseRequiredBigInt(req.params.id,'id'),req.params.documentId,req.user,req.body?.action)));
+router.post('/:id/buyer-documents/:documentId/file',async(req,res)=>{
+ try{const file=await buyerMaterials.staffAsset(parseRequiredBigInt(req.params.id,'id'),req.user,req.params.documentId);
+ res.set({'Content-Type':file.mime,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Disposition':`attachment; filename="${file.filename}"`}).send(file.buffer);
+ }catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:'BUYER_DOCUMENT_UNAVAILABLE'});}
+});
 
 router.get('/:id/buyer-status',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404),async(req,res)=>{
   res.set('Cache-Control','no-store');
