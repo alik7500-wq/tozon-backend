@@ -2,6 +2,7 @@ import express from 'express';
 import { DealsRepository } from './deals.repository.js';
 import { DictionariesRepository } from '../dictionaries/dictionaries.repository.js';
 import { TasksService } from '../tasks/tasks.service.js';
+import { marketingAttributionService } from '../reports/marketingAttribution.service.js';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { resolveCashDeskAccess } from '../../middleware/cashDeskAuth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
@@ -145,9 +146,36 @@ router.post('/', (req, res, next) => recordsInitialPayment(req.body) ? resolveCa
 router.post('/:id/sign', async (req, res, next) => {
   try {
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
-    const deal = await DealsRepository.signDeal(cleanId, req.user.id);
+    const deal = await DealsRepository.signDeal(cleanId, req.user.id, req.body);
     // Auto-generate task for payment control
     await TasksService.onDealSigned(deal, req.user.id);
+    res.status(200).json({ status: 'success', data: { deal } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch('/:id/sales-source', async (req, res, next) => {
+  try {
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    if (req.user?.role === 'SALES_MANAGER') {
+      const existingDeal = await DealsRepository.getDealById(cleanId);
+      if (!existingDeal) return next(new AppError('Сделка не найдена', 404));
+      if (Number(existingDeal.responsible_user_id) !== Number(req.user.id)) {
+        return next(new AppError('У вас нет доступа к сделкам других менеджеров', 403));
+      }
+    }
+    const deal = await marketingAttributionService.updateDealSalesSource(cleanId, req.body, req.user);
+    res.status(200).json({ status: 'success', data: { deal } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch('/:id/commission', async (req, res, next) => {
+  try {
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const deal = await marketingAttributionService.updateDealCommission(cleanId, req.body, req.user);
     res.status(200).json({ status: 'success', data: { deal } });
   } catch (error) {
     next(error);

@@ -101,7 +101,11 @@ export const authorizeSectionRequest = async req => {
     else if (/\/debtors(?:\/|$)/.test(path)) key = 'finance.debtors';
     else key = 'finance.view';
   } else if (/^\/api\/deals\/[^/]+\/payments(?:\/|$)/.test(path)) key = 'finance.payments';
-  else if (path.startsWith('/api/deals')) {
+  else if (/^\/api\/deals\/[^/]+\/commission(?:\/|$)/.test(path)) {
+    allowed = user.role === 'ADMIN' || user.role === 'DIRECTOR' || (user.role === 'FINANCE_MANAGER' && hasAny(user, financeReads));
+  } else if (/^\/api\/deals\/[^/]+\/sales-source(?:\/|$)/.test(path)) {
+    allowed = ['ADMIN', 'DIRECTOR', 'SALES_MANAGER'].includes(user.role) && hasAny(user, ['deals.view', 'contracts.view']);
+  } else if (path.startsWith('/api/deals')) {
     key = /\/sign$/.test(path) ? 'contracts.view' : 'deals.view';
     if (user.role === 'WAREHOUSE_MANAGER') allowed = false;
     else if (read) allowed = hasSection(user,'deals.view') || hasAny(user, ['finance.view','finance.payments','finance.debtors','finance.cashflow']);
@@ -134,6 +138,9 @@ export const authorizeSectionRequest = async req => {
   } else if (path.startsWith('/api/reports')) {
     if (/\/apartment-sales(?:\/|$)/.test(path)) {
       if (read) allowed = hasAny(user, ['analytics.view', 'analytics.reports', 'deals.view', 'contracts.view']);
+    } else if (/\/marketing-partners(?:\/|$)/.test(path)) {
+      if (read) allowed = hasAny(user, ['analytics.view', 'analytics.reports', 'deals.view', 'contracts.view', 'settings.view', ...financeReads]);
+      else allowed = user.role === 'ADMIN';
     } else if (/\/sales-|\/apartment-demand/.test(path)) {
       if (user.role === 'FINANCE_MANAGER') allowed = false;
       else if (read) allowed = hasAny(user, ['analytics.view', 'analytics.reports', 'leads.view', 'deals.view']);
