@@ -92,7 +92,16 @@ export const authorizeSectionRequest = async req => {
     }
   } else if (path.startsWith('/api/finance')) {
     if (path === '/api/finance/access' && read) allowed = hasAny(user, financeReads);
-    if (/\/income(?:\/|$)/.test(path)) key = 'finance.payments';
+    else if (/\/marketing-commissions(?:\/|$)/.test(path)) {
+      if (read) {
+        allowed = ['ADMIN', 'DIRECTOR', 'FINANCE_MANAGER', 'SALES_MANAGER'].includes(user.role)
+          && hasAny(user, ['finance.view', 'deals.view', 'analytics.view', 'analytics.reports']);
+      } else {
+        allowed = ['ADMIN', 'FINANCE_MANAGER'].includes(user.role)
+          && hasAny(user, ['finance.view', 'finance.expenses', 'finance.payments']);
+      }
+    }
+    else if (/\/income(?:\/|$)/.test(path)) key = 'finance.payments';
     else if (/\/expenses(?:\/|$)/.test(path)) {
       key = 'finance.expenses';
       if (!read && req.body?.auto_convert && !hasSection(user,'finance.cashflow',true)) throw new AppError('Автоконвертация требует права изменения ДДС',403);
