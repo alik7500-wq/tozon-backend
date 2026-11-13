@@ -27,4 +27,22 @@ export class BuyerIdentityRepository {
   async unlink(leadId,userId) {
     data(await this.db.rpc('buyer_portal_unlink',{p_lead_id:leadId,p_actor_user_id:userId}));
   }
+  async visit(tokenHash,telegramId) {
+    return data(await this.db.rpc('buyer_portal_visit',{p_token_hash:tokenHash,p_telegram_id:String(telegramId)}));
+  }
+  async knownTelegram(telegramId) {
+    const binding=data(await this.db.from('buyer_portal_bindings').select('id').eq('telegram_id',String(telegramId)).limit(1));
+    if (binding.length) return true; // Includes revoked identities: never register them as finance subscribers.
+    const visits=data(await this.db.from('buyer_portal_audit').select('id').eq('telegram_id',String(telegramId)).eq('event','BUYER_OPENED').limit(1));
+    return visits.length>0;
+  }
+  async bindingStatus(leadId,dealId) {
+    const binding=data(await this.db.from('buyer_portal_bindings').select('id,verified_at,last_active_at').eq('lead_id',leadId).is('revoked_at',null).maybeSingle());
+    if (!binding) return {connected:false,contractAccess:false};
+    const grant=data(await this.db.from('buyer_portal_grants').select('id').eq('binding_id',binding.id).eq('deal_id',dealId).is('revoked_at',null).maybeSingle());
+    return {connected:true,contractAccess:Boolean(grant),verifiedAt:binding.verified_at,lastActiveAt:binding.last_active_at};
+  }
+  async language(telegramId,language) {
+    data(await this.db.from('buyer_portal_bindings').update({language,last_active_at:new Date().toISOString()}).eq('telegram_id',telegramId).is('revoked_at',null));
+  }
 }

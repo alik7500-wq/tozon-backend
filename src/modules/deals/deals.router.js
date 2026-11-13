@@ -15,6 +15,12 @@ const router = express.Router();
 
 router.use(protect);
 
+router.get('/:id/buyer-status',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404),async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  try {res.json({data:await buyerIdentity.staffStatus(parseRequiredBigInt(req.params.id,'id'),req.user)});}
+  catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'});}
+});
+
 router.post('/:id/buyer-invites',
   (req,res,next)=>buyerEnabled()?next():res.sendStatus(404),
   rateLimit({windowMs:15*60000,limit:20,keyGenerator:req=>String(req.user.id)}),

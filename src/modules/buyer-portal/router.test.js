@@ -14,7 +14,7 @@ function auth(id=101) {
 }
 let app,service;
 beforeEach(()=>{
-  service={requestCode:vi.fn(async()=>({challengeId:'safe'})),confirmCode:vi.fn(async()=>({verified:true})),contracts:vi.fn(async()=>[])};
+  service={requestCode:vi.fn(async()=>({challengeId:'safe'})),confirmCode:vi.fn(async()=>({verified:true})),contracts:vi.fn(async()=>[]),preferences:vi.fn(async()=>({language:'ru'}))};
   app=express(); app.use(express.json()); app.use(createBuyerRouter(service,{enabled:()=>true,botToken:()=>botToken}));
 });
 it('rejects staff JWTs and unsigned Telegram IDs as buyer authentication',async()=>{
@@ -46,4 +46,8 @@ it('is disabled by default until controlled rollout',async()=>{
   const disabled=express(); disabled.use(createBuyerRouter(service,{enabled:()=>false}));
   await request(disabled).post('/otp').expect(404);
   expect(service.requestCode).not.toHaveBeenCalled();
+});
+it('updates preferences using only the signed identity',async()=>{
+  await request(app).patch('/preferences').set('X-Telegram-Init-Data',auth()).send({language:'ru',telegramId:202}).expect(200);
+  expect(service.preferences).toHaveBeenCalledWith('101','ru');
 });

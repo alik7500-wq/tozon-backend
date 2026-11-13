@@ -9,7 +9,7 @@ let service,repo,sms,botIdentity;
 beforeEach(()=>{
   repo={deal:vi.fn(async()=>deal),createInvite:vi.fn(async()=>({id:'invite',expires_at:'2026-11-13T00:15:00.000Z'})),
     prepare:vi.fn(async()=>({status:'PREPARED',phone:deal.leads.phone})),delivered:vi.fn(),deliveryFailed:vi.fn(),
-    confirm:vi.fn(async()=>({status:'VERIFIED'})),access:vi.fn(async()=>[{deal_id:1}]),unlink:vi.fn()};
+    confirm:vi.fn(async()=>({status:'VERIFIED'})),access:vi.fn(async()=>[{deal_id:1}]),unlink:vi.fn(),language:vi.fn(),bindingStatus:vi.fn(async()=>({connected:false,contractAccess:false}))};
   sms={sendSms:vi.fn(async()=>({success:true,isMock:false}))};
   botIdentity=vi.fn(async()=>({username:'ActualConfiguredBot'}));
   service=new BuyerIdentityService({repo,sms,botIdentity,otpSecret:()=>secret,clock:()=>new Date('2026-11-13T00:00:00Z')});
@@ -50,6 +50,17 @@ describe('buyer invitations',()=>{
   });
 });
 describe('buyer OTP service',()=>{
+  it('persists language only for a verified buyer with current access',async()=>{
+    await expect(service.preferences('101','ru')).resolves.toEqual({language:'ru'});
+    expect(repo.language).toHaveBeenCalledWith('101','ru');
+    await expect(service.preferences('101','anything')).rejects.toThrow('BUYER_LANGUAGE_INVALID');
+    repo.access.mockResolvedValue([]);
+    await expect(service.preferences('101','tj')).rejects.toThrow('BUYER_ACCESS_DENIED');
+  });
+  it('requires employee assignment and write permission before returning binding status',async()=>{
+    await service.staffStatus(1,staff);expect(repo.bindingStatus).toHaveBeenCalledWith(2,1);
+    await expect(service.staffStatus(1,{...staff,id:99})).rejects.toThrow('BUYER_ACCESS_DENIED');
+  });
   it('sends only to CRM phone and returns no code or raw phone',async()=>{
     const result=await service.requestCode('a'.repeat(43),'101');
     const {id,codeHash}=repo.prepare.mock.calls[0][0];

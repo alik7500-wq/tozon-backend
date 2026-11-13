@@ -26,5 +26,6 @@ export function createBuyerRouter(service, {enabled=buyerEnabled, botToken=()=>p
   router.post('/verify',run(req=>service.confirmCode(req.body?.challengeId,req.body?.code,req.buyer.telegramUserId)));
   // Deliberately returns only granted IDs until the financial projection is validated.
   router.get('/access',run(req=>service.contracts(req.buyer.telegramUserId)));
+  router.patch('/preferences',run(req=>service.preferences(req.buyer.telegramUserId,req.body?.language)));
   return router;
 }

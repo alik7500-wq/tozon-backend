@@ -81,7 +81,8 @@ app.use(pino({
     'req.headers["x-webhook-secret"]',
     'req.body.secret',
     'req.body.token',
-    'req.body.code'
+    'req.body.code',
+    'req.body.message.text'
   ],
   autoLogging: {
     ignore: (req) => req.url === '/api/health' || req.url?.startsWith('/api/integrations/instagram/callback') || req.url?.startsWith('/api/integrations/instagram/webhook'),

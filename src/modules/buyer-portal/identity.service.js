@@ -80,6 +80,16 @@ export class BuyerIdentityService {
     return {verified:true};
   }
   async contracts(verifiedTelegramId) { return this.repo.access(telegramId(verifiedTelegramId)); }
+  async staffStatus(dealId,user) {
+    const deal=await this.repo.deal(dealId); this.assertStaff(user,deal);
+    return this.repo.bindingStatus(deal.lead_id,deal.id);
+  }
+  async preferences(verifiedTelegramId,language) {
+    const tg=telegramId(verifiedTelegramId);
+    if (!['tj','ru'].includes(language)) fail('BUYER_LANGUAGE_INVALID');
+    if (!(await this.repo.access(tg)).length) fail('BUYER_ACCESS_DENIED',403);
+    await this.repo.language(tg,language); return {language};
+  }
   async unlink(dealId,user) {
     const deal=await this.repo.deal(dealId);
     this.assertStaff(user,deal);

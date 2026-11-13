@@ -14,6 +14,7 @@ beforeAll(async () => {
     insert into users values(1); insert into leads values(1,'+992900000001'),(2,'+992900000002');
     insert into deals values(1,1,'SIGNED'),(2,2,'SIGNED'),(3,1,'SIGNED');`);
   await db.exec(readFileSync(new URL('../../../supabase/migrations/20261113195039_buyer_portal_identity.sql', import.meta.url), 'utf8'));
+  await db.exec(readFileSync(new URL('../../../supabase/migrations/20261113200522_buyer_portal_entry.sql', import.meta.url), 'utf8'));
 }, 20000);
 afterAll(async () => { await db?.close(); });
 beforeEach(async () => {
@@ -37,6 +38,15 @@ async function confirm(id, tg = 101, hash = good) {
 async function access(tg = 101) { return (await db.query('select * from buyer_portal_access($1)',[tg])).rows; }
 
 describe('buyer database authentication', () => {
+  it('records bot visits without granting contract access and rejects expired/redeemed tokens',async()=>{
+    await invite();
+    const visit=async()=> (await db.query('select buyer_portal_visit($1,$2) ok',[qr,101])).rows[0].ok;
+    expect(await visit()).toBe(true);expect(await access()).toEqual([]);
+    const c=await prepare();await delivered(c.id);await confirm(c.id);
+    expect(await visit()).toBe(false);
+    expect((await db.query("select event from buyer_portal_audit where event='BUYER_OPENED'")).rows).toHaveLength(1);
+    for(const role of ['anon','authenticated']) expect((await db.query("select has_function_privilege($1,'buyer_portal_visit(text,bigint)','EXECUTE') p",[role])).rows[0].p).toBe(false);
+  });
   it('locks down all tables and functions to server role', async () => {
     for (const table of ['invites','bindings','grants','otp','audit']) {
       expect((await db.query(`select relrowsecurity as enabled from pg_class where oid=$1::regclass`,[`buyer_portal_${table}`])).rows[0].enabled).toBe(true);
