@@ -23,6 +23,8 @@ import inventoryRouter from './modules/inventory/inventory.router.js';
 import visualMapsRouter from './modules/visual-maps/visual-maps.router.js';
 import leadsRouter from './modules/leads/leads.router.js';
 import dealsRouter from './modules/deals/deals.router.js';
+import { createBuyerRouter } from './modules/buyer-portal/router.js';
+import { buyerIdentity } from './modules/buyer-portal/instance.js';
 import dashboardRouter from './modules/dashboard/dashboard.router.js';
 import usersRouter from './modules/users/users.router.js';
 import rolesRouter from './modules/users/roles.router.js';
@@ -75,9 +77,11 @@ app.use(pino({
     'res.headers["set-cookie"]',
     'req.headers["x-lead-intake-key"]',
     'req.headers["x-telegram-bot-api-secret-token"]',
+    'req.headers["x-telegram-init-data"]',
     'req.headers["x-webhook-secret"]',
     'req.body.secret',
-    'req.body.token'
+    'req.body.token',
+    'req.body.code'
   ],
   autoLogging: {
     ignore: (req) => req.url === '/api/health' || req.url?.startsWith('/api/integrations/instagram/callback') || req.url?.startsWith('/api/integrations/instagram/webhook'),
@@ -142,6 +146,7 @@ app.use('/api/inventory', layoutPresentationRouter);
 app.use('/api/visual-maps', visualMapsRouter);
 app.use('/api/leads', leadsRouter);
 app.use('/api/deals', dealsRouter);
+app.use('/api/buyer-portal', createBuyerRouter(buyerIdentity));
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/roles', rolesRouter);

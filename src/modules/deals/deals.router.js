@@ -7,10 +7,30 @@ import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { resolveCashDeskAccess } from '../../middleware/cashDeskAuth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
+import rateLimit from 'express-rate-limit';
+import { buyerIdentity } from '../buyer-portal/instance.js';
+import { buyerEnabled, BuyerPortalError } from '../buyer-portal/identity.service.js';
 
 const router = express.Router();
 
 router.use(protect);
+
+router.post('/:id/buyer-invites',
+  (req,res,next)=>buyerEnabled()?next():res.sendStatus(404),
+  rateLimit({windowMs:15*60000,limit:20,keyGenerator:req=>String(req.user.id)}),
+  async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    try { res.status(201).json({data:await buyerIdentity.createInvite(req.params.id,req.user)}); }
+    catch(e) { res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'}); }
+  });
+
+router.post('/:id/buyer-unlink',
+  (req,res,next)=>buyerEnabled()?next():res.sendStatus(404),
+  async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    try { res.json({data:await buyerIdentity.unlink(parseRequiredBigInt(req.params.id,'id'),req.user)}); }
+    catch(e) { res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'}); }
+  });
 
 router.get('/stats', async (req, res, next) => {
   try {
