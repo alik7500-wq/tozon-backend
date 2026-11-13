@@ -12,6 +12,8 @@ beforeAll(async()=>{
  ALTER TABLE units ADD COLUMN rooms integer DEFAULT 2;ALTER TABLE units ADD COLUMN position_on_floor integer;ALTER TABLE units ADD COLUMN manual_total_price_minor integer;
  `);
  await db.exec(readFileSync(new URL('../../../supabase/migrations/20261113164153_company_project_inventory_board.sql',import.meta.url),'utf8'));
+ await db.exec(`CREATE TABLE discount_schemes(id uuid PRIMARY KEY,project_id integer,name text,rules jsonb,is_active boolean DEFAULT true,starts_on date,ends_on date,updated_at timestamptz DEFAULT now());GRANT SELECT ON discount_schemes TO service_role;`);
+ await db.exec(readFileSync(new URL('../../../supabase/migrations/20261113192434_company_project_inventory_pricing.sql',import.meta.url),'utf8'));
 },30000);
 afterAll(()=>db?.close());beforeEach(()=>db.exec('BEGIN'));afterEach(()=>db.exec('ROLLBACK'));
 it('returns only own complex and a minimal inventory projection, without customers or private fields',async()=>{
@@ -41,3 +43,11 @@ it('never silently truncates oversized inventory',async()=>{
  await db.exec("INSERT INTO units(id,floor_id,unit_number,status,unit_kind) SELECT n,1,n::text,'AVAILABLE','APARTMENT' FROM generate_series(10,5010)n");await expect(board()).rejects.toThrow('WORKSPACE_INVENTORY_TOO_LARGE');
 });
 it('blocks direct browser role execution',async()=>{await db.exec('SET ROLE authenticated');await expect(board()).rejects.toThrow();});
+
+it('returns only current own-complex schemes while retaining distinct 36/40 month rules',async()=>{
+ const rules=[{payment_percent:0,price_per_m2:640,months:36},{payment_percent:0,price_per_m2:700,months:40}];
+ await db.query("INSERT INTO discount_schemes(id,project_id,name,rules) VALUES('00000000-0000-4000-8000-000000000001',1,'Own',$1::jsonb),('00000000-0000-4000-8000-000000000002',2,'Foreign',$1::jsonb)",[JSON.stringify(rules)]);
+ await db.exec("INSERT INTO discount_schemes(id,project_id,name,rules,is_active,starts_on,ends_on) VALUES('00000000-0000-4000-8000-000000000003',1,'Disabled','[]',false,null,null),('00000000-0000-4000-8000-000000000004',1,'Expired','[]',true,null,'2000-01-01'),('00000000-0000-4000-8000-000000000005',1,'Future','[]',true,'2099-01-01',null)");
+ let r=await board();expect(r.schemes).toHaveLength(1);expect(r.schemes[0]).toMatchObject({name:'Own',project_id:1,is_active:true,rules});
+ await db.exec("UPDATE discount_schemes SET rules='[{\"payment_percent\":30,\"price_per_m2\":600,\"months\":36}]',updated_at=now() WHERE name='Own'");r=await board();expect(r.schemes[0].rules).toHaveLength(1);expect(r.schemes[0].rules[0].payment_percent).toBe(30);
+});
