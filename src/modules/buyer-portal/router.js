@@ -10,22 +10,25 @@ export function createBuyerRouter(service, {enabled=buyerEnabled, botToken=()=>p
     if (!enabled()) return res.sendStatus(404);
     next();
   });
-  router.use(rateLimit({windowMs:60000,limit:30}));
+  router.use(rateLimit({windowMs:60000,limit:300}));
   router.use((req,res,next)=>{
     try {
       const raw=req.get('X-Telegram-Init-Data');
       req.buyer=verifyMiniAppInitData(raw,botToken()); next();
     } catch { res.status(401).json({message:'INVALID_TELEGRAM_AUTH'}); }
   });
-  router.use(rateLimit({windowMs:60000,limit:10,keyGenerator:req=>req.buyer.telegramUserId}));
+  router.use(rateLimit({windowMs:60000,limit:60,keyGenerator:req=>req.buyer.telegramUserId}));
+  const otpLimit=rateLimit({windowMs:60000,limit:10,keyGenerator:req=>req.buyer.telegramUserId});
   const run=fn=>async(req,res)=>{
     try { res.json({data:await fn(req)}); }
     catch(e) { res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'}); }
   };
-  router.post('/otp',run(req=>service.requestCode(req.body?.token,req.buyer.telegramUserId)));
-  router.post('/verify',run(req=>service.confirmCode(req.body?.challengeId,req.body?.code,req.buyer.telegramUserId)));
+  router.post('/otp',otpLimit,run(req=>service.requestCode(req.body?.token,req.buyer.telegramUserId)));
+  router.post('/verify',otpLimit,run(req=>service.confirmCode(req.body?.challengeId,req.body?.code,req.buyer.telegramUserId)));
   // Deliberately returns only granted IDs until the financial projection is validated.
   router.get('/access',run(req=>service.contracts(req.buyer.telegramUserId)));
+  router.get('/contracts',run(req=>service.contractList(req.buyer.telegramUserId)));
+  router.post('/contract',run(req=>service.contract(req.buyer.telegramUserId,req.body?.dealId)));
   router.patch('/preferences',run(req=>service.preferences(req.buyer.telegramUserId,req.body?.language)));
   return router;
 }

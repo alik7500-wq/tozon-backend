@@ -162,9 +162,76 @@ export function normalizePartnerFromTableRow(row) {
 }
 
 /**
+ * Computes confirmed net settled amount (cash + barter without double counting, minus refunds)
+ * in integer minor units for a single deal.
+ */
+export function computeDealSettledMinor(deal) {
+  if (!deal) return 0;
+  if (deal.total_settled_minor !== undefined && deal.total_settled_minor !== null) {
+    return Math.max(0, Math.round(Number(deal.total_settled_minor) || 0));
+  }
+
+  if (Array.isArray(deal.payments)) {
+    let paidCashMinor = 0;
+    let paidBarterMinor = 0;
+    let barterRowsCount = 0;
+
+    for (const p of deal.payments) {
+      const status = String(p?.status || 'ACTIVE').toUpperCase();
+      if (status === 'VOIDED' || status === 'CANCELLED') continue;
+      const amount = Math.max(0, Math.round(Number(p?.amount_minor) || 0));
+      const method = String(p?.settlement_method || p?.payment_method || '').toUpperCase();
+      if (method === 'BARTER') {
+        barterRowsCount += 1;
+        paidBarterMinor += amount;
+      } else {
+        paidCashMinor += amount;
+      }
+    }
+
+    const dealBarterMinor = Math.max(0, Math.round(Number(deal.barter_amount_minor) || 0));
+    if (dealBarterMinor > 0 && barterRowsCount === 0) {
+      paidBarterMinor += dealBarterMinor;
+    }
+
+    const refundMinor = Math.max(0, Math.round(Number(deal.refund_amount_minor) || 0));
+    return Math.max(0, paidCashMinor + paidBarterMinor - refundMinor);
+  }
+
+  const paidFallback = Math.max(0, Math.round(Number(deal.paid_amount_minor) || 0));
+  const barterFallback = Math.max(0, Math.round(Number(deal.barter_amount_minor) || 0));
+  const refundFallback = Math.max(0, Math.round(Number(deal.refund_amount_minor) || 0));
+  return Math.max(0, paidFallback + barterFallback - refundFallback);
+}
+
+/**
+ * Individual per-contract marketer commission scale using exact integer threshold comparisons
+ * (no intermediate percentage rounding):
+ * - settled < 5%          -> 0% (0 bp)
+ * - 5% <= settled < 10%   -> 2% (200 bp)
+ * - 10% <= settled <= 15% -> 3% (300 bp)
+ * - settled > 15%         -> 4% (400 bp)
+ */
+export function computeTieredCommissionRateBp(settledMinor, contractPriceMinor) {
+  const settled = Math.max(0, Math.round(Number(settledMinor) || 0));
+  const price = Math.max(0, Math.round(Number(contractPriceMinor) || 0));
+  if (price <= 0 || settled <= 0) return 0;
+
+  const lhs = BigInt(settled) * 100n;
+  const p5 = BigInt(price) * 5n;
+  const p10 = BigInt(price) * 10n;
+  const p15 = BigInt(price) * 15n;
+
+  if (lhs < p5) return 0;
+  if (lhs < p10) return 200;
+  if (lhs <= p15) return 300;
+  return 400;
+}
+
+/**
  * Pure calculation of deal sales source attribution and marketer commission state.
  * Never auto-assigns DIRECT or MARKETER to historical deals that lack explicit confirmation.
- * Never auto-calculates commission if rate is not configured or source is DIRECT/UNSPECIFIED.
+ * Uses individual per-contract payment scale (0% / 2% / 3% / 4%) for SIGNED MARKETER deals.
  */
 export function resolveDealAttributionAndCommission({
   deal,
@@ -175,6 +242,11 @@ export function resolveDealAttributionAndCommission({
 }) {
   const contractPriceMinor = toMinorUnits(deal?.final_price_minor ?? deal?.total_amount_minor);
   const contractPriceUsd = minorToUsd(contractPriceMinor);
+  const settledMinor = computeDealSettledMinor(deal);
+  const settledUsd = minorToUsd(settledMinor);
+  const paymentPercent = contractPriceMinor > 0
+    ? Number(((settledMinor / contractPriceMinor) * 100).toFixed(2))
+    : 0;
   const isDealCancelled = String(deal?.status || '').toUpperCase() === 'CANCELLED' || Boolean(deal?.cancelled_at);
   const isDealNotSignedYet = Boolean(deal?.status) && !['SIGNED', 'CANCELLED'].includes(String(deal?.status || '').toUpperCase());
 
@@ -273,14 +345,21 @@ export function resolveDealAttributionAndCommission({
         commissionTerms: '',
         contractPriceMinor,
         contractPriceUsd,
+        settledMinor,
+        settledUsd,
+        paymentPercent,
         calculatedCommissionMinor: 0,
         calculatedCommissionUsd: 0,
+        additionalAccrualMinor: 0,
+        additionalAccrualUsd: 0,
         approvedCommissionMinor: 0,
         approvedCommissionUsd: 0,
         paidCommissionMinor: 0,
         paidCommissionUsd: 0,
         remainingCommissionMinor: 0,
         remainingCommissionUsd: 0,
+        overpaidCommissionMinor: 0,
+        overpaidCommissionUsd: 0,
         accruedAt: null,
         approvedAt: null,
         approvedBy: null,
@@ -295,16 +374,15 @@ export function resolveDealAttributionAndCommission({
   }
 
   // Rule 2: Sales through Marketers (MARKETER)
-  // Determine base rate from partner or deal if configured, without inventing any default percentage
-  let commissionType = deal?.commission_type || partner?.commissionType || 'NONE';
-  let commissionRateBp = deal?.commission_rate_bp !== undefined
-    ? Number(deal.commission_rate_bp)
-    : deal?.commission_rate_percent !== undefined
-      ? Math.round(Number(deal.commission_rate_percent) * 100)
-      : (partner?.commissionRateBp || 0);
-  let commissionFixedMinor = deal?.commission_fixed_minor !== undefined
-    ? Number(deal.commission_fixed_minor)
-    : (partner?.commissionFixedMinor || 0);
+  // Individual per-contract payment scale (0% / 2% / 3% / 4%)
+  const tieredRateBp = computeTieredCommissionRateBp(settledMinor, contractPriceMinor);
+  const tieredCalculatedMinor = tieredRateBp > 0
+    ? Math.round((contractPriceMinor * tieredRateBp) / 10000)
+    : 0;
+
+  let commissionType = tieredRateBp > 0 ? 'PERCENT' : 'NONE';
+  let commissionRateBp = tieredRateBp;
+  let commissionFixedMinor = 0;
   let commissionTerms = partner?.commissionTerms || '';
   let calculatedCommissionMinor = 0;
   let approvedCommissionMinor = 0;
@@ -317,14 +395,11 @@ export function resolveDealAttributionAndCommission({
   let cancelledAt = null;
   let cancelReason = null;
   let notes = '';
+  let hasManualRateOverride = false;
 
-  if (!isDealNotSignedYet) {
-    if (commissionType === 'PERCENT' && commissionRateBp > 0) {
-      calculatedCommissionMinor = Math.round((contractPriceMinor * commissionRateBp) / 10000);
-      status = COMMISSION_STATUSES.CALCULATED;
-      accruedAt = sourceConfirmedAt || deal?.deal_date || deal?.created_at || null;
-    } else if (commissionType === 'FIXED_USD' && commissionFixedMinor > 0) {
-      calculatedCommissionMinor = commissionFixedMinor;
+  if (!isDealNotSignedYet && !isDealCancelled) {
+    if (tieredRateBp > 0 && tieredCalculatedMinor > 0) {
+      calculatedCommissionMinor = tieredCalculatedMinor;
       status = COMMISSION_STATUSES.CALCULATED;
       accruedAt = sourceConfirmedAt || deal?.deal_date || deal?.created_at || null;
     }
@@ -392,6 +467,9 @@ export function resolveDealAttributionAndCommission({
 
     const userObj = log.user_id ? usersMap.get(Number(log.user_id)) : null;
 
+    if (payload.action_type === 'SET_RATE') {
+      hasManualRateOverride = true;
+    }
     if (payload.commission_type) {
       commissionType = payload.commission_type;
     }
@@ -444,6 +522,13 @@ export function resolveDealAttributionAndCommission({
     });
   }
 
+  // Keep target commission synchronized with per-contract payment scale unless manually overridden
+  if (!hasManualRateOverride && !deal?.commission && !isDealNotSignedYet && !isDealCancelled) {
+    commissionRateBp = tieredRateBp;
+    commissionType = tieredRateBp > 0 ? 'PERCENT' : 'NONE';
+    calculatedCommissionMinor = tieredCalculatedMinor;
+  }
+
   // Rule 3 (Stage 4.3): If deal is terminated (CANCELLED), block new accrual,
   // cancel unpaid commission, and preserve already paid commission in history.
   if (isDealCancelled) {
@@ -454,9 +539,27 @@ export function resolveDealAttributionAndCommission({
     cancelReason = cancelReason || deal?.cancellation_reason || 'Договор расторгнут';
   }
 
+  const additionalAccrualMinor = (!isDealCancelled && !isDealNotSignedYet)
+    ? Math.max(0, calculatedCommissionMinor - approvedCommissionMinor)
+    : 0;
+  const overpaidCommissionMinor = Math.max(0, paidCommissionMinor - calculatedCommissionMinor);
+
+  // If commission was previously approved/paid at a lower tier and target increased,
+  // allow approving the delta without re-accruing or duplicating payouts.
+  if (
+    !isDealCancelled &&
+    !isDealNotSignedYet &&
+    additionalAccrualMinor > 0 &&
+    approvedCommissionMinor > 0 &&
+    paidCommissionMinor >= approvedCommissionMinor &&
+    status === COMMISSION_STATUSES.PAID
+  ) {
+    status = COMMISSION_STATUSES.CALCULATED;
+  }
+
   const remainingCommissionMinor = status === COMMISSION_STATUSES.CANCELLED
     ? 0
-    : Math.max(0, approvedCommissionMinor - paidCommissionMinor);
+    : Math.max(0, Math.min(approvedCommissionMinor, calculatedCommissionMinor) - paidCommissionMinor);
 
   const commissionRatePercent = Number((commissionRateBp / 100).toFixed(2));
 
@@ -477,14 +580,21 @@ export function resolveDealAttributionAndCommission({
       commissionTerms,
       contractPriceMinor,
       contractPriceUsd,
+      settledMinor,
+      settledUsd,
+      paymentPercent,
       calculatedCommissionMinor,
       calculatedCommissionUsd: minorToUsd(calculatedCommissionMinor),
+      additionalAccrualMinor,
+      additionalAccrualUsd: minorToUsd(additionalAccrualMinor),
       approvedCommissionMinor,
       approvedCommissionUsd: minorToUsd(approvedCommissionMinor),
       paidCommissionMinor,
       paidCommissionUsd: minorToUsd(paidCommissionMinor),
       remainingCommissionMinor,
       remainingCommissionUsd: minorToUsd(remainingCommissionMinor),
+      overpaidCommissionMinor,
+      overpaidCommissionUsd: minorToUsd(overpaidCommissionMinor),
       accruedAt,
       approvedAt,
       approvedBy,
@@ -892,7 +1002,7 @@ export class MarketingAttributionService {
     const db = this.getDb(user);
     const { data: deal, error: dealErr } = await db
       .from('deals')
-      .select('*')
+      .select('*, payments(*)')
       .eq('id', id)
       .maybeSingle();
 
@@ -1107,7 +1217,7 @@ export class MarketingAttributionService {
     const db = this.getDb(user);
     const { data: deal, error: dealErr } = await db
       .from('deals')
-      .select('*')
+      .select('*, payments(*)')
       .eq('id', id)
       .maybeSingle();
 
@@ -1230,7 +1340,9 @@ export class MarketingAttributionService {
         accrued_at: currentAttr.commission.accruedAt || nowIso,
       };
     } else if (actionType === 'APPROVE') {
+      const hasAdditionalAccrual = currentAttr.commission.additionalAccrualMinor > 0;
       if (
+        !hasAdditionalAccrual &&
         [
           COMMISSION_STATUSES.APPROVED,
           COMMISSION_STATUSES.PARTIALLY_PAID,
@@ -1257,6 +1369,16 @@ export class MarketingAttributionService {
         );
       }
 
+      if (approvedMinor < currentAttr.commission.paidCommissionMinor) {
+        throw new AppError(
+          'Утверждаемая сумма комиссии не может быть меньше уже выплаченной суммы',
+          400,
+          'APPROVED_BELOW_PAID'
+        );
+      }
+
+      const additionalApprovedMinor = Math.max(0, approvedMinor - currentAttr.commission.approvedCommissionMinor);
+
       const newStatus = currentAttr.commission.paidCommissionMinor >= approvedMinor
         ? COMMISSION_STATUSES.PAID
         : currentAttr.commission.paidCommissionMinor > 0
@@ -1266,12 +1388,20 @@ export class MarketingAttributionService {
       auditChanges = {
         ...auditChanges,
         approved_amount_minor: approvedMinor,
+        additional_accrual_minor: additionalApprovedMinor,
         status: newStatus,
         accrued_at: currentAttr.commission.accruedAt || nowIso,
         approved_at: nowIso,
         approved_by: user?.id ? Number(user.id) : null,
       };
     } else if (actionType === 'RECORD_PAYOUT') {
+      if (currentAttr.commission.overpaidCommissionMinor > 0) {
+        throw new AppError(
+          `По договору зафиксирована переплата комиссии (${currentAttr.commission.overpaidCommissionUsd} USD). Новые выплаты заблокированы до урегулирования.`,
+          400,
+          'COMMISSION_OVERPAID'
+        );
+      }
       if (currentAttr.commission.status === COMMISSION_STATUSES.PAID) {
         throw new AppError(
           'Комиссия по данному договору уже полностью выплачена. Повторная выплата запрещена.',

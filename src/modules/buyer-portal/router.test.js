@@ -14,7 +14,7 @@ function auth(id=101) {
 }
 let app,service;
 beforeEach(()=>{
-  service={requestCode:vi.fn(async()=>({challengeId:'safe'})),confirmCode:vi.fn(async()=>({verified:true})),contracts:vi.fn(async()=>[]),preferences:vi.fn(async()=>({language:'ru'}))};
+  service={requestCode:vi.fn(async()=>({challengeId:'safe'})),confirmCode:vi.fn(async()=>({verified:true})),contracts:vi.fn(async()=>[]),preferences:vi.fn(async()=>({language:'ru'})),contractList:vi.fn(async()=>[]),contract:vi.fn(async()=>({id:1}))};
   app=express(); app.use(express.json()); app.use(createBuyerRouter(service,{enabled:()=>true,botToken:()=>botToken}));
 });
 it('rejects staff JWTs and unsigned Telegram IDs as buyer authentication',async()=>{
@@ -50,4 +50,11 @@ it('is disabled by default until controlled rollout',async()=>{
 it('updates preferences using only the signed identity',async()=>{
   await request(app).patch('/preferences').set('X-Telegram-Init-Data',auth()).send({language:'ru',telegramId:202}).expect(200);
   expect(service.preferences).toHaveBeenCalledWith('101','ru');
+});
+it('uses signed identity on every financial read, even when payload tries to impersonate another buyer',async()=>{
+  await request(app).get('/contracts?telegramId=202').set('X-Telegram-Init-Data',auth()).expect(200);
+  expect(service.contractList).toHaveBeenCalledWith('101');
+  await request(app).post('/contract').set('X-Telegram-Init-Data',auth()).send({dealId:1,telegramId:202,leadId:999}).expect(200);
+  expect(service.contract).toHaveBeenCalledWith('101',1);
+  await request(app).post('/contract').send({dealId:1}).expect(401);
 });

@@ -1,6 +1,7 @@
 import { createHmac, randomInt, randomUUID } from 'node:crypto';
 import { createBuyerInviteToken, hashBuyerInviteToken } from './telegram-auth.js';
 import { hasSection, isMatrixUser } from '../../middleware/sectionAccess.js';
+import {projectBuyerContract} from './financial-projection.js';
 
 export class BuyerPortalError extends Error {
   constructor(code, status = 400) { super(code); this.statusCode = status; }
@@ -80,6 +81,13 @@ export class BuyerIdentityService {
     return {verified:true};
   }
   async contracts(verifiedTelegramId) { return this.repo.access(telegramId(verifiedTelegramId)); }
+  async contractList(verifiedTelegramId){return this.repo.contractList(telegramId(verifiedTelegramId));}
+  async contract(verifiedTelegramId,dealId){
+    if(!/^[1-9]\d{0,9}$/.test(String(dealId))||Number(dealId)>2147483647)fail('BUYER_CONTRACT_UNAVAILABLE',404);
+    const snapshot=await this.repo.contractSnapshot(telegramId(verifiedTelegramId),dealId);
+    if(!snapshot)fail('BUYER_CONTRACT_UNAVAILABLE',404);
+    try{return projectBuyerContract(snapshot);}catch{fail('BUYER_FINANCE_REVIEW_REQUIRED',409);}
+  }
   async staffStatus(dealId,user) {
     const deal=await this.repo.deal(dealId); this.assertStaff(user,deal);
     return this.repo.bindingStatus(deal.lead_id,deal.id);

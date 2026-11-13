@@ -24,6 +24,8 @@ export class BuyerIdentityRepository {
   async access(telegramId) {
     return data(await this.db.rpc('buyer_portal_access',{p_telegram_id:telegramId}));
   }
+  async contractList(telegramId){return data(await this.db.rpc('buyer_portal_contracts',{p_telegram_id:telegramId}));}
+  async contractSnapshot(telegramId,dealId){return data(await this.db.rpc('buyer_portal_contract_snapshot',{p_telegram_id:telegramId,p_deal_id:dealId}));}
   async unlink(leadId,userId) {
     data(await this.db.rpc('buyer_portal_unlink',{p_lead_id:leadId,p_actor_user_id:userId}));
   }

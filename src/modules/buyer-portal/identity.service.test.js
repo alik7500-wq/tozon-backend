@@ -50,6 +50,14 @@ describe('buyer invitations',()=>{
   });
 });
 describe('buyer OTP service',()=>{
+  it('returns the same unavailable error for a foreign and nonexistent contract',async()=>{
+    repo.contractSnapshot=vi.fn(async()=>null);
+    await expect(service.contract('101',999)).rejects.toMatchObject({message:'BUYER_CONTRACT_UNAVAILABLE',statusCode:404});
+    expect(repo.contractSnapshot).toHaveBeenCalledWith('101',999);
+    await expect(service.contract('101','1 OR true')).rejects.toMatchObject({statusCode:404});
+    await expect(service.contract('101','9999999999')).rejects.toMatchObject({statusCode:404});
+    expect(repo.contractSnapshot).toHaveBeenCalledTimes(1);
+  });
   it('persists language only for a verified buyer with current access',async()=>{
     await expect(service.preferences('101','ru')).resolves.toEqual({language:'ru'});
     expect(repo.language).toHaveBeenCalledWith('101','ru');
