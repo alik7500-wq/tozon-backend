@@ -9,6 +9,7 @@ export class BuyerCommunicationsRepository{
  async inquiries(tg,deal){return checked(await this.db.rpc('buyer_portal_inquiry_history',{p_telegram:tg,p_deal:deal}));}
  async staffInquiries(deal,lead){return checked(await this.db.from('buyer_portal_inquiries').select('id,message,status,reply,created_at,replied_at').eq('deal_id',deal).eq('lead_id',lead).order('created_at',{ascending:false}).limit(100));}
  async reply(deal,id,actor,message){return checked(await this.db.rpc('buyer_portal_reply',{p_deal:deal,p_id:id,p_actor:actor,p_reply:message}));}
+ async staffNotices(deal,owner){return checked(await this.db.rpc('buyer_portal_staff_notices',{p_deal:deal,p_owner:owner}));}
  async notices(tg){return checked(await this.db.rpc('buyer_portal_notice_history',{p_telegram:tg}));}
  async read(tg,id){checked(await this.db.rpc('buyer_portal_read_notice',{p_telegram:tg,p_id:id}));}
  async candidates(){return checked(await this.db.rpc('buyer_portal_reminder_candidates'));}

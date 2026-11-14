@@ -88,7 +88,7 @@ export class BuyerIdentityService {
     return {verified:true};
   }
   async contracts(verifiedTelegramId) { const tg=telegramId(verifiedTelegramId);const [active,archived]=await Promise.all([this.repo.access(tg),this.repo.archiveAccess(tg)]);return [...active,...archived.map(a=>({...a,archived:true}))]; }
-  async contractList(verifiedTelegramId){return this.repo.contractList(telegramId(verifiedTelegramId));}
+  async contractList(verifiedTelegramId){const tg=telegramId(verifiedTelegramId),list=await this.repo.contractList(tg);if(list.length)await this.repo.touch(tg);return list;}
   async contract(verifiedTelegramId,dealId){
     if(!/^[1-9]\d{0,9}$/.test(String(dealId))||Number(dealId)>2147483647)fail('BUYER_CONTRACT_UNAVAILABLE',404);
     const snapshot=await this.repo.contractSnapshot(telegramId(verifiedTelegramId),dealId);
@@ -113,7 +113,7 @@ export class BuyerIdentityService {
   async preferences(verifiedTelegramId,language) {
     const tg=telegramId(verifiedTelegramId);
     if (!['tj','ru'].includes(language)) fail('BUYER_LANGUAGE_INVALID');
-    if (!(await this.repo.access(tg)).length) fail('BUYER_ACCESS_DENIED',403);
+    if (!(await this.contracts(tg)).length) fail('BUYER_ACCESS_DENIED',403);
     await this.repo.language(tg,language); return {language};
   }
   async participantList(dealId,user){const deal=await this.repo.deal(dealId);this.assertStaff(user,deal,{allowCancelled:true});return this.repo.participants(deal.id,deal.lead_id);}

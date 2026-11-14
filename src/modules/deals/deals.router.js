@@ -20,6 +20,8 @@ const buyerCommunicationRun=fn=>async(req,res)=>{
  res.set('Cache-Control','no-store');
  try{res.json({data:await fn(req)});}catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_COMMUNICATION_UNAVAILABLE'});}
 };
+router.use('/:id/buyer-notices',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404));
+router.get('/:id/buyer-notices',buyerCommunicationRun(req=>buyerCommunications.staffNotices(parseRequiredBigInt(req.params.id,'id'),req.user)));
 router.get('/:id/buyer-inquiries',buyerCommunicationRun(req=>buyerCommunications.staffList(parseRequiredBigInt(req.params.id,'id'),req.user)));
 router.post('/:id/buyer-inquiries/reply',buyerCommunicationRun(req=>buyerCommunications.reply(parseRequiredBigInt(req.params.id,'id'),req.user,req.body||{})));
 const buyerUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024,files:1,fields:5}}).single('file');

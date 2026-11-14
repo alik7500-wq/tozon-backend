@@ -25,3 +25,8 @@ it('keeps preference writes typed and denies settings when grant was revoked',as
 it('requires assigned CRM write rights before a manager reply',async()=>{
  identity.assertStaff.mockImplementation(()=>{throw new Error('DENIED');});await expect(service.reply(1,{id:3},{id,message:'reply'})).rejects.toThrow('DENIED');expect(repo.reply).not.toHaveBeenCalled();
 });
+it('scopes the employee delivery journal to the current contract owner and assignment',async()=>{
+ repo.staffNotices=vi.fn(async()=>[{kind:'PAYMENT',status:'UNKNOWN'}]);
+ await expect(service.staffNotices(1,{id:7})).resolves.toEqual([{kind:'PAYMENT',status:'UNKNOWN'}]);expect(repo.staffNotices).toHaveBeenCalledWith(1,2);
+ identity.assertStaff.mockImplementation(()=>{throw new Error('BUYER_ACCESS_DENIED');});await expect(service.staffNotices(1,{id:8})).rejects.toThrow('BUYER_ACCESS_DENIED');expect(repo.staffNotices).toHaveBeenCalledTimes(1);
+});

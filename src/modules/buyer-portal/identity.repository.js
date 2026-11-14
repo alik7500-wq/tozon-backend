@@ -31,6 +31,7 @@ export class BuyerIdentityRepository {
   async participants(dealId,owner){return data(await this.db.from('buyer_portal_participants').select('id,lead_id,role,basis,created_at,revoked_at,leads!buyer_portal_participants_lead_id_fkey(full_name)').eq('deal_id',dealId).eq('owner_lead_id',owner).order('created_at',{ascending:false}));}
   async addParticipant(deal,lead,role,basis,actor){return data(await this.db.rpc('buyer_portal_participant_add',{p_deal:deal,p_lead:lead,p_role:role,p_basis:basis,p_actor:actor}));}
   async revokeParticipant(deal,id,actor){return data(await this.db.rpc('buyer_portal_participant_revoke',{p_deal:deal,p_id:id,p_actor:actor}));}
+  async touch(telegramId){data(await this.db.rpc('buyer_portal_touch',{p_telegram:telegramId}));}
   async contractList(telegramId){return data(await this.db.rpc('buyer_portal_contracts',{p_telegram_id:telegramId}));}
   async contractSnapshot(telegramId,dealId){return data(await this.db.rpc('buyer_portal_contract_snapshot',{p_telegram_id:telegramId,p_deal_id:dealId}));}
   async materials(telegramId,dealId){return data(await this.db.rpc('buyer_portal_materials',{p_telegram_id:telegramId,p_deal_id:dealId}));}

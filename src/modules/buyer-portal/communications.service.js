@@ -27,6 +27,7 @@ export class BuyerCommunicationsService{
  async notices(tg){return this.repo.notices(tg);}
  async read(tg,id){if(!uuid(id))throw new BuyerPortalError('BUYER_NOTICE_INVALID');await this.repo.read(tg,id);return {read:true};}
  async staffList(dealId,user){const deal=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,deal);return this.repo.staffInquiries(deal.id,deal.lead_id);}
+ async staffNotices(dealId,user){const deal=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,deal,{allowCancelled:true});return this.repo.staffNotices(deal.id,deal.lead_id);}
  async reply(dealId,user,{id,message}){
   if(!uuid(id)||typeof message!=='string'||!message.trim()||message.trim().length>2000)throw new BuyerPortalError('BUYER_INQUIRY_INVALID');
   const deal=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,deal);
