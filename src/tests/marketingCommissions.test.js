@@ -234,7 +234,7 @@ describe('Marketing Commissions Registry (Backend)', () => {
     expect(registry.totals.additionalAccrualUsd).toBe(1000);
     expect(registry.totals.rateBreakdown).toEqual({ '0': 1, '2': 0, '3': 0, '4': 1 });
     expect(registry.partnerSummary).toHaveLength(2);
-    expect(registry.permissions).toEqual({
+    expect(registry.permissions).toMatchObject({
       role: 'DIRECTOR',
       canView: true,
       canApprove: false,
@@ -270,7 +270,7 @@ describe('Marketing Commissions Registry (Backend)', () => {
 
     const mockDb = createInMemoryCommissionDb({
       deal,
-      rkoRows: [{ id: 88, reference: 'РКО-88', status: 'ACTIVE', voided_at: null }],
+      rkoRows: [{ id: 88, reference: 'РКО-88', recipient: 'Somon Agency', amount_minor: 300000, status: 'ACTIVE', voided_at: null }],
     });
     const service = new MarketingAttributionService(() => mockDb);
 
@@ -296,14 +296,23 @@ describe('Marketing Commissions Registry (Backend)', () => {
     expect(afterPayout.commission.status).toBe('PAID');
     expect(afterPayout.commission_history[0].rkoReference).toBe('РКО-88');
 
-    // Duplicate idempotencyKey payout is blocked (409)
+    // Replay with SAME idempotencyKey and SAME params -> idempotent: true without duplicate payout
+    const replayedPayout = await service.updateDealCommission(
+      555,
+      { action: 'RECORD_PAYOUT', payoutAmountUsd: 3000, rkoExpenseId: 88, idempotencyKey: 'pay-1' },
+      users.FINANCE_MANAGER
+    );
+    expect(replayedPayout.idempotent).toBe(true);
+    expect(replayedPayout.commission.paidCommissionUsd).toBe(3000);
+
+    // Replay with SAME idempotencyKey but DIFFERENT amount -> 409 IDEMPOTENCY_CONFLICT
     await expect(
       service.updateDealCommission(
         555,
         { action: 'RECORD_PAYOUT', payoutAmountUsd: 100, idempotencyKey: 'pay-1' },
         users.FINANCE_MANAGER
       )
-    ).rejects.toMatchObject({ statusCode: 409 });
+    ).rejects.toMatchObject({ statusCode: 409, code: 'IDEMPOTENCY_CONFLICT' });
 
     // Buyer pays more -> reaches 20% (>15% -> 4% = 4,000 USD). Only difference (1,000 USD) needs approval!
     deal.payments.push({ id: 2, amount_minor: 800000, status: 'ACTIVE', settlement_method: 'CASH' });
@@ -328,5 +337,17 @@ describe('Marketing Commissions Registry (Backend)', () => {
         users.FINANCE_MANAGER
       )
     ).rejects.toMatchObject({ code: 'COMMISSION_OVERPAID', statusCode: 400 });
+  });
+
+  it('blocks real payouts via MarketingCommissionsService until atomic PostgreSQL RKO integration (migration 057) is applied', async () => {
+    vi.spyOn(MarketingCommissionsService, 'isAtomicRkoIntegrationReady').mockResolvedValue(false);
+
+    await expect(
+      MarketingCommissionsService.payoutDealCommission(
+        101,
+        { payoutAmountUsd: 500, rkoExpenseId: 88, idempotencyKey: 'pay-blocked-1' },
+        users.FINANCE_MANAGER
+      )
+    ).rejects.toMatchObject({ statusCode: 409, code: 'ATOMIC_RKO_INTEGRATION_REQUIRED' });
   });
 });

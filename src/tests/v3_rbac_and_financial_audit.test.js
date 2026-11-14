@@ -254,14 +254,23 @@ describe('TOZON CRM V3 — Final RBAC Matrix & Financial Logic Audit', () => {
       expect(paid.commission.paidCommissionUsd).toBe(1500);
       expect(paid.commission.status).toBe('PARTIALLY_PAID');
 
-      // Duplicate idempotencyKey blocked
+      // Replay with same idempotencyKey & same amount returns previous result without double payout
+      const replayed = await marketingAttributionService.updateDealCommission(
+        500,
+        { action: 'RECORD_PAYOUT', payoutAmountUsd: 1500, idempotencyKey: 'pay-1' },
+        { id: 4, role: 'FINANCE_MANAGER' }
+      );
+      expect(replayed.idempotent).toBe(true);
+      expect(replayed.commission.paidCommissionUsd).toBe(1500);
+
+      // Replay with same idempotencyKey & different amount blocked (409 IDEMPOTENCY_CONFLICT)
       await expect(
         marketingAttributionService.updateDealCommission(
           500,
-          { action: 'RECORD_PAYOUT', payoutAmountUsd: 1500, idempotencyKey: 'pay-1' },
+          { action: 'RECORD_PAYOUT', payoutAmountUsd: 500, idempotencyKey: 'pay-1' },
           { id: 4, role: 'FINANCE_MANAGER' }
         )
-      ).rejects.toMatchObject({ statusCode: 409, code: 'DUPLICATE_COMMISSION_PAYOUT' });
+      ).rejects.toMatchObject({ statusCode: 409, code: 'IDEMPOTENCY_CONFLICT' });
     });
   });
 });

@@ -297,6 +297,8 @@ export class MarketingCommissionsService {
     }
     const partners = Array.from(partnersMap.values()).sort((a, b) => String(a.name).localeCompare(String(b.name), 'ru'));
 
+    const atomicIntegrationReady = await this.isAtomicRkoIntegrationReady();
+
     return {
       rows: filteredRows,
       totals,
@@ -311,7 +313,12 @@ export class MarketingCommissionsService {
         role,
         canView: true,
         canApprove: role === 'ADMIN',
-        canPayout: RKO_ROLES.has(role),
+        canPayout: RKO_ROLES.has(role) && atomicIntegrationReady,
+        canPrepareRko: RKO_ROLES.has(role),
+        payoutIntegrationEnabled: atomicIntegrationReady,
+        payoutBlockedReason: atomicIntegrationReady
+          ? null
+          : 'Регистрация новых выплат через реестр временно заблокирована до применения атомарной интеграции с РКО (миграция 057). Доступны просмотр, расчёт, утверждение и подготовка РКО в кассе.',
         canCancel: role === 'ADMIN',
         canExport: EXPORT_ROLES.has(role),
       },
@@ -378,6 +385,16 @@ export class MarketingCommissionsService {
     return { items };
   }
 
+  static async isAtomicRkoIntegrationReady() {
+    try {
+      const db = getSecureDB();
+      const { error } = await db.from('marketing_commission_operations').select('id').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  }
+
   static async approveDealCommission(dealId, payload = {}, user = null) {
     return marketingAttributionService.updateDealCommission(
       dealId,
@@ -387,11 +404,70 @@ export class MarketingCommissionsService {
   }
 
   static async payoutDealCommission(dealId, payload = {}, user = null) {
-    return marketingAttributionService.updateDealCommission(
-      dealId,
-      { ...payload, action: 'RECORD_PAYOUT' },
-      user
-    );
+    const role = normalizeRole(user);
+    if (!RKO_ROLES.has(role)) {
+      throw new AppError(
+        'Регистрация выплаты комиссии доступна только финансовому менеджеру (FINANCE_MANAGER) или администратору (ADMIN)',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
+    const idempotencyKey = payload?.idempotencyKey ? String(payload.idempotencyKey).trim() : '';
+    if (!idempotencyKey) {
+      throw new AppError('Параметр idempotencyKey обязателен для регистрации выплаты', 400, 'IDEMPOTENCY_KEY_REQUIRED');
+    }
+
+    const rawRkoId = payload?.rkoExpenseId ?? payload?.rko_expense_id;
+    const rkoExpenseId = Number(rawRkoId);
+    if (!Number.isInteger(rkoExpenseId) || rkoExpenseId <= 0) {
+      throw new AppError('Для регистрации выплаты требуется привязка к проведённому документу РКО', 400, 'RKO_REQUIRED');
+    }
+
+    const payoutMinor = payload?.payoutAmountMinor !== undefined
+      ? Math.round(Number(payload.payoutAmountMinor) || 0)
+      : Math.round(Number(payload?.payoutAmountUsd ?? payload?.amountUsd ?? 0) * 100);
+    if (payoutMinor <= 0) {
+      throw new AppError('Сумма выплаты комиссии должна быть больше 0 USD', 400, 'INVALID_PAYOUT_AMOUNT');
+    }
+
+    const atomicReady = await this.isAtomicRkoIntegrationReady();
+    if (!atomicReady) {
+      throw new AppError(
+        'Регистрация новых выплат через реестр временно заблокирована до применения атомарной интеграции с РКО (миграция 057). Используйте подготовку РКО в кассе.',
+        409,
+        'ATOMIC_RKO_INTEGRATION_REQUIRED'
+      );
+    }
+
+    const db = getSecureDB();
+
+    const { data: rpcResult, error: rpcError } = await db.rpc('record_marketing_commission_payout_atomic', {
+      p_deal_id: Number(dealId),
+      p_actor_id: user?.id ? Number(user.id) : null,
+      p_payout_minor: payoutMinor,
+      p_rko_expense_id: rkoExpenseId,
+      p_expected_partner_name: payload?.expectedPartnerName || '',
+      p_idempotency_key: idempotencyKey,
+      p_notes: String(payload?.notes || '').trim(),
+    });
+
+    if (rpcError) {
+      const msg = String(rpcError.message || '');
+      if (/could not find the function|does not exist/i.test(msg) || rpcError.code === 'PGRST202' || rpcError.code === '42883') {
+        throw new AppError(
+          'Регистрация новых выплат через реестр временно заблокирована до применения атомарной интеграции с РКО (миграция 057).',
+          409,
+          'ATOMIC_RKO_INTEGRATION_REQUIRED'
+        );
+      }
+      if (msg.includes('IDEMPOTENCY_CONFLICT') || msg.includes('RKO_ALREADY_LINKED')) {
+        throw new AppError(msg, 409, msg.includes('IDEMPOTENCY_CONFLICT') ? 'IDEMPOTENCY_CONFLICT' : 'RKO_ALREADY_LINKED');
+      }
+      throw new AppError(msg || 'Ошибка атомарной регистрации выплаты комиссии', 400, 'COMMISSION_PAYOUT_FAILED');
+    }
+
+    return rpcResult;
   }
 
   static async cancelDealCommission(dealId, payload = {}, user = null) {
@@ -606,3 +682,4 @@ export class MarketingCommissionsService {
     return wb.xlsx.writeBuffer();
   }
 }
+

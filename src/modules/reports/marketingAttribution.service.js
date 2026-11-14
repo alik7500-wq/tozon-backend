@@ -1289,21 +1289,74 @@ export class MarketingAttributionService {
     const idempotencyKey = payload?.idempotencyKey ? String(payload.idempotencyKey).trim() : null;
 
     if (idempotencyKey && ['APPROVE', 'RECORD_PAYOUT', 'CANCEL'].includes(actionType)) {
-      const duplicateKeyExists = existingLogs.some((log) => {
+      const requestedAmountMinor = actionType === 'RECORD_PAYOUT'
+        ? (payload?.payoutAmountMinor !== undefined
+            ? Math.round(Number(payload.payoutAmountMinor) || 0)
+            : Math.round(Number(payload?.payoutAmountUsd ?? payload?.amountUsd ?? 0) * 100))
+        : actionType === 'APPROVE'
+          ? (payload?.approvedCommissionUsd !== undefined && payload?.approvedCommissionUsd !== null && payload?.approvedCommissionUsd !== ''
+              ? Math.round(Number(payload.approvedCommissionUsd) * 100)
+              : currentAttr.commission.calculatedCommissionMinor)
+          : 0;
+      const requestedRkoId = payload?.rkoExpenseId ?? payload?.rko_expense_id ?? null;
+
+      // Check existing logs on this deal first
+      const sameDealMatch = existingLogs.find((log) => {
         if (log.action !== AUDIT_ACTION_COMMISSION) return false;
         const p = typeof log.changes_json === 'string'
           ? (() => { try { return JSON.parse(log.changes_json); } catch { return {}; } })()
           : (log.changes_json || {});
-        return p.action_type === actionType && p.idempotency_key === idempotencyKey;
+        return p.idempotency_key === idempotencyKey;
       });
-      if (duplicateKeyExists) {
+
+      if (sameDealMatch) {
+        const p = typeof sameDealMatch.changes_json === 'string'
+          ? (() => { try { return JSON.parse(sameDealMatch.changes_json); } catch { return {}; } })()
+          : (sameDealMatch.changes_json || {});
+        const loggedAmountMinor = p.action_type === 'RECORD_PAYOUT'
+          ? Number(p.payout_delta_minor || 0)
+          : p.action_type === 'APPROVE'
+            ? Number(p.approved_amount_minor || 0)
+            : 0;
+        const sameAction = p.action_type === actionType;
+        const sameAmount = loggedAmountMinor === requestedAmountMinor;
+        const sameRko = actionType !== 'RECORD_PAYOUT'
+          || (Number(p.rko_expense_id || 0) === Number(requestedRkoId || 0));
+
+        if (sameAction && sameAmount && sameRko) {
+          const replayed = await this.enrichDealWithAttribution(deal, user);
+          return { ...replayed, idempotent: true };
+        }
         throw new AppError(
-          actionType === 'RECORD_PAYOUT'
-            ? 'Повторный запрос на выплату комиссии с тем же ключом идемпотентности заблокирован'
-            : 'Повторная операция по комиссии с тем же ключом идемпотентности заблокирована',
+          'Ключ идемпотентности уже использован с другими параметрами (сумма, действие или РКО)',
           409,
-          actionType === 'RECORD_PAYOUT' ? 'DUPLICATE_COMMISSION_PAYOUT' : 'DUPLICATE_COMMISSION_OPERATION'
+          'IDEMPOTENCY_CONFLICT'
         );
+      }
+
+      // Also check if idempotencyKey was already used on a DIFFERENT deal
+      try {
+        const { data: crossDealLogs } = await db
+          .from('deal_audit_logs')
+          .select('id, deal_id, changes_json')
+          .eq('action', AUDIT_ACTION_COMMISSION)
+          .neq('deal_id', id)
+          .limit(200);
+        const crossMatch = (crossDealLogs || []).find((log) => {
+          const p = typeof log.changes_json === 'string'
+            ? (() => { try { return JSON.parse(log.changes_json); } catch { return {}; } })()
+            : (log.changes_json || {});
+          return p.idempotency_key === idempotencyKey;
+        });
+        if (crossMatch) {
+          throw new AppError(
+            'Ключ идемпотентности уже использован для другого договора',
+            409,
+            'IDEMPOTENCY_CONFLICT'
+          );
+        }
+      } catch (err) {
+        if (err instanceof AppError) throw err;
       }
     }
 
@@ -1496,7 +1549,7 @@ export class MarketingAttributionService {
         }
         const { data: rkoRow, error: rkoErr } = await db
           .from('expenses')
-          .select('id, reference, status, voided_at')
+          .select('id, reference, status, voided_at, amount_minor, recipient')
           .eq('id', parsedRkoId)
           .maybeSingle();
         if (rkoErr || !rkoRow) {
@@ -1504,6 +1557,34 @@ export class MarketingAttributionService {
         }
         if (['VOIDED', 'CANCELLED', 'REVERSED'].includes(String(rkoRow.status || '').toUpperCase()) || rkoRow.voided_at) {
           throw new AppError('Нельзя привязать аннулированный документ РКО', 400, 'RKO_VOIDED');
+        }
+        if (rkoRow.amount_minor !== undefined && Number(rkoRow.amount_minor) !== payoutMinor) {
+          throw new AppError('Сумма в документе РКО не совпадает с суммой выплаты комиссии', 400, 'RKO_AMOUNT_MISMATCH');
+        }
+        if (
+          rkoRow.recipient &&
+          currentAttr.marketingPartnerName &&
+          String(rkoRow.recipient).trim().toLowerCase() !== String(currentAttr.marketingPartnerName).trim().toLowerCase()
+        ) {
+          throw new AppError('Получатель в документе РКО не совпадает с маркетинговым партнёром договора', 400, 'RKO_RECIPIENT_MISMATCH');
+        }
+        try {
+          const { data: allCommLogs } = await db
+            .from('deal_audit_logs')
+            .select('id, deal_id, changes_json')
+            .eq('action', AUDIT_ACTION_COMMISSION)
+            .limit(500);
+          const alreadyLinked = (allCommLogs || []).some((log) => {
+            const p = typeof log.changes_json === 'string'
+              ? (() => { try { return JSON.parse(log.changes_json); } catch { return {}; } })()
+              : (log.changes_json || {});
+            return p.action_type === 'RECORD_PAYOUT' && Number(p.rko_expense_id || 0) === parsedRkoId;
+          });
+          if (alreadyLinked) {
+            throw new AppError('Этот документ РКО уже привязан к другой выплате комиссии', 409, 'RKO_ALREADY_LINKED');
+          }
+        } catch (err) {
+          if (err instanceof AppError) throw err;
         }
         rkoExpenseId = rkoRow.id;
         rkoReference = rkoReference || rkoRow.reference || `РКО-${rkoRow.id}`;
