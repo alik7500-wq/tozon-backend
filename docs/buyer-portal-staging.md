@@ -39,3 +39,15 @@ BUYER_PORTAL_ENABLED=false, BUYER_NOTIFICATIONS_ENABLED=false; PAYOM_MOCK_MODE=t
 После каждого изменения секретов требуется deploy. Auto-deploy выключен: обновление ветки само по себе не меняет сервис. Ключи в чат/исходники/логи не помещать. Приёмка на телефоне остаётся по docs/buyer-portal-acceptance.md.
 
 Проверка изменения имени: 237 тестов buyer-portal/telegram-finance в 26 файлах успешны; node --check и diff --check успешны. Проверены прежний запрет чужого имени, явное подключение тестового имени только к своему URL и сохранение запрета перезаписывать конфликтующий webhook.
+
+## Тестовый frontend и проверка публикации
+
+Создан отдельный static site `tozon-buyer-test`:
+- ID `srv-dbs556rbc2fs73ajg8ag`, dashboard https://dashboard.render.com/static/srv-dbs556rbc2fs73ajg8ag
+- URL https://tozon-buyer-test.onrender.com/buyer
+- Ветка feature/buyer-portal, auto-deploy выключен, VITE_API_URL указывает только на новый тестовый API; VITE_BUYER_PORTAL_ENABLED=true.
+- Для прямого входа /buyer build создаёт dist/buyer/index.html из собранного index.html; URL не требует production SPA rewrite.
+
+Frontend deploy `dep-dbs5573bc2fs73ajg8m0` стал live. Backend с поддержкой явного имени SavorCarBot: commit d03d3683e61bb89dff9d90988c112031c549114b, deploy `dep-dbs54n49v7es73bnfmq0` стал live; health вернул этот commit и configured=false/running=false. BUYER_PORTAL_URL нового API задан на тестовый frontend. Актуальный main bc849cc с изменениями расчётных комиссий сохранён в feature-ветке; его миграции автоматически не применялись. После объединения дополнительно прошли 10 тестов startup/маркетинговых комиссий в 4 файлах (3 startup входят в прежний целевой набор).
+
+Несмотря на live-публикацию обоих сервисов, подключение покупателя пока не готово: точный токен, серверные права тестовой БД, buyer-миграции/синтетический договор и настоящий SMS ещё требуют настройки. Обычный переход в /buyer вне Telegram не является проверкой Mini App initData.
