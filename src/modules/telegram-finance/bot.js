@@ -221,10 +221,12 @@ export class FinanceBot {
   }
   async start() {
     const bot = await this.api.call('getMe');
-    if (bot.username?.toLowerCase() !== 'tozonfinancebot') throw new Error('UNEXPECTED_FINANCE_BOT');
-    await this.repo.state();
-    const url = process.env.TELEGRAM_FINANCE_WEBHOOK_URL || 'https://tozon-backend.onrender.com/api/telegram-finance/webhook';
+    const expected=(process.env.TELEGRAM_FINANCE_BOT_USERNAME||'tozonfinancebot').replace(/^@/,'').toLowerCase();
+    if (!/^[a-z0-9_]{5,32}$/.test(expected) || bot.username?.toLowerCase() !== expected) throw new Error('UNEXPECTED_FINANCE_BOT');
+    // A separately configured bot must never inherit the production webhook implicitly.
+    const url=process.env.TELEGRAM_FINANCE_WEBHOOK_URL||(expected==='tozonfinancebot'?'https://tozon-backend.onrender.com/api/telegram-finance/webhook':'');
     if (!url.startsWith('https://')) throw new Error('HTTPS_WEBHOOK_REQUIRED');
+    await this.repo.state();
     const webhook = await this.api.call('getWebhookInfo');
     if (webhook.url && webhook.url !== url) throw new Error('FINANCE_BOT_WEBHOOK_CONFLICT');
     await this.api.call('setWebhook', { url, secret_token: webhookSecret(this.api.token), allowed_updates: ['message', 'callback_query'] });

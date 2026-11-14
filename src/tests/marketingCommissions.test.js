@@ -350,4 +350,52 @@ describe('Marketing Commissions Registry (Backend)', () => {
       )
     ).rejects.toMatchObject({ statusCode: 409, code: 'ATOMIC_RKO_INTEGRATION_REQUIRED' });
   });
+
+  it('preserves RKO links marked RECONCILIATION_REQUIRED and excludes legacy RKO_VOIDED_REVERSAL in loadRkoLinksByDealId', async () => {
+    const mockDb = createInMemoryCommissionDb({ deal: { id: 101 } });
+    mockDb.auditLogs.push(
+      {
+        id: 1,
+        deal_id: 101,
+        action: AUDIT_ACTION_COMMISSION,
+        created_at: '2026-11-14T10:00:00Z',
+        changes_json: { action_type: 'RECORD_PAYOUT', rko_expense_id: 10, rko_reference: 'РКО-10', payout_delta_minor: 300000 },
+      },
+      {
+        id: 2,
+        deal_id: 101,
+        action: AUDIT_ACTION_COMMISSION,
+        created_at: '2026-11-14T10:05:00Z',
+        changes_json: { action_type: 'RKO_VOIDED_RECONCILIATION_REQUIRED', rko_expense_id: 10, rko_reference: 'РКО-10' },
+      },
+      {
+        id: 3,
+        deal_id: 101,
+        action: AUDIT_ACTION_COMMISSION,
+        created_at: '2026-11-14T10:10:00Z',
+        changes_json: { action_type: 'RECORD_PAYOUT', rko_expense_id: 14, rko_reference: 'РКО-14', payout_delta_minor: 300000 },
+      }
+    );
+    const linksMap = await MarketingCommissionsService.loadRkoLinksByDealId([101], mockDb);
+    const links = linksMap.get(101) || [];
+    expect(links).toHaveLength(2);
+    expect(links[0]).toMatchObject({ rkoExpenseId: 10, reconciliationStatus: 'RECONCILIATION_REQUIRED' });
+    expect(links[1]).toMatchObject({ rkoExpenseId: 14, reconciliationStatus: 'OK' });
+
+    await expect(
+      MarketingCommissionsService.confirmPayoutRefund(
+        101,
+        { payoutOperationId: 1, refundAmountUsd: 3000, refundDocumentRef: 'ПКО-1', reason: 'Возврат', idempotencyKey: 'ref-1' },
+        users.FINANCE_MANAGER
+      )
+    ).rejects.toMatchObject({ statusCode: 403 });
+
+    await expect(
+      MarketingCommissionsService.reconcilePayoutWithNewRko(
+        101,
+        { payoutOperationId: 1, newRkoExpenseId: 14, reason: 'Замена РКО', idempotencyKey: 'rec-1' },
+        users.FINANCE_MANAGER
+      )
+    ).rejects.toMatchObject({ statusCode: 403 });
+  });
 });
