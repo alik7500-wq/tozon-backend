@@ -76,14 +76,28 @@ export function projectBuyerContract(snapshot,today=getDushanbeCurrentDateStr())
   if(refund)history.push({id:refund.id,kind:'REFUND',date:refund.expense_date,number:refund.reference||null,
     amountMinor:check(refund.amount_minor),currency:refund.currency||currency,creditedMinor:active(refund)?-refunded:null,status:refund.status,method:'REFUND'});
   history.sort((a,b)=>String(b.date).localeCompare(String(a.date))||Number(b.id)-Number(a.id));
+  const month=today.slice(0,7),effectiveDate=date=>d.first_payment_date&&date<d.first_payment_date?d.first_payment_date:date;
+  const thisMonth=remaining===0?0:scheduleReview||unknownDueDate||(downRemaining>0&&!d.first_payment_date)?null:schedules.length
+    ?Math.min(remaining,sum(schedules.filter(s=>effectiveDate(s.dueDate).slice(0,7)===month).map(s=>s.remainingMinor))+(d.first_payment_date?.slice(0,7)===month?downRemaining:0))
+    :nextPayment?.date.slice(0,7)===month?remaining:0;
+  const area=snapshot.property?.areaM2x100,rate=d.price_per_m2_minor!==null&&d.price_per_m2_minor!==undefined?check(d.price_per_m2_minor)
+    :snapshot.property?.kind!=='PARKING'&&Number(area)>0?rounded(BigInt(total)*100n,BigInt(check(area))):null;
   const warnings=[];
   if(history.some(p=>p.snapshotReviewRequired))warnings.push('PAYMENT_SNAPSHOT_REVIEW_REQUIRED');
   if(scheduleReview)warnings.push('SCHEDULE_REVIEW_REQUIRED');
   return {id:d.id,contractNumber:d.contract_number,contractDate:d.deal_date,status:d.status,
-    property:Object.fromEntries(['projectName','buildingName','sectionName','floorNumber','unitNumber','kind','areaM2x100','rooms'].map(key=>[key,snapshot.property?.[key]??null])),manager:snapshot.manager?{name:snapshot.manager.name}:null,
-    summary:{currency,totalMinor:total,paidMinor:paid,receivedMinor:received,refundedMinor:refunded,remainingMinor:remaining,
+    property:{pricePerM2Minor:rate,...Object.fromEntries(['projectName','buildingName','sectionName','floorNumber','unitNumber','kind','areaM2x100','rooms'].map(key=>[key,snapshot.property?.[key]??null]))},manager:snapshot.manager?{name:snapshot.manager.name}:null,
+    summary:{currency,currentMonthDueMinor:thisMonth,totalMinor:total,paidMinor:paid,receivedMinor:received,refundedMinor:refunded,remainingMinor:remaining,
       overpaidMinor:Math.max(0,paid-total),overdueMinor:remaining===0?0:scheduleReview||unknownDueDate?null:Math.min(remaining,overdue),downPaymentMinor:down,
       downPaymentRemainingMinor:downRemaining,barterAgreedMinor:check(d.barter_amount_minor||0),
       barterCreditedMinor:sum(counted.filter(p=>p.settlement_method==='NON_CASH_BARTER').map(p=>creditInContractCurrency(p,currency))),
       firstPaymentDate:d.first_payment_date,nextPayment:remaining>0&&!scheduleReview?nextPayment:null},history,schedules,warnings,asOf:today};
+}
+
+/** Frozen CRM history after termination; an old balance is never a current debt. */
+export function projectBuyerArchive(snapshot){
+ const date=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Dushanbe',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(snapshot.archivedAt));
+ const projected=projectBuyerContract(snapshot,date);
+ return {...projected,archived:true,archivedAt:snapshot.archivedAt,schedules:[],warnings:projected.warnings.filter(w=>w!=='SCHEDULE_REVIEW_REQUIRED'),
+   summary:{...projected.summary,currentMonthDueMinor:null,remainingMinor:null,overdueMinor:null,nextPayment:null,downPaymentRemainingMinor:null,overpaidMinor:null}};
 }

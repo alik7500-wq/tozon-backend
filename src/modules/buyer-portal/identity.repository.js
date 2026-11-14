@@ -24,6 +24,13 @@ export class BuyerIdentityRepository {
   async access(telegramId) {
     return data(await this.db.rpc('buyer_portal_access',{p_telegram_id:telegramId}));
   }
+  async archiveAccess(telegramId){return data(await this.db.rpc('buyer_portal_archive_access',{p_telegram_id:telegramId}));}
+  async archiveSnapshot(telegramId,dealId){return data(await this.db.rpc('buyer_portal_archive_snapshot',{p_telegram_id:telegramId,p_deal_id:dealId}));}
+  async lead(id){return data(await this.db.from('leads').select('id,full_name,phone').eq('id',id).maybeSingle());}
+  async participant(id,dealId){return data(await this.db.from('buyer_portal_participants').select('id,lead_id,owner_lead_id').eq('id',id).eq('deal_id',dealId).is('revoked_at',null).maybeSingle());}
+  async participants(dealId,owner){return data(await this.db.from('buyer_portal_participants').select('id,lead_id,role,basis,created_at,revoked_at,leads!buyer_portal_participants_lead_id_fkey(full_name)').eq('deal_id',dealId).eq('owner_lead_id',owner).order('created_at',{ascending:false}));}
+  async addParticipant(deal,lead,role,basis,actor){return data(await this.db.rpc('buyer_portal_participant_add',{p_deal:deal,p_lead:lead,p_role:role,p_basis:basis,p_actor:actor}));}
+  async revokeParticipant(deal,id,actor){return data(await this.db.rpc('buyer_portal_participant_revoke',{p_deal:deal,p_id:id,p_actor:actor}));}
   async contractList(telegramId){return data(await this.db.rpc('buyer_portal_contracts',{p_telegram_id:telegramId}));}
   async contractSnapshot(telegramId,dealId){return data(await this.db.rpc('buyer_portal_contract_snapshot',{p_telegram_id:telegramId,p_deal_id:dealId}));}
   async materials(telegramId,dealId){return data(await this.db.rpc('buyer_portal_materials',{p_telegram_id:telegramId,p_deal_id:dealId}));}
@@ -44,10 +51,11 @@ export class BuyerIdentityRepository {
     return visits.length>0;
   }
   async bindingStatus(leadId,dealId) {
-    const binding=data(await this.db.from('buyer_portal_bindings').select('id,verified_at,last_active_at').eq('lead_id',leadId).is('revoked_at',null).maybeSingle());
+    const binding=data(await this.db.from('buyer_portal_bindings').select('id,telegram_id,verified_at,last_active_at').eq('lead_id',leadId).is('revoked_at',null).maybeSingle());
     if (!binding) return {connected:false,contractAccess:false};
-    const grant=data(await this.db.from('buyer_portal_grants').select('id').eq('binding_id',binding.id).eq('deal_id',dealId).is('revoked_at',null).maybeSingle());
-    return {connected:true,contractAccess:Boolean(grant),verifiedAt:binding.verified_at,lastActiveAt:binding.last_active_at};
+    const [active,archived]=await Promise.all([this.access(binding.telegram_id),this.archiveAccess(binding.telegram_id)]);
+    return {connected:true,contractAccess:active.some(g=>String(g.deal_id)===String(dealId))||archived.some(g=>String(g.deal_id)===String(dealId)),
+      archived:archived.some(g=>String(g.deal_id)===String(dealId)),contractCount:active.length+archived.length,verifiedAt:binding.verified_at,lastActiveAt:binding.last_active_at};
   }
   async language(telegramId,language) {
     data(await this.db.from('buyer_portal_bindings').update({language,last_active_at:new Date().toISOString()}).eq('telegram_id',telegramId).is('revoked_at',null));

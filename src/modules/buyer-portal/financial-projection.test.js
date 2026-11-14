@@ -76,3 +76,16 @@ it('returns an explicit allowlist, no staff notes, passports, CRM permissions or
  const r=projectBuyerContract(s,today);expect(JSON.stringify(r)).not.toMatch(/SECRET|PRIVATE|passport|private/);
  expect(r.history[0].purpose).toBe('Взнос');expect(r.manager).toEqual({name:'Менеджер'});
 });
+it('shows the agreed square-metre rate instead of the current inventory price',()=>{
+ const r=projectBuyerContract(snapshot({deal:{price_per_m2_minor:65000},property:{areaM2x100:8180,kind:'APARTMENT'}}),today);
+ expect(r.property.pricePerM2Minor).toBe(65000);
+});
+it('calculates this month from remaining FIFO obligations and the agreed first date',()=>{
+ const r=projectBuyerContract(snapshot({deal:{first_payment_date:'2026-11-01'}}),today);
+ expect(r.summary.currentMonthDueMinor).toBe(20000);
+ const later=projectBuyerContract(snapshot({deal:{first_payment_date:'2026-12-01'}}),today);expect(later.summary.currentMonthDueMinor).toBe(0);
+});
+it('never invents a monthly total when the schedule or down-payment due date is unknown',()=>{
+ expect(projectBuyerContract(snapshot({payments:[]}),today).summary.currentMonthDueMinor).toBeNull();
+ expect(projectBuyerContract(snapshot({schedules:[]}),today).summary.currentMonthDueMinor).toBeNull();
+});

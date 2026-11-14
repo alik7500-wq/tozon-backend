@@ -2,15 +2,15 @@ import {beforeEach,it,expect,vi} from 'vitest';
 vi.mock('../../db/connection.js',()=>({getServiceDB:vi.fn()}));
 import {BuyerNotificationWorker,noticeText} from './notification-worker.js';
 let repo,identity,api,worker;
-const makeContext=(kind='PAYMENT')=>({id:'notice1',kind,telegramId:'101',dealId:1,contractNumber:'001',language:'tj',dueDate:'2026-11-21'});
-const detail=()=>({id:1,warnings:[],summary:{firstPaymentDate:null,overdueMinor:0},schedules:[{dueDate:'2026-11-21',remainingMinor:10000,status:'UPCOMING'}]});
+const makeContext=(kind='PAYMENT')=>({id:'notice1',kind,sourceId:'1',telegramId:'101',dealId:1,contractNumber:'001',language:'tj',dueDate:'2026-11-21'});
+const detail=()=>({id:1,warnings:[],history:[{id:1,kind:'PAYMENT',status:'ACTIVE',amountMinor:92600,currency:'TJS',date:'2026-11-14'}],summary:{currency:'USD',paidMinor:10000,remainingMinor:90000,firstPaymentDate:null,overdueMinor:0},schedules:[{dueDate:'2026-11-21',remainingMinor:10000,status:'UPCOMING'}]});
 beforeEach(()=>{
  repo={candidates:vi.fn(async()=>[]),enqueue:vi.fn(),claim:vi.fn().mockResolvedValueOnce({id:'notice1',attempts:1}).mockResolvedValue(null),context:vi.fn(async()=>makeContext()),finish:vi.fn()};
  identity={contract:vi.fn(async()=>detail())};api={send:vi.fn(async()=>{})};
  worker=new BuyerNotificationWorker({repo,identity,api,enabled:()=>true,url:()=> 'https://example.test/buyer',clock:()=>new Date('2026-11-14T07:00:00Z'),logger:{warn:vi.fn()}});
 });
 it('sends in saved language with a tokenless cabinet link and no financial menu',async()=>{
- await worker.tick();expect(api.send).toHaveBeenCalledWith('101',expect.stringContaining('Шартнома №001'),{inline_keyboard:[[{text:'Кабинетро кушодан',web_app:{url:'https://example.test/buyer'}}]]},{mainMenu:false});
+ await worker.tick();expect(api.send).toHaveBeenCalledWith('101',expect.stringContaining('Шартнома: №001'),{inline_keyboard:[[{text:'Кабинетро кушодан',web_app:{url:'https://example.test/buyer'}}]]},{mainMenu:false});
  expect(repo.finish).toHaveBeenCalledWith('notice1',worker.id,'SENT');
  expect(noticeText({...makeContext(),language:'ru'})).toContain('Учтена оплата');
 });
@@ -49,4 +49,11 @@ it('does not duplicate worker runs and waits for in-flight work during shutdown'
  const tick=worker.tick();await vi.waitFor(()=>expect(api.send).toHaveBeenCalledOnce());
  expect(worker.tick()).toBe(tick);const stop=worker.stop();finish();await stop;await tick;
  expect(api.send).toHaveBeenCalledTimes(1);
+});
+
+it('formats a confirmed payment in its actual currency and totals in the contract currency',async()=>{
+ await worker.tick();const text=api.send.mock.calls[0][1];expect(text).toContain('926 TJS');expect(text).toContain('100 USD');expect(text).toContain('900 USD');expect(text).toContain('2026-11-14');
+});
+it('cancels a payment notice if access/source changes during financial verification',async()=>{
+ repo.context.mockResolvedValueOnce(makeContext()).mockResolvedValue(null);await worker.tick();expect(api.send).not.toHaveBeenCalled();
 });

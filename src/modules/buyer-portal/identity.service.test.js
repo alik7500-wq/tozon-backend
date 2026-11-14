@@ -9,7 +9,7 @@ let service,repo,sms,botIdentity;
 beforeEach(()=>{
   repo={deal:vi.fn(async()=>deal),createInvite:vi.fn(async()=>({id:'invite',expires_at:'2026-11-13T00:15:00.000Z'})),
     prepare:vi.fn(async()=>({status:'PREPARED',phone:deal.leads.phone})),delivered:vi.fn(),deliveryFailed:vi.fn(),
-    confirm:vi.fn(async()=>({status:'VERIFIED'})),access:vi.fn(async()=>[{deal_id:1}]),unlink:vi.fn(),language:vi.fn(),bindingStatus:vi.fn(async()=>({connected:false,contractAccess:false}))};
+    confirm:vi.fn(async()=>({status:'VERIFIED'})),archiveAccess:vi.fn(async()=>[]),archiveSnapshot:vi.fn(async()=>null),access:vi.fn(async()=>[{deal_id:1}]),unlink:vi.fn(),language:vi.fn(),bindingStatus:vi.fn(async()=>({connected:false,contractAccess:false}))};
   sms={sendSms:vi.fn(async()=>({success:true,isMock:false}))};
   botIdentity=vi.fn(async()=>({username:'ActualConfiguredBot'}));
   service=new BuyerIdentityService({repo,sms,botIdentity,otpSecret:()=>secret,clock:()=>new Date('2026-11-13T00:00:00Z')});

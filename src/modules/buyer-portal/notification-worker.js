@@ -12,6 +12,11 @@ export function noticeText(n){
  const ru={PAYMENT:'Учтена оплата.',PAYMENT_VOIDED:'Платёж аннулирован. Проверьте историю оплат.',DOCUMENT:'В кабинете доступен новый документ.',SCHEDULE_CHANGED:'Обновлён график оплаты.',TERMS_CHANGED:'Обновлены сведения договора.',REMINDER_7:'До платежа по графику 7 дней.',REMINDER_3:'До платежа по графику 3 дня.',REMINDER_0:'Сегодня срок платежа по графику.',OVERDUE:'Есть просроченная оплата. Проверьте график.',INQUIRY_REPLY:'Менеджер ответил на Ваше обращение.'};
  const tj={PAYMENT:'Пардохт ба ҳисоб гирифта шуд.',PAYMENT_VOIDED:'Пардохт бекор шуд. Таърихи пардохтҳоро санҷед.',DOCUMENT:'Ҳуҷҷати нав дар кабинет дастрас аст.',SCHEDULE_CHANGED:'Ҷадвали пардохт нав шуд.',TERMS_CHANGED:'Маълумоти шартнома нав шуд.',REMINDER_7:'То пардохти навбатӣ 7 рӯз мондааст.',REMINDER_3:'То пардохти навбатӣ 3 рӯз мондааст.',REMINDER_0:'Имрӯз муҳлати пардохти навбатӣ аст.',OVERDUE:'Пардохти муҳлатгузашта мавҷуд аст. Ҷадвалро санҷед.',INQUIRY_REPLY:'Менеҷер ба муроҷиати шумо ҷавоб дод.'};
  const isRu=n.language==='ru';
+ if(n.kind==='PAYMENT'&&n.payment){
+  const p=n.payment,money=(amount,currency)=>`${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(amount/100)} ${currency}`;
+  return isRu?`Ваш платёж принят.\nДоговор: №${n.contractNumber}\nСумма: ${money(p.amountMinor,p.currency)}\nДата: ${p.date}\nВсего оплачено: ${money(p.paidMinor,p.contractCurrency)}\nОстаток задолженности: ${money(p.remainingMinor,p.contractCurrency)}\nБлагодарим за оплату!`
+   :`Пардохти Шумо қабул гардид.\nШартнома: №${n.contractNumber}\nМаблағ: ${money(p.amountMinor,p.currency)}\nСана: ${p.date}\nҲамагӣ пардохтшуда: ${money(p.paidMinor,p.contractCurrency)}\nБақияи қарз: ${money(p.remainingMinor,p.contractCurrency)}\nТашаккур барои пардохт!`;
+ }
  return `${isRu?'Договор':'Шартнома'} №${n.contractNumber}\n${(isRu?ru:tj)[n.kind]||''}\n${isRu?'Подробности в личном кабинете.':'Тафсилот дар кабинети шахсӣ.'}`;
 }
 export class BuyerNotificationWorker{
@@ -53,6 +58,14 @@ export class BuyerNotificationWorker{
    let context;
    try{context=await this.repo.context(item.id,this.id);if(!context||!await this.stillDue(context)){await this.repo.finish(item.id,this.id,'CANCELLED');continue;}}
    catch{await this.repo.finish(item.id,this.id,'CANCELLED');continue;}
+   if(context.kind==='PAYMENT'){
+    try{
+     const d=await this.identity.contract(context.telegramId,context.dealId);
+     const p=d.history.find(p=>p.kind==='PAYMENT'&&String(p.id)===String(context.sourceId)&&['ACTIVE','POSTED'].includes(p.status));
+     if(!p||d.archived||!await this.repo.context(item.id,this.id))throw new Error('PAYMENT_UNAVAILABLE');
+     context={...context,payment:{amountMinor:p.amountMinor,currency:p.currency,date:p.date,paidMinor:d.summary.paidMinor,remainingMinor:d.summary.remainingMinor,contractCurrency:d.summary.currency}};
+    }catch{await this.repo.finish(item.id,this.id,'CANCELLED');continue;}
+   }
    let url;
    try{url=this.url();}catch{await this.repo.finish(item.id,this.id,'FAILED','URL_NOT_CONFIGURED');continue;}
    if(!this.enabled()||this.stopping){await this.repo.finish(item.id,this.id,'CANCELLED');return;}

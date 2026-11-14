@@ -40,9 +40,15 @@ router.post('/:id/buyer-documents/:documentId/file',async(req,res)=>{
  }catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:'BUYER_DOCUMENT_UNAVAILABLE'});}
 });
 
+router.use('/:id/buyer-participants',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404));
+router.get('/:id/buyer-participants/candidate/:leadId',buyerCommunicationRun(req=>buyerIdentity.participantCandidate(parseRequiredBigInt(req.params.id,'id'),req.user,req.params.leadId)));
+router.get('/:id/buyer-participants',buyerCommunicationRun(req=>buyerIdentity.participantList(parseRequiredBigInt(req.params.id,'id'),req.user)));
+router.post('/:id/buyer-participants',buyerCommunicationRun(req=>buyerIdentity.addParticipant(parseRequiredBigInt(req.params.id,'id'),req.user,req.body||{})));
+router.post('/:id/buyer-participants/:participantId/revoke',buyerCommunicationRun(req=>buyerIdentity.revokeParticipant(parseRequiredBigInt(req.params.id,'id'),req.user,req.params.participantId)));
+
 router.get('/:id/buyer-status',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404),async(req,res)=>{
   res.set('Cache-Control','no-store');
-  try {res.json({data:await buyerIdentity.staffStatus(parseRequiredBigInt(req.params.id,'id'),req.user)});}
+  try {res.json({data:await buyerIdentity.staffStatus(parseRequiredBigInt(req.params.id,'id'),req.user,req.query?.participantId)});}
   catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'});}
 });
 
@@ -51,7 +57,7 @@ router.post('/:id/buyer-invites',
   rateLimit({windowMs:15*60000,limit:20,keyGenerator:req=>String(req.user.id)}),
   async(req,res)=>{
     res.set('Cache-Control','no-store');
-    try { res.status(201).json({data:await buyerIdentity.createInvite(req.params.id,req.user)}); }
+    try { res.status(201).json({data:await buyerIdentity.createInvite(req.params.id,req.user,req.body?.participantId)}); }
     catch(e) { res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'}); }
   });
 

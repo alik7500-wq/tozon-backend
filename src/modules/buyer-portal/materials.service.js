@@ -66,12 +66,12 @@ export class BuyerMaterialsService{
   }
   if(!mime)return unavailable();return {buffer,mime,filename:type==='DOCUMENT'?`TOZON-document.${mime==='application/pdf'?'pdf':mime==='image/png'?'png':'jpg'}`:null};
  }
- async staffList(dealId,user){const deal=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,deal);return this.repo.documentList(dealId,deal.lead_id);}
+ async staffList(dealId,user){const deal=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,deal,{allowCancelled:true});return this.repo.documentList(dealId,deal.lead_id);}
  async staffAsset(dealId,user,id){
-  const deal=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,deal);
+  const deal=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,deal,{allowCancelled:true});
   const doc=await this.repo.staffDocument(dealId,id,deal.lead_id);if(!doc)return unavailable();
   const buffer=await this.storage.download('buyer-documents',doc.storage_path);
-  const fresh=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,fresh);
+  const fresh=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,fresh,{allowCancelled:true});
   if(fresh.lead_id!==deal.lead_id||buffer.length!==doc.file_size||createHash('sha256').update(buffer).digest('hex')!==doc.sha256)return unavailable();
   return {buffer,mime:doc.mime_type,filename:`TOZON-document.${doc.mime_type==='application/pdf'?'pdf':doc.mime_type==='image/png'?'png':'jpg'}`};
  }
@@ -87,7 +87,7 @@ export class BuyerMaterialsService{
   catch(e){await this.storage.remove(path).catch(()=>{});throw e;}
  }
  async publish(dealId,id,user,action){
-  const deal=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,deal);
+  const deal=await this.identity.repo.deal(dealId);this.identity.assertStaff(user,deal,{allowCancelled:action==='REVOKE'});
   if(!['ADMIN','DIRECTOR'].includes(user.role))throw new BuyerPortalError('BUYER_ACCESS_DENIED',403);
   if(!['PUBLISH','REVOKE'].includes(action))throw new BuyerPortalError('BUYER_DOCUMENT_INVALID');
   return this.repo.publishDocument(dealId,id,deal.lead_id,user.id,action);

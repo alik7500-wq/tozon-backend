@@ -22,7 +22,7 @@ const routes = [
 ];
 describe('per-section read/write matrix',()=>{
  it('accepts either contracts or deals write for buyer management, but never finance/read-only access',async()=>{
-  for(const path of ['/api/deals/1/buyer-status','/api/deals/1/buyer-invites','/api/deals/1/buyer-documents/doc/action']){
+  for(const path of ['/api/deals/1/buyer-status','/api/deals/1/buyer-invites','/api/deals/1/buyer-documents/doc/action','/api/deals/1/buyer-participants','/api/deals/1/buyer-participants/candidate/2','/api/deals/1/buyer-participants/uuid/revoke']){
    await expect(authorizeSectionRequest(req('POST',path,['contracts.view','contracts.manage']))).resolves.toBeUndefined();
    await expect(authorizeSectionRequest(req('POST',path,['deals.view','deals.manage']))).resolves.toBeUndefined();
    await expect(authorizeSectionRequest(req('GET',path,['contracts.view']))).rejects.toMatchObject({statusCode:403});
