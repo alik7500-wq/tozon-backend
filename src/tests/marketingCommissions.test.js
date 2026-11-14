@@ -398,4 +398,46 @@ describe('Marketing Commissions Registry (Backend)', () => {
       )
     ).rejects.toMatchObject({ statusCode: 403 });
   });
+
+  it('computes paymentPercent = (totalSettledMinor / contractPriceMinor) * 100 to 2 decimals even if report omits paymentPercent (e.g. contract 0094) and uses neutral notice', async () => {
+    vi.spyOn(MarketingCommissionsService, 'isAtomicRkoIntegrationReady').mockResolvedValue(false);
+    vi.spyOn(MarketingCommissionsService, 'loadRkoLinksByDealId').mockResolvedValue(new Map());
+    vi.spyOn(ApartmentSalesReportService, 'getApartmentSalesReport').mockResolvedValue({
+      apartments: [
+        {
+          dealId: 94,
+          contractNumber: '0094',
+          contractDate: '2026-10-01',
+          projectName: 'TOZON PLAZA',
+          blockCode: 'А',
+          unitNumber: '94',
+          buyerName: 'Контрольный Клиент',
+          salesSource: 'MARKETER',
+          marketingPartnerId: 701,
+          marketingPartnerName: 'Agency Alpha',
+          contractPriceUsd: 40547.0,
+          totalSettledUsd: 5411.26,
+          // paymentPercent intentionally omitted to test fallback computation from minor units
+          commissionRateBp: 300,
+          commissionRatePercent: 3,
+          calculatedCommissionUsd: 1216.41,
+          approvedCommissionUsd: 0,
+          paidCommissionUsd: 0,
+          remainingCommissionUsd: 0,
+          commissionStatus: 'CALCULATED',
+        },
+      ],
+      marketingPartners: [{ id: 701, name: 'Agency Alpha' }],
+    });
+
+    const registry = await MarketingCommissionsService.getRegistry({}, users.DIRECTOR);
+    expect(registry.rows).toHaveLength(1);
+    expect(registry.rows[0].paymentPercent).toBe(13.35);
+    expect(registry.rows[0].commissionRatePercent).toBe(3);
+    expect(registry.rows[0].calculatedCommissionUsd).toBe(1216.41);
+    expect(registry.permissions.canPayout).toBe(false);
+    expect(registry.permissions.payoutBlockedReason).toBe(
+      'Комиссии рассчитываются автоматически. Выплаты маркетологам осуществляются по решению руководства вне автоматического режима CRM.'
+    );
+  });
 });

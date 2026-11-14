@@ -1236,6 +1236,7 @@ export class ApartmentSalesReportService {
         remainingDebtUsd: sale.remainingDebtUsd,
         overpaidUsd: sale.overpaidUsd,
         paidPercent: sale.paidPercent,
+        paymentPercent: sale.paymentPercent,
         debtPercent: sale.debtPercent,
         paidDownPaymentUsd: sale.paidDownPaymentUsd,
         paidDownPaymentPercent: sale.paidDownPaymentPercent

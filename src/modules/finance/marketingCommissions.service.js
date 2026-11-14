@@ -257,6 +257,9 @@ export class MarketingCommissionsService {
     const allRows = marketerApartments.map((apt) => {
       const contractPriceMinor = Math.max(0, Number(apt.contractPriceMinor ?? toMinor(apt.contractPriceUsd)) || 0);
       const totalSettledMinor = Math.max(0, Number(apt.totalSettledMinor ?? toMinor(apt.totalSettledUsd)) || 0);
+      const paymentPercent = contractPriceMinor > 0
+        ? Number(((totalSettledMinor / contractPriceMinor) * 100).toFixed(2))
+        : 0;
       const calculatedCommissionMinor = Math.max(0, Number(apt.calculatedCommissionMinor ?? toMinor(apt.calculatedCommissionUsd)) || 0);
       const approvedCommissionMinor = Math.max(0, Number(apt.approvedCommissionMinor ?? toMinor(apt.approvedCommissionUsd)) || 0);
       const paidCommissionMinor = Math.max(0, Number(apt.paidCommissionMinor ?? toMinor(apt.paidCommissionUsd)) || 0);
@@ -283,7 +286,7 @@ export class MarketingCommissionsService {
         contractPriceUsd: minorToUsd(contractPriceMinor),
         totalSettledMinor,
         totalSettledUsd: minorToUsd(totalSettledMinor),
-        paymentPercent: Number(apt.paymentPercent || 0),
+        paymentPercent,
         commissionRateBp: Number(apt.commissionRateBp || 0),
         commissionRatePercent: Number(apt.commissionRatePercent || 0),
         calculatedCommissionMinor,
@@ -391,7 +394,7 @@ export class MarketingCommissionsService {
         payoutIntegrationEnabled: atomicIntegrationReady,
         payoutBlockedReason: atomicIntegrationReady
           ? null
-          : 'Регистрация новых выплат через реестр временно заблокирована до применения атомарной интеграции с РКО (миграция 057). Доступны просмотр, расчёт, утверждение и подготовка РКО в кассе.',
+          : 'Комиссии рассчитываются автоматически. Выплаты маркетологам осуществляются по решению руководства вне автоматического режима CRM.',
         canCancel: role === 'ADMIN',
         canConfirmRefund: role === 'ADMIN' && atomicIntegrationReady,
         canExport: EXPORT_ROLES.has(role),
