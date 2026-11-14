@@ -117,6 +117,7 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     commit_sha: process.env.RENDER_GIT_COMMIT || null,
     finance_bot: financeBotHealth(),
+    buyer_portal: {enabled:process.env.BUYER_PORTAL_ENABLED==='true',notifications_enabled:process.env.BUYER_NOTIFICATIONS_ENABLED==='true',otp_configured:Buffer.byteLength(process.env.BUYER_OTP_SECRET||'')>=32,url_configured:Boolean(process.env.BUYER_PORTAL_URL),sms_configured:Boolean(process.env.PAYOM_API_TOKEN?.trim())&&process.env.PAYOM_MOCK_MODE!=='true',private_storage_configured:Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim())},
     integrations: {
       webhook_secret_configured: Boolean(process.env.WEBHOOK_SECRET?.trim()),
       leads_round_robin_enabled: process.env.LEADS_ROUND_ROBIN_ENABLED === 'true'
