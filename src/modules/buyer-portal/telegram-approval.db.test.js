@@ -29,7 +29,7 @@ it('rejects another Telegram, a wrong confirmation code and an unauthorized empl
  await db.exec("insert into users(id,name,role,is_active) values(2,'Other','FINANCE_MANAGER',1)");
  await expect(approve(pending.code,2)).rejects.toThrow();expect(await access()).toEqual([]);
 });
-it('rechecks changed phone, expired QR and changed contract owner before approval',async()=>{
+it('rechecks changed phone before approval',async()=>{
  const pending=await request();await db.exec("update leads set phone='+992900000009' where id=1");
  await expect(approve(pending.code)).rejects.toThrow();expect(await access()).toEqual([]);
 });
@@ -40,4 +40,14 @@ it('cannot silently replace an existing Telegram binding',async()=>{
 it('does not expose approval functions to public clients',async()=>{
  for(const role of ['anon','authenticated'])for(const fn of ['buyer_portal_request_connection(text,bigint)','buyer_portal_approve_connection(uuid,integer,integer,bigint,text)'])
  expect((await db.query('select has_function_privilege($1,$2,\'execute\') allowed',[role,fn])).rows[0].allowed).toBe(false);
+});
+
+it('rejects expired requests and changed ownership before granting access',async()=>{
+ const pending=await request();
+ await db.exec("update buyer_portal_invites set created_at=now()-interval '20 minutes',expires_at=now()-interval '5 minutes'");
+ await expect(approve(pending.code)).rejects.toThrow();expect(await access()).toEqual([]);
+});
+it('revokes a pending connection when the contract changes owner',async()=>{
+ const pending=await request();await db.exec('update deals set lead_id=2 where id=1');
+ await expect(approve(pending.code)).rejects.toThrow();expect(await access()).toEqual([]);
 });
