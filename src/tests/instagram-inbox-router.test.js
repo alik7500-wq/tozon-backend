@@ -33,7 +33,7 @@ describe('Direct authenticated routes and real permission matrix',()=>{
   expect(r.status).toBe(403);expect(mocks.send).not.toHaveBeenCalled();
  });
  it('rejects a foreign account before Graph access',async()=>{
-  const r=await request(app).get(path+'/111/999/messages').set('x-role','ADMIN').set('x-grants','leads.view');
+  const r=await request(app).get(path+'/11111/999/messages').set('x-role','ADMIN').set('x-grants','leads.view');
   expect(r.status).toBe(404);expect(mocks.messages).not.toHaveBeenCalled();
  });
  it('does not report disconnected as an empty inbox',async()=>{
@@ -45,5 +45,19 @@ describe('Direct authenticated routes and real permission matrix',()=>{
   mocks.list.mockRejectedValue(new Error('token secret'));
   const r=await request(app).get(path).set('x-role','ADMIN').set('x-grants','leads.view');
   expect(r.status).toBe(503);expect(JSON.stringify(r.body)).not.toContain('token secret');
+ });
+ it('selects credentials for the requested registered account and rejects malformed selectors',async()=>{
+  mocks.credentials.mockResolvedValue({accountId:'22222',token:'second-account-token'});
+  const r=await request(app).get(path).query({account:'22222'}).set('x-role','ADMIN').set('x-grants','leads.view');
+  expect(r.status).toBe(200);expect(mocks.credentials).toHaveBeenCalledWith('22222');
+  expect(JSON.stringify(r.body)).not.toContain('second-account-token');
+  mocks.credentials.mockClear();
+  expect((await request(app).get(path).query({account:['11111','22222']}).set('x-role','ADMIN').set('x-grants','leads.view')).status).toBe(400);
+  expect(mocks.credentials).not.toHaveBeenCalled();
+ });
+ it('never opens or sends from an unconnected account',async()=>{
+  mocks.credentials.mockResolvedValue(null);
+  const r=await request(app).get(path+'/22222/999/messages').set('x-role','ADMIN').set('x-grants','leads.view');
+  expect(r.status).toBe(404);expect(mocks.messages).not.toHaveBeenCalled();
  });
 });

@@ -3,9 +3,10 @@ import { protect } from '../../middleware/auth.middleware.js';
 import { createOAuthState } from './social-oauth-state.js';
 import { saveInstagramOAuthState, consumeInstagramOAuthState } from './instagram-oauth.repository.js';
 import { facebookBusinessInstagramAuthorizationUrl } from './facebook-business-instagram-oauth.js';
-import { exchangeFacebookBusinessCode, extendFacebookBusinessToken, resolveTozonInstagramAccount } from './facebook-business-token.client.js';
+import { exchangeFacebookBusinessCode, extendFacebookBusinessToken, resolveInstagramAccounts, setInstagramWebhookSubscription } from './facebook-business-token.client.js';
 import { inspectInstagramMessagingPermission } from './instagram-permissions.client.js';
-import { saveTozonInstagramConnection, getTozonInstagramConnectionStatus } from './instagram-connection.repository.js';
+import { saveInstagramConnections, getTozonInstagramConnectionStatus, getInstagramInboxCredentials,
+  disconnectInstagramAccount, validInstagramAccountId, isInstagramOAuthActorActive } from './instagram-connection.repository.js';
 
 const router = Router();
 const oauthEnabled = () => process.env.INSTAGRAM_OAUTH_ENABLED === 'true';
@@ -37,6 +38,19 @@ router.post('/connect', protect, onlyAdministrator, async (req, res) => {
   }
 });
 
+router.post('/accounts/:account/disconnect', protect, onlyAdministrator, async (req,res) => {
+  res.set('Cache-Control','no-store');
+  if(!validInstagramAccountId(req.params.account))return res.status(400).json({code:'INVALID_ACCOUNT'});
+  try {
+    const credentials=await getInstagramInboxCredentials(req.params.account);
+    const disconnected=await disconnectInstagramAccount(req.params.account);
+    if(!disconnected)return res.status(404).json({code:'INSTAGRAM_ACCOUNT_NOT_CONNECTED'});
+    let webhookRemoved=false;
+    if(credentials){try{await setInstagramWebhookSubscription({...credentials,disconnect:true});webhookRemoved=true;}catch{}}
+    return res.json({status:'success',data:{disconnected:true,webhookRemoved}});
+  }catch{return res.status(503).json({code:'INSTAGRAM_DISCONNECT_FAILED'});}
+});
+
 router.get('/callback', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!oauthEnabled()) return res.status(503).type('text/plain').send('Instagram connection is not enabled');
@@ -48,26 +62,26 @@ router.get('/callback', async (req, res) => {
   try {
     const initiated = await consumeInstagramOAuthState({ state });
     if (!initiated) return res.status(403).send('Instagram authorization expired or already used');
+    if (!await isInstagramOAuthActorActive(initiated.userId)) return res.sendStatus(403);
     stage = 'exchange_code';
     const shortLived = await exchangeFacebookBusinessCode(code);
     stage = 'extend_token';
     const longLived = await extendFacebookBusinessToken(shortLived.accessToken);
     stage = 'resolve_instagram_account';
-    const account = await resolveTozonInstagramAccount(longLived.accessToken);
+    const accounts = await resolveInstagramAccounts(longLived.accessToken);
     // Inspect the exact Page token used by the send endpoint, not a different user token.
     stage = 'check_messaging_permission';
-    const permissions = await inspectInstagramMessagingPermission({ userAccessToken: account.pageAccessToken });
+    const verified = await Promise.all(accounts.map(async account => ({ ...account,
+      permissions: await inspectInstagramMessagingPermission({ userAccessToken: account.pageAccessToken }) })));
     // Never mark Direct as connected when Meta has not granted messaging access.
-    if (!permissions.messagingAllowed) return res.status(403).type('text/plain').send('Instagram messaging permission has not been granted in Meta.');
+    if (verified.some(account => !account.permissions.messagingAllowed)) return res.status(403).type('text/plain').send('Instagram messaging permission has not been granted in Meta.');
     stage = 'save_connection';
-    await saveTozonInstagramConnection({
-      instagramUserId: account.instagramUserId,
-      username: 'tozon_plaza',
-      accessToken: account.pageAccessToken,
-      expiresIn: null,
-      grantedScopes: permissions.grantedScopes
-    });
-    return res.status(200).type('text/plain').send('Instagram @tozon_plaza connected. Return to TOZON CRM.');
+    await saveInstagramConnections(verified.map(account => ({instagramUserId:account.instagramUserId,
+      username:account.username,accessToken:account.pageAccessToken,expiresIn:null,grantedScopes:account.permissions.grantedScopes})));
+    stage = 'subscribe_messages';
+    const subscriptions = await Promise.allSettled(verified.map(account => setInstagramWebhookSubscription({accountId:account.instagramUserId,token:account.pageAccessToken})));
+    const pending = subscriptions.some(result=>result.status==='rejected');
+    return res.status(200).type('text/plain').send(`Instagram accounts connected: ${verified.length}. Return to TOZON CRM.${pending ? ' Some webhook subscriptions need attention; background refresh remains available.' : ''}`);
   } catch {
     // Log only a fixed stage name: never log OAuth codes, tokens, state or Meta error payloads.
     console.error('[instagram-oauth] callback failed at stage:', stage);

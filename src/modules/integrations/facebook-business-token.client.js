@@ -82,22 +82,33 @@ export async function extendFacebookBusinessToken(accessToken) {
   if (typeof token.access_token !== 'string') throw new Error('Missing Meta long-lived token');
   return { accessToken: token.access_token, expiresIn: Number(token.expires_in) || null };
 }
-export async function resolveTozonInstagramAccount(accessToken) {
-  const result = await graphGet('/me/accounts', { fields: 'id,name,access_token,instagram_business_account', access_token: accessToken, limit: '100' });
-  const pages = Array.isArray(result.data) ? result.data : [];
-  const matches = pages.filter(p => String(p.instagram_business_account?.id) === '17841447499018452');
-  if (matches.length !== 1 || !matches[0].access_token) {
-    // No Page IDs, names or tokens in logs. Distinguish a missing Page grant
-    // from a missing IG link so the operator can fix the correct Meta asset.
-    const diagnostic = pages.length === 0 ? 'NO_FACEBOOK_PAGES_GRANTED'
-      : matches.length === 0 ? 'TARGET_INSTAGRAM_NOT_LINKED_TO_GRANTED_PAGE'
-      : matches.length > 1 ? 'DUPLICATE_TARGET_INSTAGRAM_LINK'
-      : 'PAGE_ACCESS_TOKEN_MISSING';
-    console.error('[instagram-meta] Instagram account resolution failed', {
-      diagnostic, grantedPageCount: pages.length,
-      linkedInstagramCount: pages.filter(p => p.instagram_business_account?.id).length
-    });
-    throw new Error('Expected TOZON Instagram page is unavailable');
+// Enumerate only assets explicitly granted by Meta; never accept an account ID
+// from a callback query or browser-supplied token. Fixed-host cursor pagination.
+export async function resolveInstagramAccounts(accessToken) {
+  const accounts=new Map();let after;
+  for(let page=0;page<10;page++){
+    const result=await graphGet('/me/accounts',{fields:'id,name,access_token,instagram_business_account{id,username}',access_token:accessToken,limit:'100',...(after?{after}: {})});
+    if(!Array.isArray(result.data))throw new Error('Invalid Meta account list');
+    for(const p of result.data){
+      const id=String(p.instagram_business_account?.id||'');
+      if(!/^\d{5,40}$/.test(id)||!/^\d+$/.test(String(p.id||''))||typeof p.access_token!=='string'||!p.access_token)continue;
+      if(accounts.has(id))throw new Error('Ambiguous Instagram page link');
+      accounts.set(id,{instagramUserId:id,pageId:String(p.id),pageAccessToken:p.access_token,
+        username:typeof p.instagram_business_account.username==='string'?p.instagram_business_account.username:null});
+      if(accounts.size>100)throw new Error('Too many Instagram accounts');
+    }
+    if(!result.paging?.next)break;
+    after=result.paging?.cursors?.after;
+    if(typeof after!=='string'||!after||after.length>2048||page===9)throw new Error('Incomplete Meta account list');
   }
-  return { instagramUserId: '17841447499018452', pageId: String(matches[0].id), pageAccessToken: matches[0].access_token };
+  if(!accounts.size)throw new Error('No authorized professional Instagram account found');
+  return [...accounts.values()];
+}
+export async function setInstagramWebhookSubscription({accountId,token,disconnect=false,request=fetch}) {
+  if(!/^\d{5,40}$/.test(accountId||''))throw new Error('Invalid Instagram account');
+  const response=await request(graph+'/'+accountId+'/subscribed_apps',{
+    method:disconnect?'DELETE':'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/x-www-form-urlencoded'},
+    ...(disconnect?{}:{body:new URLSearchParams({subscribed_fields:'messages'}).toString()}),signal:AbortSignal.timeout(10000)});
+  const body=await response.json().catch(()=>null);
+  if(!response.ok||body?.success!==true)throw new Error('Instagram webhook subscription failed');
 }

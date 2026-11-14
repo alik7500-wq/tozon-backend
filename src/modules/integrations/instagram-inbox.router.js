@@ -18,8 +18,10 @@ const sendLimit = rateLimit({ windowMs: 60000, limit: 10, keyGenerator: req => S
   standardHeaders: 'draft-8', legacyHeaders: false, message: { code: 'INSTAGRAM_RATE_LIMIT' } });
 const handle = operation => async (req, res) => {
   try {
-    const credentials = await getInstagramInboxCredentials();
-    if (!credentials) throw new InboxError('INSTAGRAM_RECONNECT_REQUIRED', 409);
+    const requestedAccount = req.params.account ?? req.query.account;
+    if (requestedAccount !== undefined && (typeof requestedAccount !== 'string' || !/^\d{5,40}$/.test(requestedAccount))) throw new InboxError('INVALID_ACCOUNT', 400);
+    const credentials = await getInstagramInboxCredentials(requestedAccount);
+    if (!credentials) throw new InboxError(requestedAccount ? 'INSTAGRAM_ACCOUNT_NOT_CONNECTED' : 'INSTAGRAM_RECONNECT_REQUIRED', requestedAccount ? 404 : 409);
     if (req.params.account && req.params.account !== credentials.accountId) throw new InboxError('INSTAGRAM_ACCOUNT_MISMATCH', 404);
     const result = await operation(liveInboxEnabled() ? createInstagramLiveInbox(credentials) : createInstagramInboxClient(credentials), req);
     return res.json({ status: 'success', ...result });

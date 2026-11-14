@@ -55,3 +55,14 @@ it('blocks browser roles from private history, rollout settings and lead-creatin
  expect(row).toEqual({a:false,b:false,c:false,d:false});
  expect((await db.query("select count(*)::int n from pg_class where relname like 'crm_instagram_%' and relkind='r' and relrowsecurity")).rows[0].n).toBe(3);
 });
+it('separates history and leads for identical contact and message IDs across connected accounts',async()=>{
+ const second='17841447499018453';
+ await db.query('insert into tozon_instagram_connections values($1,$2)',[second,'connected']);
+ await db.query("insert into crm_instagram_rollout(account_id,activated_at) values($1,now()-interval '1 hour')",[second]);
+ const first=await store('777',[message('shared-id')]);
+ const other=(await db.query('select crm_instagram_store_thread($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9) r',
+ [second,'777','Second profile','Other message',null,JSON.stringify([message('shared-id',{text_content:'Other message'})]),null,true,null])).rows[0].r;
+ expect(other.created).toBe(true);expect(other.lead_id).not.toBe(first.lead_id);
+ const rows=(await db.query("select account_id,body->>'text_content' text from crm_instagram_history where contact_id='777' order by account_id")).rows;
+ expect(rows).toEqual([{account_id:account,text:'Салом 😊'},{account_id:second,text:'Other message'}]);
+});

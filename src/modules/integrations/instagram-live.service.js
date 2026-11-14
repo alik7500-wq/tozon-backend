@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createInstagramInboxClient, InboxError } from './instagram-inbox.client.js';
-import { getInstagramInboxCredentials } from './instagram-connection.repository.js';
+import { getAllInstagramInboxCredentials } from './instagram-connection.repository.js';
 import { liveInboxEnabled, readInstagramThreads, readInstagramHistory, saveInstagramThread, blockInstagramReply } from './instagram-live.repository.js';
 
 // Coalesce refreshes across tabs/users. Contents remain durable in the database.
@@ -105,8 +105,17 @@ export function startInstagramInboxSync() {
     if (busy) return;
     busy = true;
     try {
-      const credentials = await getInstagramInboxCredentials();
-      if (credentials) await createInstagramLiveInbox(credentials).sync();
+      const accounts = await getAllInstagramInboxCredentials();
+      // An inaccessible account must not stop synchronization for the others.
+      let index = 0;
+      const worker = async () => {
+        while (index < accounts.length) {
+          const credentials = accounts[index++];
+          try { await createInstagramLiveInbox(credentials).sync(); }
+          catch (error) { console.warn('[instagram-sync]', error instanceof InboxError ? error.code : 'SYNC_FAILED'); }
+        }
+      };
+      await Promise.all([worker(), worker()]);
     } catch (error) { console.warn('[instagram-sync]', error instanceof InboxError ? error.code : 'SYNC_FAILED'); }
     finally { busy = false; }
   };
