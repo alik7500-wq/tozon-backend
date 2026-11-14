@@ -28,6 +28,7 @@ export const COMMISSION_STATUSES = {
   APPROVED: 'APPROVED',
   PARTIALLY_PAID: 'PARTIALLY_PAID',
   PAID: 'PAID',
+  RECONCILIATION_REQUIRED: 'RECONCILIATION_REQUIRED',
   CANCELLED: 'CANCELLED',
 };
 
@@ -38,6 +39,7 @@ export const COMMISSION_STATUS_LABELS = {
   APPROVED: 'Утверждена',
   PARTIALLY_PAID: 'Частично выплачена',
   PAID: 'Выплачена',
+  RECONCILIATION_REQUIRED: 'Требуется сверка (РКО аннулирован)',
   CANCELLED: 'Отменена',
 };
 
@@ -1537,6 +1539,13 @@ export class MarketingAttributionService {
           `Сумма выплаты превышает остаток утверждённой комиссии (${currentAttr.commission.remainingCommissionUsd} USD)`,
           400,
           'PAYOUT_EXCEEDS_APPROVED'
+        );
+      }
+      if (nextPaidMinor > currentAttr.commission.calculatedCommissionMinor) {
+        throw new AppError(
+          'Сумма выплаты превышает текущую расчётную комиссию по подтверждённым платежам',
+          400,
+          'PAYOUT_EXCEEDS_CALCULATED'
         );
       }
 

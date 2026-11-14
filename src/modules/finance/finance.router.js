@@ -149,6 +149,15 @@ router.post('/marketing-commissions/:dealId/cancel', async (req, res, next) => {
   }
 });
 
+router.post('/marketing-commissions/:dealId/confirm-refund', async (req, res, next) => {
+  try {
+    const deal = await MarketingCommissionsService.confirmPayoutRefund(req.params.dealId, req.body, req.user);
+    res.status(200).json({ status: 'success', data: { deal } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;
 
 
