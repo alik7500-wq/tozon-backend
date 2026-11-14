@@ -233,7 +233,9 @@ export class LeadsRepository {
   }
 
   static async update(id, data) {
-    const db = getDB();
+    // Phone changes revoke private buyer-portal access in the same transaction.
+    // Route authorization runs before this server-only write; never fall back to anon.
+    const db = getServiceDB();
     const now = new Date().toISOString();
     const prepared = this._prepareLeadData(data);
     prepared.updated_at = now;
