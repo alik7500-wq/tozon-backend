@@ -26,7 +26,9 @@ export class BuyerBot {
     try {
       token=readBuyerUpdateToken(update);
       if (/^\/start(?:@\w+)?\s+buyer_/.test(text)&&!token) throw new Error();
-      if (token && !await this.repo.visit(hashBuyerInviteToken(token),sender.id)) throw new Error();
+      if (token && !await this.repo.visit(hashBuyerInviteToken(token),sender.id)) {
+        if(typeof this.repo.access==='function'&&(await this.repo.access(sender.id)).length)token=undefined;else throw new Error();
+      }
     } catch {
       await send('Муҳлати QR гузаштааст. Аз менеҷер QR-и нав гиред. / QR недоступен. Попросите менеджера выдать новый.');
       return true;
@@ -36,7 +38,7 @@ export class BuyerBot {
       await send('Кабинет временно недоступен. Обратитесь к менеджеру.'); return true;
     }
     await send(
-      token?'Хуш омадед! Тугмаро пахш кунед ва рақами телефони дар шартнома бударо бо SMS тасдиқ намоед. Рамзро танҳо дар равзанаи кабинет ворид кунед.\n\nДобро пожаловать! Откройте кабинет и подтвердите телефон из договора через SMS. Введите код только в окне кабинета, не в чате.'
+      token?'Хуш омадед! Кабинетро кушоед. Менеҷер пайвастшавии Telegram-ро як маротиба тасдиқ мекунад. SMS лозим нест.\n\nДобро пожаловать! Откройте кабинет. Менеджер один раз подтвердит подключение Telegram. SMS не требуется.'
         :'Кабинети шахсии харидор / Личный кабинет покупателя',
       {inline_keyboard:[[{text:'Кабинетро кушодан / Открыть кабинет',web_app:{url}}]]});
     return true;

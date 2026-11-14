@@ -54,6 +54,9 @@ router.get('/:id/buyer-status',(req,res,next)=>buyerEnabled()?next():res.sendSta
   catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'});}
 });
 
+router.get('/:id/buyer-connections',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404),buyerCommunicationRun(req=>buyerIdentity.connectionRequests(parseRequiredBigInt(req.params.id,'id'),req.user)));
+router.post('/:id/buyer-connections/approve',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404),buyerCommunicationRun(req=>buyerIdentity.approveConnection(parseRequiredBigInt(req.params.id,'id'),req.user,req.body||{})));
+
 router.post('/:id/buyer-invites',
   (req,res,next)=>buyerEnabled()?next():res.sendStatus(404),
   rateLimit({windowMs:15*60000,limit:20,keyGenerator:req=>String(req.user.id)}),

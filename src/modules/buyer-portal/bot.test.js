@@ -83,3 +83,8 @@ it('preserves employee main menu and suppresses it only for buyer messages',asyn
   await api.send(1,'employee');
   expect(api.call.mock.calls[1][1].reply_markup.inline_keyboard[0][0].callback_data).toBe('main_menu');
 });
+it('opens the remembered identity from a consumed QR without asking for another code',async()=>{
+ repo.visit.mockResolvedValue(false);repo.access=vi.fn(async()=>[{deal_id:1}]);
+ expect(await bot.handle(update(),api)).toBe(true);
+ expect(api.send.mock.calls[0][2].inline_keyboard[0][0].web_app.url).toBe('https://example.test/buyer');
+});

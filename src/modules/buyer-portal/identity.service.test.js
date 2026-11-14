@@ -116,3 +116,11 @@ describe('buyer OTP service',()=>{
     for(const phone of [null,'','call me','+79991234567']) expect(registeredPhone(phone)).toBeNull();
   });
 });
+it('disables buyer SMS endpoints before generating or sending any code',async()=>{
+ vi.stubEnv('BUYER_SMS_ENABLED','false');
+ try{
+  await expect(service.requestCode('a'.repeat(43),101)).rejects.toThrow('BUYER_SMS_DISABLED');
+  await expect(service.confirmCode('11111111-1111-4111-8111-111111111111','123456',101)).rejects.toThrow('BUYER_SMS_DISABLED');
+  expect(sms.sendSms).not.toHaveBeenCalled();expect(repo.prepare).not.toHaveBeenCalled();expect(repo.confirm).not.toHaveBeenCalled();
+ }finally{vi.unstubAllEnvs();}
+});

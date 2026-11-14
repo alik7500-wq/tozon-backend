@@ -48,7 +48,7 @@ export class BuyerIdentityService {
     }
     if (!registeredPhone(target?.phone)) fail('BUYER_PHONE_REQUIRES_STAFF_VERIFICATION',409);
     // Configuration errors must be found before creating a usable invitation.
-    otpDigest(this.otpSecret(),'configuration-check','1','000000');
+    if(process.env.BUYER_SMS_ENABLED!=='false')otpDigest(this.otpSecret(),'configuration-check','1','000000');
     const bot=await this.botIdentity();
     if (!/^[A-Za-z0-9_]{5,32}$/.test(bot?.username||'')) fail('BUYER_BOT_NOT_CONFIGURED',503);
     const {token,tokenHash}=createBuyerInviteToken();
@@ -56,7 +56,20 @@ export class BuyerIdentityService {
       phone_snapshot:target.phone,created_by:user.id});
     return {id:invite.id,url:`https://t.me/${bot.username}?start=buyer_${token}`,expiresAt:invite.expires_at};
   }
+  async requestConnection(token,tg){
+    let hash;try{hash=hashBuyerInviteToken(token);}catch{fail('BUYER_INVITE_UNAVAILABLE',410);}
+    const result=await this.repo.requestConnection(hash,telegramId(tg));
+    if(!['PENDING','VERIFIED'].includes(result.status))fail('BUYER_INVITE_UNAVAILABLE',410);
+    return result;
+  }
+  async connectionRequests(dealId,user){const deal=await this.repo.deal(dealId);this.assertStaff(user,deal);return this.repo.connectionRequests(dealId);}
+  async approveConnection(dealId,user,body){
+    const deal=await this.repo.deal(dealId);this.assertStaff(user,deal);
+    if(!/^[0-9a-f-]{36}$/i.test(body.id||'')||!/^([0-9A-F]{8})$/.test(body.code||''))fail('BUYER_INVITE_UNAVAILABLE');
+    return this.repo.approveConnection(body.id,dealId,user.id,telegramId(body.telegramId),body.code);
+  }
   async requestCode(token,verifiedTelegramId) {
+    if(process.env.BUYER_SMS_ENABLED==='false')fail('BUYER_SMS_DISABLED',410);
     const tg=telegramId(verifiedTelegramId);
     let tokenHash;
     try { tokenHash=hashBuyerInviteToken(token); } catch { fail('BUYER_INVITE_UNAVAILABLE',410); }
@@ -80,6 +93,7 @@ export class BuyerIdentityService {
     return {challengeId:id,maskedPhone:`+992•••••${phone.slice(-4)}`,expiresInSeconds:300};
   }
   async confirmCode(id,code,verifiedTelegramId) {
+    if(process.env.BUYER_SMS_ENABLED==='false')fail('BUYER_SMS_DISABLED',410);
     const tg=telegramId(verifiedTelegramId);
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(id)) || !/^\d{6}$/.test(String(code))) fail('BUYER_CODE_INVALID');
     const result=await this.repo.confirm({id,telegramId:tg,codeHash:otpDigest(this.otpSecret(),id,tg,String(code))});

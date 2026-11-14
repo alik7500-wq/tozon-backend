@@ -9,6 +9,9 @@ export class BuyerIdentityRepository {
   async createInvite(row) {
     return data(await this.db.from('buyer_portal_invites').insert(row).select('id,expires_at').single());
   }
+  async requestConnection(tokenHash,tg){return data(await this.db.rpc('buyer_portal_request_connection',{p_token_hash:tokenHash,p_telegram:tg}));}
+  async connectionRequests(dealId){return data(await this.db.from('buyer_portal_invites').select('id,claimed_telegram_id,claim_code,participant_id,expires_at').eq('deal_id',dealId).not('claimed_telegram_id','is',null).is('consumed_at',null).is('revoked_at',null).gt('expires_at',new Date().toISOString()));}
+  async approveConnection(id,dealId,actor,tg,code){return data(await this.db.rpc('buyer_portal_approve_connection',{p_invite:id,p_deal:dealId,p_actor:actor,p_telegram:tg,p_code:code}));}
   async prepare({tokenHash,telegramId,id,codeHash}) {
     return data(await this.db.rpc('buyer_portal_prepare_otp',{p_token_hash:tokenHash,p_telegram_id:telegramId,p_id:id,p_code_hash:codeHash}));
   }

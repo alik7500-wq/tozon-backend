@@ -23,6 +23,7 @@ export function createBuyerRouter(service, {enabled=buyerEnabled, botToken=()=>p
     try { res.json({data:await fn(req)}); }
     catch(e) { res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'}); }
   };
+  router.post('/connect',otpLimit,run(req=>service.requestConnection(req.body?.token,req.buyer.telegramUserId)));
   router.post('/otp',otpLimit,run(req=>service.requestCode(req.body?.token,req.buyer.telegramUserId)));
   router.post('/verify',otpLimit,run(req=>service.confirmCode(req.body?.challengeId,req.body?.code,req.buyer.telegramUserId)));
   // Deliberately returns only granted IDs until the financial projection is validated.
