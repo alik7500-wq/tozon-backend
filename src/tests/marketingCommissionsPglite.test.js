@@ -56,6 +56,8 @@ describe('PostgreSQL (PGlite) Migration 057 — Cumulative Partial Refunds, Repl
         recipient TEXT,
         amount_minor BIGINT NOT NULL,
         status TEXT NOT NULL DEFAULT 'ACTIVE',
+        void_reason TEXT,
+        voided_by BIGINT,
         voided_at TIMESTAMPTZ
       );
 
@@ -242,11 +244,53 @@ describe('PostgreSQL (PGlite) Migration 057 — Cumulative Partial Refunds, Repl
     expect(finalPaymentCount).toBe(initialPaymentCount + 1); // only the explicit deal 101 buyer payment id=4
 
     // If replacement RKO 17 is ALSO voided later, deal 102 cleanly re-enters RECONCILIATION_REQUIRED
-    await db.query(`UPDATE public.expenses SET status = 'VOIDED', voided_at = NOW() WHERE id = 17`);
+    await db.query(`UPDATE public.expenses SET status = 'VOIDED', voided_at = NOW(), voided_by = 1, void_reason = 'Ошибка кассы №2' WHERE id = 17`);
     const comm102ReVoid = await db.query(`SELECT paid_amount_minor, status, reconciliation_required FROM public.marketing_commissions WHERE deal_id = 102`);
     expect(Number(comm102ReVoid.rows[0].paid_amount_minor)).toBe(150000);
     expect(comm102ReVoid.rows[0].status).toBe('RECONCILIATION_REQUIRED');
     expect(comm102ReVoid.rows[0].reconciliation_required).toBe(true);
+
+    // Second replacement RKO (12 -> 17 -> 18): verify old_rko_expense_id = 17 and full immutable history
+    await db.query(`INSERT INTO public.expenses (id, reference, recipient, amount_minor, status) VALUES (18, 'РКО-018', 'Somon Agency', 150000, 'ACTIVE')`);
+    const recRes2 = await db.query(
+      `SELECT public.reconcile_marketing_commission_payout_with_rko_atomic(102, 1, $1, 18, 'Somon Agency', 'reconcile-102-18', 'Вторая замена РКО после аннулирования РКО-017') AS res`,
+      [op102Id]
+    );
+    expect(recRes2.rows[0].res.old_rko_expense_id).toBe(17);
+    expect(recRes2.rows[0].res.new_rko_expense_id).toBe(18);
+    expect(recRes2.rows[0].res.initial_rko_expense_id).toBe(12);
+    expect(recRes2.rows[0].res.status).toBe('PAID');
+
+    const hist102 = await db.query(
+      `SELECT sequence_no, event_type, rko_expense_id, previous_rko_expense_id, status, reason, created_by
+       FROM public.marketing_commission_rko_history
+       WHERE payout_operation_id = $1
+       ORDER BY sequence_no ASC`,
+      [op102Id]
+    );
+    expect(hist102.rows.map((r) => [r.sequence_no, r.event_type, Number(r.rko_expense_id), r.previous_rko_expense_id ? Number(r.previous_rko_expense_id) : null, r.status])).toEqual([
+      [1, 'INITIAL_PAYOUT', 12, null, 'ACTIVE'],
+      [2, 'RKO_VOIDED', 12, null, 'VOIDED_RECONCILIATION_REQUIRED'],
+      [3, 'REPLACEMENT_RKO', 17, 12, 'ACTIVE'],
+      [4, 'RKO_VOIDED', 17, null, 'VOIDED_RECONCILIATION_REQUIRED'],
+      [5, 'REPLACEMENT_RKO', 18, 17, 'ACTIVE'],
+    ]);
+
+    // Verify immutability of marketing_commission_rko_history (UPDATE & DELETE blocked)
+    await expect(db.query(`UPDATE public.marketing_commission_rko_history SET reason = 'tampered' WHERE payout_operation_id = $1`, [op102Id])).rejects.toThrow(/IMMUTABLE_RKO_HISTORY/);
+    await expect(db.query(`DELETE FROM public.marketing_commission_rko_history WHERE payout_operation_id = $1`, [op102Id])).rejects.toThrow(/IMMUTABLE_RKO_HISTORY/);
+
+    // Verify PostgreSQL unique index blocks direct duplicate RKO usage across initial & replacement
+    await expect(
+      db.query(
+        `INSERT INTO public.marketing_commission_rko_history (deal_id, payout_operation_id, sequence_no, event_type, rko_expense_id, rko_reference, status, reason)
+         VALUES (102, $1, 99, 'REPLACEMENT_RKO', 12, 'РКО-012', 'ACTIVE', 'dup')`,
+        [op102Id]
+      )
+    ).rejects.toThrow(/duplicate key value violates unique constraint/);
+
+    // Void RKO 18 to test race with RKO 16
+    await db.query(`UPDATE public.expenses SET status = 'VOIDED', voided_at = NOW(), voided_by = 1, void_reason = 'Ошибка кассы №3' WHERE id = 18`);
 
     // Concurrent race between reconcile with RKO 16 and voiding RKO 16 -> deadlock-free, deterministic
     const [raceRec, raceVoid] = await Promise.allSettled([

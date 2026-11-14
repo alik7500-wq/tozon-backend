@@ -7,12 +7,15 @@ BEGIN;
 
 DROP TRIGGER IF EXISTS trg_guard_void_rko_linked_commission ON public.expenses;
 DROP FUNCTION IF EXISTS public.guard_void_rko_linked_commission();
+DROP TRIGGER IF EXISTS trg_prevent_mkt_comm_rko_history_mutation ON public.marketing_commission_rko_history;
+DROP FUNCTION IF EXISTS public.prevent_marketing_commission_rko_history_mutation();
 DROP FUNCTION IF EXISTS public.reconcile_marketing_commission_payout_with_rko_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.confirm_marketing_commission_payout_refund_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.record_marketing_commission_payout_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.approve_marketing_commission_atomic(BIGINT, BIGINT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.approve_marketing_commission_atomic(BIGINT, BIGINT, BIGINT, BIGINT, INTEGER, BIGINT, BIGINT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.compute_marketing_commission_from_db(BIGINT);
+DROP TABLE IF EXISTS public.marketing_commission_rko_history;
 DROP TABLE IF EXISTS public.marketing_commission_operations;
 
 ALTER TABLE public.marketing_commissions

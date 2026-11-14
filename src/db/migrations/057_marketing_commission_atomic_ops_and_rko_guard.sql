@@ -28,6 +28,8 @@ BEGIN;
 -- Drop any legacy trigger/functions/overloads so no insecure signature remains
 DROP TRIGGER IF EXISTS trg_guard_void_rko_linked_commission ON public.expenses;
 DROP FUNCTION IF EXISTS public.guard_void_rko_linked_commission();
+DROP TRIGGER IF EXISTS trg_prevent_mkt_comm_rko_history_mutation ON public.marketing_commission_rko_history;
+DROP FUNCTION IF EXISTS public.prevent_marketing_commission_rko_history_mutation();
 DROP FUNCTION IF EXISTS public.reconcile_marketing_commission_payout_with_rko_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.confirm_marketing_commission_payout_refund_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.record_marketing_commission_payout_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
@@ -95,6 +97,68 @@ GRANT USAGE, SELECT ON SEQUENCE public.marketing_commission_operations_id_seq TO
 DROP POLICY IF EXISTS marketing_commission_operations_service_role ON public.marketing_commission_operations;
 CREATE POLICY marketing_commission_operations_service_role ON public.marketing_commission_operations
   FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- =============================================================================
+-- Immutable append-only history of all RKO links & replacements per payout
+-- Guarantees:
+--   1. Full audit trail: initial RKO, every void, every replacement, reason,
+--      actor, timestamp, and status.
+--   2. PostgreSQL-level global uniqueness of RKO usage across ALL initial
+--      payouts and ALL replacement RKOs via partial unique index.
+--   3. Strict immutability via BEFORE UPDATE OR DELETE trigger.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS public.marketing_commission_rko_history (
+  id BIGSERIAL PRIMARY KEY,
+  deal_id BIGINT NOT NULL REFERENCES public.deals(id) ON DELETE CASCADE,
+  payout_operation_id BIGINT NOT NULL REFERENCES public.marketing_commission_operations(id) ON DELETE RESTRICT,
+  sequence_no INTEGER NOT NULL CHECK (sequence_no >= 1),
+  event_type TEXT NOT NULL CHECK (event_type IN ('INITIAL_PAYOUT', 'RKO_VOIDED', 'REPLACEMENT_RKO')),
+  rko_expense_id BIGINT NOT NULL REFERENCES public.expenses(id) ON DELETE RESTRICT,
+  rko_reference TEXT NOT NULL,
+  previous_rko_expense_id BIGINT REFERENCES public.expenses(id) ON DELETE RESTRICT,
+  previous_rko_reference TEXT,
+  status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'VOIDED_RECONCILIATION_REQUIRED')),
+  reason TEXT NOT NULL DEFAULT '',
+  created_by BIGINT REFERENCES public.users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (payout_operation_id, sequence_no)
+);
+
+CREATE INDEX IF NOT EXISTS idx_mkt_comm_rko_history_deal_id
+  ON public.marketing_commission_rko_history(deal_id, created_at ASC, id ASC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mkt_comm_rko_history_unique_rko_usage
+  ON public.marketing_commission_rko_history(rko_expense_id)
+  WHERE event_type IN ('INITIAL_PAYOUT', 'REPLACEMENT_RKO');
+
+ALTER TABLE public.marketing_commission_rko_history ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.marketing_commission_rko_history FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON SEQUENCE public.marketing_commission_rko_history_id_seq FROM PUBLIC, anon, authenticated;
+GRANT ALL ON public.marketing_commission_rko_history TO service_role, postgres;
+GRANT USAGE, SELECT ON SEQUENCE public.marketing_commission_rko_history_id_seq TO service_role, postgres;
+
+DROP POLICY IF EXISTS marketing_commission_rko_history_service_role ON public.marketing_commission_rko_history;
+CREATE POLICY marketing_commission_rko_history_service_role ON public.marketing_commission_rko_history
+  FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+CREATE OR REPLACE FUNCTION public.prevent_marketing_commission_rko_history_mutation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+BEGIN
+  RAISE EXCEPTION 'IMMUTABLE_RKO_HISTORY: История документов РКО по комиссиям маркетологов неизменяема (% запрещён)', TG_OP;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.prevent_marketing_commission_rko_history_mutation() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.prevent_marketing_commission_rko_history_mutation() TO service_role, postgres;
+
+CREATE TRIGGER trg_prevent_mkt_comm_rko_history_mutation
+  BEFORE UPDATE OR DELETE ON public.marketing_commission_rko_history
+  FOR EACH ROW
+  EXECUTE FUNCTION public.prevent_marketing_commission_rko_history_mutation();
 
 -- =============================================================================
 -- Internal helper: compute live settled amount, tiered rate (0/2/3/4%),
@@ -394,6 +458,7 @@ DECLARE
   v_next_paid_minor BIGINT;
   v_next_status TEXT;
   v_rko_ref TEXT;
+  v_op_id BIGINT;
   v_now TIMESTAMPTZ := NOW();
   v_snapshot JSONB;
 BEGIN
@@ -451,6 +516,10 @@ BEGIN
     SELECT 1 FROM public.marketing_commission_operations
     WHERE rko_expense_id = p_rko_expense_id
        OR reconciled_rko_expense_id = p_rko_expense_id
+  ) OR EXISTS (
+    SELECT 1 FROM public.marketing_commission_rko_history
+    WHERE rko_expense_id = p_rko_expense_id
+      AND event_type IN ('INITIAL_PAYOUT', 'REPLACEMENT_RKO')
   ) THEN
     RAISE EXCEPTION 'RKO_ALREADY_LINKED: Этот РКО уже привязан к выплате комиссии';
   END IF;
@@ -575,6 +644,17 @@ BEGIN
   ) VALUES (
     p_deal_id, 'RECORD_PAYOUT', p_payout_minor, p_rko_expense_id, v_rko_ref,
     v_key, v_fingerprint, v_snapshot, v_norm_notes, p_actor_id
+  )
+  RETURNING id INTO v_op_id;
+
+  INSERT INTO public.marketing_commission_rko_history (
+    deal_id, payout_operation_id, sequence_no, event_type,
+    rko_expense_id, rko_reference, previous_rko_expense_id, previous_rko_reference,
+    status, reason, created_by, created_at
+  ) VALUES (
+    p_deal_id, v_op_id, 1, 'INITIAL_PAYOUT',
+    p_rko_expense_id, v_rko_ref, NULL, NULL,
+    'ACTIVE', COALESCE(NULLIF(v_norm_notes, ''), 'Первичная выплата комиссии'), p_actor_id, v_now
   );
 
   INSERT INTO public.deal_audit_logs (deal_id, user_id, action, changes_json)
@@ -849,7 +929,10 @@ DECLARE
   v_db_partner_name TEXT;
   v_rko_recipient TEXT;
   v_expected_amount_minor BIGINT;
+  v_prev_rko_id BIGINT;
+  v_prev_rko_ref TEXT;
   v_new_rko_ref TEXT;
+  v_next_seq INTEGER;
   v_has_other_pending BOOLEAN := FALSE;
   v_next_status TEXT;
   v_now TIMESTAMPTZ := NOW();
@@ -907,6 +990,10 @@ BEGIN
     SELECT 1 FROM public.marketing_commission_operations
     WHERE rko_expense_id = p_new_rko_expense_id
        OR reconciled_rko_expense_id = p_new_rko_expense_id
+  ) OR EXISTS (
+    SELECT 1 FROM public.marketing_commission_rko_history
+    WHERE rko_expense_id = p_new_rko_expense_id
+      AND event_type IN ('INITIAL_PAYOUT', 'REPLACEMENT_RKO')
   ) THEN
     RAISE EXCEPTION 'RKO_ALREADY_LINKED: Этот РКО уже привязан к выплате комиссии';
   END IF;
@@ -979,6 +1066,8 @@ BEGIN
     RAISE EXCEPTION 'RKO_AMOUNT_MISMATCH: Сумма нового РКО (%) не совпадает с невозвращённой суммой выплаты (%)', v_new_rko.amount_minor, v_expected_amount_minor;
   END IF;
 
+  v_prev_rko_id := COALESCE(v_op.reconciled_rko_expense_id, v_op.rko_expense_id);
+  v_prev_rko_ref := COALESCE(v_op.reconciled_rko_reference, v_op.rko_reference);
   v_new_rko_ref := COALESCE(NULLIF(TRIM(v_new_rko.reference), ''), 'РКО-' || v_new_rko.id::TEXT);
 
   UPDATE public.marketing_commission_operations
@@ -986,6 +1075,21 @@ BEGIN
       reconciled_rko_expense_id = p_new_rko_expense_id,
       reconciled_rko_reference = v_new_rko_ref
   WHERE id = v_op.id;
+
+  SELECT COALESCE(MAX(sequence_no), 0) + 1
+  INTO v_next_seq
+  FROM public.marketing_commission_rko_history
+  WHERE payout_operation_id = p_payout_operation_id;
+
+  INSERT INTO public.marketing_commission_rko_history (
+    deal_id, payout_operation_id, sequence_no, event_type,
+    rko_expense_id, rko_reference, previous_rko_expense_id, previous_rko_reference,
+    status, reason, created_by, created_at
+  ) VALUES (
+    p_deal_id, p_payout_operation_id, v_next_seq, 'REPLACEMENT_RKO',
+    p_new_rko_expense_id, v_new_rko_ref, v_prev_rko_id, v_prev_rko_ref,
+    'ACTIVE', v_reason, p_actor_id, v_now
+  );
 
   SELECT EXISTS (
     SELECT 1 FROM public.marketing_commission_operations
@@ -1015,9 +1119,12 @@ BEGIN
     'deal_id', p_deal_id,
     'action_type', 'RECONCILE_PAYOUT_RKO',
     'payout_operation_id', p_payout_operation_id,
-    'old_rko_expense_id', v_op.rko_expense_id,
+    'initial_rko_expense_id', v_op.rko_expense_id,
+    'old_rko_expense_id', v_prev_rko_id,
+    'old_rko_reference', v_prev_rko_ref,
     'new_rko_expense_id', p_new_rko_expense_id,
     'new_rko_reference', v_new_rko_ref,
+    'rko_history_sequence', v_next_seq,
     'paid_amount_minor', v_comm.paid_amount_minor,
     'reconciliation_required', v_has_other_pending,
     'status', v_next_status,
@@ -1040,10 +1147,12 @@ BEGIN
     jsonb_build_object(
       'action_type', 'RECONCILE_PAYOUT_RKO',
       'payout_operation_id', p_payout_operation_id,
-      'old_rko_expense_id', v_op.rko_expense_id,
-      'old_rko_reference', v_op.rko_reference,
+      'initial_rko_expense_id', v_op.rko_expense_id,
+      'old_rko_expense_id', v_prev_rko_id,
+      'old_rko_reference', v_prev_rko_ref,
       'new_rko_expense_id', p_new_rko_expense_id,
       'new_rko_reference', v_new_rko_ref,
+      'rko_history_sequence', v_next_seq,
       'paid_amount_minor', v_comm.paid_amount_minor,
       'reconciliation_required', v_has_other_pending,
       'status', v_next_status,
@@ -1076,6 +1185,8 @@ DECLARE
   v_op RECORD;
   v_comm RECORD;
   v_next_status TEXT;
+  v_next_seq INTEGER;
+  v_voided_rko_ref TEXT;
 BEGIN
   IF (NEW.voided_at IS NOT NULL AND OLD.voided_at IS NULL)
      OR (UPPER(COALESCE(NEW.status, '')) IN ('VOIDED', 'CANCELLED', 'REVERSED')
@@ -1083,7 +1194,7 @@ BEGIN
     FOR v_candidate IN
       SELECT id, deal_id
       FROM public.marketing_commission_operations
-      WHERE (rko_expense_id = NEW.id OR reconciled_rko_expense_id = NEW.id)
+      WHERE COALESCE(reconciled_rko_expense_id, rko_expense_id) = NEW.id
         AND action_type = 'RECORD_PAYOUT'
         AND reconciliation_status IN ('OK', 'RECONCILED_NEW_RKO')
       ORDER BY deal_id, id
@@ -1112,6 +1223,30 @@ BEGIN
       WHERE id = v_op.id;
 
       IF FOUND THEN
+        v_voided_rko_ref := COALESCE(
+          NULLIF(TRIM(NEW.reference), ''),
+          CASE WHEN v_op.reconciled_rko_expense_id = NEW.id THEN v_op.reconciled_rko_reference ELSE v_op.rko_reference END,
+          'РКО-' || NEW.id::TEXT
+        );
+
+        SELECT COALESCE(MAX(sequence_no), 0) + 1
+        INTO v_next_seq
+        FROM public.marketing_commission_rko_history
+        WHERE payout_operation_id = v_op.id;
+
+        INSERT INTO public.marketing_commission_rko_history (
+          deal_id, payout_operation_id, sequence_no, event_type,
+          rko_expense_id, rko_reference, previous_rko_expense_id, previous_rko_reference,
+          status, reason, created_by, created_at
+        ) VALUES (
+          v_op.deal_id, v_op.id, v_next_seq, 'RKO_VOIDED',
+          NEW.id, v_voided_rko_ref, NULL, NULL,
+          'VOIDED_RECONCILIATION_REQUIRED',
+          COALESCE(NULLIF(TRIM(NEW.void_reason), ''), 'РКО аннулирован в кассовом учёте'),
+          NEW.voided_by,
+          COALESCE(NEW.voided_at, NOW())
+        );
+
         v_next_status := CASE
           WHEN v_comm.status = 'CANCELLED' THEN 'CANCELLED'
           ELSE 'RECONCILIATION_REQUIRED'
@@ -1128,13 +1263,14 @@ BEGIN
         INSERT INTO public.deal_audit_logs (deal_id, user_id, action, changes_json)
         VALUES (
           v_op.deal_id,
-          NULL,
+          NEW.voided_by,
           'UPDATE_COMMISSION_STATUS',
           jsonb_build_object(
             'action_type', 'RKO_VOIDED_RECONCILIATION_REQUIRED',
             'payout_operation_id', v_op.id,
             'rko_expense_id', NEW.id,
-            'rko_reference', COALESCE(v_op.reconciled_rko_reference, v_op.rko_reference),
+            'rko_reference', v_voided_rko_ref,
+            'rko_history_sequence', v_next_seq,
             'preserved_paid_amount_minor', v_comm.paid_amount_minor,
             'paid_amount_minor', v_comm.paid_amount_minor,
             'status', v_next_status,
