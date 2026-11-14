@@ -7,10 +7,69 @@ import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { resolveCashDeskAccess } from '../../middleware/cashDeskAuth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
+import rateLimit from 'express-rate-limit';
+import { buyerIdentity,buyerMaterials,buyerCommunications } from '../buyer-portal/instance.js';
+import multer from 'multer';
+import { buyerEnabled, BuyerPortalError } from '../buyer-portal/identity.service.js';
 
 const router = express.Router();
 
 router.use(protect);
+router.use('/:id/buyer-inquiries',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404));
+const buyerCommunicationRun=fn=>async(req,res)=>{
+ res.set('Cache-Control','no-store');
+ try{res.json({data:await fn(req)});}catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_COMMUNICATION_UNAVAILABLE'});}
+};
+router.use('/:id/buyer-notices',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404));
+router.get('/:id/buyer-notices',buyerCommunicationRun(req=>buyerCommunications.staffNotices(parseRequiredBigInt(req.params.id,'id'),req.user)));
+router.get('/:id/buyer-inquiries',buyerCommunicationRun(req=>buyerCommunications.staffList(parseRequiredBigInt(req.params.id,'id'),req.user)));
+router.post('/:id/buyer-inquiries/reply',buyerCommunicationRun(req=>buyerCommunications.reply(parseRequiredBigInt(req.params.id,'id'),req.user,req.body||{})));
+const buyerUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024,files:1,fields:5}}).single('file');
+router.use('/:id/buyer-documents',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404));
+const buyerDocumentRun=fn=>async(req,res)=>{
+ res.set('Cache-Control','no-store');
+ try{res.json({data:await fn(req)});}catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_DOCUMENT_UNAVAILABLE'});}
+};
+router.get('/:id/buyer-documents',buyerDocumentRun(req=>buyerMaterials.staffList(parseRequiredBigInt(req.params.id,'id'),req.user)));
+router.post('/:id/buyer-documents',rateLimit({windowMs:15*60000,limit:20,keyGenerator:req=>String(req.user.id)}),async(req,res,next)=>{
+ try{const deal=await buyerIdentity.repo.deal(parseRequiredBigInt(req.params.id,'id'));buyerIdentity.assertStaff(req.user,deal);next();}
+ catch{res.status(403).json({message:'BUYER_ACCESS_DENIED'});}
+},(req,res,next)=>buyerUpload(req,res,error=>error?res.status(400).json({message:'BUYER_DOCUMENT_INVALID'}):next()),buyerDocumentRun(req=>buyerMaterials.upload(parseRequiredBigInt(req.params.id,'id'),req.user,req.body,req.file)));
+router.post('/:id/buyer-documents/:documentId/action',buyerDocumentRun(req=>buyerMaterials.publish(parseRequiredBigInt(req.params.id,'id'),req.params.documentId,req.user,req.body?.action)));
+router.post('/:id/buyer-documents/:documentId/file',async(req,res)=>{
+ try{const file=await buyerMaterials.staffAsset(parseRequiredBigInt(req.params.id,'id'),req.user,req.params.documentId);
+ res.set({'Content-Type':file.mime,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Disposition':`attachment; filename="${file.filename}"`}).send(file.buffer);
+ }catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:'BUYER_DOCUMENT_UNAVAILABLE'});}
+});
+
+router.use('/:id/buyer-participants',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404));
+router.get('/:id/buyer-participants/candidate/:leadId',buyerCommunicationRun(req=>buyerIdentity.participantCandidate(parseRequiredBigInt(req.params.id,'id'),req.user,req.params.leadId)));
+router.get('/:id/buyer-participants',buyerCommunicationRun(req=>buyerIdentity.participantList(parseRequiredBigInt(req.params.id,'id'),req.user)));
+router.post('/:id/buyer-participants',buyerCommunicationRun(req=>buyerIdentity.addParticipant(parseRequiredBigInt(req.params.id,'id'),req.user,req.body||{})));
+router.post('/:id/buyer-participants/:participantId/revoke',buyerCommunicationRun(req=>buyerIdentity.revokeParticipant(parseRequiredBigInt(req.params.id,'id'),req.user,req.params.participantId)));
+
+router.get('/:id/buyer-status',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404),async(req,res)=>{
+  res.set('Cache-Control','no-store');
+  try {res.json({data:await buyerIdentity.staffStatus(parseRequiredBigInt(req.params.id,'id'),req.user,req.query?.participantId)});}
+  catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'});}
+});
+
+router.post('/:id/buyer-invites',
+  (req,res,next)=>buyerEnabled()?next():res.sendStatus(404),
+  rateLimit({windowMs:15*60000,limit:20,keyGenerator:req=>String(req.user.id)}),
+  async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    try { res.status(201).json({data:await buyerIdentity.createInvite(req.params.id,req.user,req.body?.participantId)}); }
+    catch(e) { res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'}); }
+  });
+
+router.post('/:id/buyer-unlink',
+  (req,res,next)=>buyerEnabled()?next():res.sendStatus(404),
+  async(req,res)=>{
+    res.set('Cache-Control','no-store');
+    try { res.json({data:await buyerIdentity.unlink(parseRequiredBigInt(req.params.id,'id'),req.user)}); }
+    catch(e) { res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_SERVICE_UNAVAILABLE'}); }
+  });
 
 router.get('/stats', async (req, res, next) => {
   try {

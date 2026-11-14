@@ -1,4 +1,5 @@
 import { passportBridge } from '../passport-bridge/service.js';
+import { buyerBot } from '../buyer-portal/instance.js';
 import {syncSheets} from './sheets-sync.js';
 import crypto from 'node:crypto';
 import { buildReport, renderReport, periodFor, validDay, localDay, dailyDue, splitMessage } from './report.js';
@@ -44,7 +45,10 @@ export class TelegramAPI {
   }
   async send(chatId, text, markup, options={}) {
     const parts = splitMessage(text);
-    for (let i = 0; i < parts.length; i++) await this.call('sendMessage', { chat_id: chatId, text: parts[i], ...(options.html?{parse_mode:'HTML'}:{}),reply_markup:withMainMenu(i===parts.length-1?markup:undefined) });
+    for (let i = 0; i < parts.length; i++) {
+      const buttons=i===parts.length-1?markup:undefined;
+      await this.call('sendMessage', { chat_id: chatId, text: parts[i], ...(options.html?{parse_mode:'HTML'}:{}),reply_markup:options.mainMenu===false?buttons:withMainMenu(buttons) });
+    }
   }
 }
 
@@ -67,8 +71,14 @@ export class FinanceBot {
     const sender = callback?.from || message?.from;
     if (!sender || sender.is_bot || message?.chat?.type !== 'private' || String(message.chat.id) !== String(sender.id)) return;
     if (callback) await this.api.call('answerCallbackQuery', { callback_query_id: callback.id });
+    if (await buyerBot.handle(update,this.api,{onlyExplicit:true})) return;
     if (await this.passport.handle(update, this.api)) return;
     const text = message.text || '';
+    // Existing approved employees retain their finance menu. Buyer identity grants no finance role.
+    if (process.env.BUYER_PORTAL_ENABLED==='true') {
+      const employee=await this.repo.find(sender.id);
+      if (employee?.status!=='APPROVED' && await buyerBot.handle(update,this.api)) return;
+    }
     if (!callback && /^\/start(?:\s|$)/.test(text)) await this.repo.register(sender);
     const user = await this.repo.find(sender.id);
     if (user?.status !== 'APPROVED') {
@@ -211,10 +221,12 @@ export class FinanceBot {
   }
   async start() {
     const bot = await this.api.call('getMe');
-    if (bot.username?.toLowerCase() !== 'tozonfinancebot') throw new Error('UNEXPECTED_FINANCE_BOT');
-    await this.repo.state();
-    const url = process.env.TELEGRAM_FINANCE_WEBHOOK_URL || 'https://tozon-backend.onrender.com/api/telegram-finance/webhook';
+    const expected=(process.env.TELEGRAM_FINANCE_BOT_USERNAME||'tozonfinancebot').replace(/^@/,'').toLowerCase();
+    if (!/^[a-z0-9_]{5,32}$/.test(expected) || bot.username?.toLowerCase() !== expected) throw new Error('UNEXPECTED_FINANCE_BOT');
+    // A separately configured bot must never inherit the production webhook implicitly.
+    const url=process.env.TELEGRAM_FINANCE_WEBHOOK_URL||(expected==='tozonfinancebot'?'https://tozon-backend.onrender.com/api/telegram-finance/webhook':'');
     if (!url.startsWith('https://')) throw new Error('HTTPS_WEBHOOK_REQUIRED');
+    await this.repo.state();
     const webhook = await this.api.call('getWebhookInfo');
     if (webhook.url && webhook.url !== url) throw new Error('FINANCE_BOT_WEBHOOK_CONFLICT');
     await this.api.call('setWebhook', { url, secret_token: webhookSecret(this.api.token), allowed_updates: ['message', 'callback_query'] });

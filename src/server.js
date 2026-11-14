@@ -4,6 +4,7 @@ import { runTour30StageIfEnabled } from './operations/runTour30Stage.js';
 import { startFinanceBot } from './modules/telegram-finance/start.js';
 import { DistributionSettingsService } from './modules/leads/distributionSettings.service.js';
 import { startInstagramInboxSync } from './modules/integrations/instagram-live.service.js';
+import {buyerNotifications} from './modules/buyer-portal/instance.js';
 
 const PORT = process.env.PORT || 3000;
 
@@ -23,6 +24,9 @@ const startServer = async () => {
     app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
       startFinanceBot();
+      buyerNotifications.start();
+      process.once('SIGTERM',()=>void buyerNotifications.stop());
+      process.once('SIGINT',()=>void buyerNotifications.stop());
       startInstagramInboxSync();
       runTour30StageIfEnabled().catch(error => console.error('TOUR30_STORAGE_STAGE_FAILED', error.message));
     });

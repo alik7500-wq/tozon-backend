@@ -1,5 +1,6 @@
 import { getServiceDB } from '../../db/connection.js';
 import { actualOperation } from './report.js';
+import { protectBuyerUpdate } from '../buyer-portal/queue-privacy.js';
 
 const checked = result => { if (result.error) throw result.error; return result.data; };
 export class TelegramFinanceRepository {
@@ -62,7 +63,7 @@ export class TelegramFinanceRepository {
   async finishSheetJob(id,status) { return checked(await this.db.from('telegram_finance_sheet_outbox').update({status,sent_at:status==='SENT'?new Date().toISOString():null}).eq('id',id)); }
   async retrySheetJob(id,attempts) { return checked(await this.db.from('telegram_finance_sheet_outbox').update({attempts,next_attempt_at:new Date(Date.now()+Math.min(3600000,30000*2**Math.min(attempts,7))).toISOString()}).eq('id',id)); }
   async enqueue(update) {
-    const result = await this.db.from('telegram_finance_updates').insert({ update_id: update.update_id, payload: update });
+    const result = await this.db.from('telegram_finance_updates').insert({ update_id: update.update_id, payload: protectBuyerUpdate(update) });
     if (result.error?.code === '23505') return;
     checked(result);
   }

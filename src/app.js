@@ -23,6 +23,8 @@ import inventoryRouter from './modules/inventory/inventory.router.js';
 import visualMapsRouter from './modules/visual-maps/visual-maps.router.js';
 import leadsRouter from './modules/leads/leads.router.js';
 import dealsRouter from './modules/deals/deals.router.js';
+import { createBuyerRouter } from './modules/buyer-portal/router.js';
+import { buyerIdentity,buyerMaterials,buyerCommunications } from './modules/buyer-portal/instance.js';
 import dashboardRouter from './modules/dashboard/dashboard.router.js';
 import usersRouter from './modules/users/users.router.js';
 import rolesRouter from './modules/users/roles.router.js';
@@ -75,9 +77,13 @@ app.use(pino({
     'res.headers["set-cookie"]',
     'req.headers["x-lead-intake-key"]',
     'req.headers["x-telegram-bot-api-secret-token"]',
+    'req.headers["x-telegram-init-data"]',
     'req.headers["x-webhook-secret"]',
     'req.body.secret',
-    'req.body.token'
+    'req.body.token',
+    'req.body.code',
+    'req.body.message',
+    'req.body.basis'
   ],
   autoLogging: {
     ignore: (req) => req.url === '/api/health' || req.url?.startsWith('/api/integrations/instagram/callback') || req.url?.startsWith('/api/integrations/instagram/webhook'),
@@ -111,6 +117,7 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     commit_sha: process.env.RENDER_GIT_COMMIT || null,
     finance_bot: financeBotHealth(),
+    buyer_portal: {enabled:process.env.BUYER_PORTAL_ENABLED==='true',notifications_enabled:process.env.BUYER_NOTIFICATIONS_ENABLED==='true',otp_configured:Buffer.byteLength(process.env.BUYER_OTP_SECRET||'')>=32,url_configured:Boolean(process.env.BUYER_PORTAL_URL),sms_configured:Boolean(process.env.PAYOM_API_TOKEN?.trim())&&process.env.PAYOM_MOCK_MODE!=='true',private_storage_configured:Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim())},
     integrations: {
       webhook_secret_configured: Boolean(process.env.WEBHOOK_SECRET?.trim()),
       leads_round_robin_enabled: process.env.LEADS_ROUND_ROBIN_ENABLED === 'true'
@@ -142,6 +149,7 @@ app.use('/api/inventory', layoutPresentationRouter);
 app.use('/api/visual-maps', visualMapsRouter);
 app.use('/api/leads', leadsRouter);
 app.use('/api/deals', dealsRouter);
+app.use('/api/buyer-portal', createBuyerRouter(buyerIdentity,{materials:buyerMaterials,communications:buyerCommunications}));
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/roles', rolesRouter);
