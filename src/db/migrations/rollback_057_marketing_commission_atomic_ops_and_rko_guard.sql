@@ -7,6 +7,7 @@ BEGIN;
 
 DROP TRIGGER IF EXISTS trg_guard_void_rko_linked_commission ON public.expenses;
 DROP FUNCTION IF EXISTS public.guard_void_rko_linked_commission();
+DROP FUNCTION IF EXISTS public.reconcile_marketing_commission_payout_with_rko_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.confirm_marketing_commission_payout_refund_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.record_marketing_commission_payout_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.approve_marketing_commission_atomic(BIGINT, BIGINT, TEXT, TEXT);

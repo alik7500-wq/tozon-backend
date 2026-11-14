@@ -28,6 +28,7 @@ BEGIN;
 -- Drop any legacy trigger/functions/overloads so no insecure signature remains
 DROP TRIGGER IF EXISTS trg_guard_void_rko_linked_commission ON public.expenses;
 DROP FUNCTION IF EXISTS public.guard_void_rko_linked_commission();
+DROP FUNCTION IF EXISTS public.reconcile_marketing_commission_payout_with_rko_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.confirm_marketing_commission_payout_refund_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.record_marketing_commission_payout_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT);
 DROP FUNCTION IF EXISTS public.approve_marketing_commission_atomic(BIGINT, BIGINT, BIGINT, BIGINT, INTEGER, BIGINT, BIGINT, TEXT, TEXT);
@@ -58,11 +59,14 @@ ALTER TABLE public.marketing_commissions
 CREATE TABLE IF NOT EXISTS public.marketing_commission_operations (
   id BIGSERIAL PRIMARY KEY,
   deal_id BIGINT NOT NULL REFERENCES public.deals(id) ON DELETE CASCADE,
-  action_type TEXT NOT NULL CHECK (action_type IN ('APPROVE', 'RECORD_PAYOUT', 'CONFIRM_PAYOUT_REFUND', 'CANCEL')),
+  action_type TEXT NOT NULL CHECK (action_type IN ('APPROVE', 'RECORD_PAYOUT', 'CONFIRM_PAYOUT_REFUND', 'RECONCILE_PAYOUT_RKO', 'CANCEL')),
   amount_minor BIGINT NOT NULL DEFAULT 0 CHECK (amount_minor >= 0),
+  refunded_amount_minor BIGINT NOT NULL DEFAULT 0 CHECK (refunded_amount_minor >= 0),
   rko_expense_id BIGINT UNIQUE REFERENCES public.expenses(id) ON DELETE RESTRICT,
   rko_reference TEXT,
-  reconciliation_status TEXT NOT NULL DEFAULT 'OK' CHECK (reconciliation_status IN ('OK', 'RECONCILIATION_REQUIRED', 'REFUND_CONFIRMED')),
+  reconciliation_status TEXT NOT NULL DEFAULT 'OK' CHECK (reconciliation_status IN ('OK', 'RECONCILIATION_REQUIRED', 'REFUND_CONFIRMED', 'RECONCILED_NEW_RKO')),
+  reconciled_rko_expense_id BIGINT UNIQUE REFERENCES public.expenses(id) ON DELETE RESTRICT,
+  reconciled_rko_reference TEXT,
   refund_document_ref TEXT,
   refunded_operation_id BIGINT REFERENCES public.marketing_commission_operations(id) ON DELETE RESTRICT,
   idempotency_key TEXT NOT NULL UNIQUE,
@@ -446,6 +450,7 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM public.marketing_commission_operations
     WHERE rko_expense_id = p_rko_expense_id
+       OR reconciled_rko_expense_id = p_rko_expense_id
   ) THEN
     RAISE EXCEPTION 'RKO_ALREADY_LINKED: Этот РКО уже привязан к выплате комиссии';
   END IF;
@@ -625,6 +630,9 @@ DECLARE
   v_deal RECORD;
   v_comm RECORD;
   v_op RECORD;
+  v_remaining_op_minor BIGINT;
+  v_new_refunded_minor BIGINT;
+  v_new_op_reconciliation_status TEXT;
   v_has_other_pending BOOLEAN := FALSE;
   v_next_paid_minor BIGINT;
   v_next_status TEXT;
@@ -669,6 +677,7 @@ BEGIN
     END IF;
   END IF;
 
+  -- Canonical lock order: deals -> marketing_commissions -> marketing_commission_operations
   SELECT * INTO v_deal
   FROM public.deals
   WHERE id = p_deal_id
@@ -710,12 +719,20 @@ BEGIN
     RAISE EXCEPTION 'REFUND_DOCUMENT_ALREADY_USED: Документ возврата % уже использован для подтверждения возврата', v_doc_ref;
   END IF;
 
-  IF p_refund_amount_minor > v_op.amount_minor OR p_refund_amount_minor > v_comm.paid_amount_minor THEN
-    RAISE EXCEPTION 'REFUND_EXCEEDS_PAID: Сумма возврата (%) превышает сумму выплаты (%)', p_refund_amount_minor, LEAST(v_op.amount_minor, v_comm.paid_amount_minor);
+  v_remaining_op_minor := GREATEST(0, v_op.amount_minor - COALESCE(v_op.refunded_amount_minor, 0));
+  IF p_refund_amount_minor > v_remaining_op_minor OR p_refund_amount_minor > v_comm.paid_amount_minor THEN
+    RAISE EXCEPTION 'REFUND_EXCEEDS_PAID: Сумма возврата (%) превышает невозвращённый остаток выплаты (%)', p_refund_amount_minor, LEAST(v_remaining_op_minor, v_comm.paid_amount_minor);
   END IF;
 
+  v_new_refunded_minor := COALESCE(v_op.refunded_amount_minor, 0) + p_refund_amount_minor;
+  v_new_op_reconciliation_status := CASE
+    WHEN v_new_refunded_minor >= v_op.amount_minor THEN 'REFUND_CONFIRMED'
+    ELSE 'RECONCILIATION_REQUIRED'
+  END;
+
   UPDATE public.marketing_commission_operations
-  SET reconciliation_status = 'REFUND_CONFIRMED',
+  SET refunded_amount_minor = v_new_refunded_minor,
+      reconciliation_status = v_new_op_reconciliation_status,
       refund_document_ref = v_doc_ref
   WHERE id = v_op.id;
 
@@ -751,6 +768,9 @@ BEGIN
     'action_type', 'CONFIRM_PAYOUT_REFUND',
     'payout_operation_id', p_payout_operation_id,
     'refund_amount_minor', p_refund_amount_minor,
+    'operation_refunded_amount_minor', v_new_refunded_minor,
+    'operation_remaining_minor', GREATEST(0, v_op.amount_minor - v_new_refunded_minor),
+    'operation_reconciliation_status', v_new_op_reconciliation_status,
     'refund_document_ref', v_doc_ref,
     'paid_amount_minor', v_next_paid_minor,
     'reconciliation_required', v_has_other_pending,
@@ -777,6 +797,8 @@ BEGIN
       'rko_expense_id', v_op.rko_expense_id,
       'rko_reference', v_op.rko_reference,
       'refund_amount_minor', p_refund_amount_minor,
+      'operation_refunded_amount_minor', v_new_refunded_minor,
+      'operation_reconciliation_status', v_new_op_reconciliation_status,
       'refund_document_ref', v_doc_ref,
       'paid_amount_minor', v_next_paid_minor,
       'reconciliation_required', v_has_other_pending,
@@ -794,10 +816,254 @@ REVOKE ALL ON FUNCTION public.confirm_marketing_commission_payout_refund_atomic(
 GRANT EXECUTE ON FUNCTION public.confirm_marketing_commission_payout_refund_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT) TO service_role, postgres;
 
 -- =============================================================================
+-- Atomic RECONCILE_PAYOUT_RKO RPC (ADMIN only at app layer)
+-- Completes reconciliation when RKO was voided, money WAS actually paid to
+-- marketer, and admin links a valid replacement RKO WITHOUT moving money again.
+-- Canonical lock order: expenses -> deals -> marketing_commissions -> marketing_commission_operations
+-- =============================================================================
+CREATE OR REPLACE FUNCTION public.reconcile_marketing_commission_payout_with_rko_atomic(
+  p_deal_id BIGINT,
+  p_actor_id BIGINT,
+  p_payout_operation_id BIGINT,
+  p_new_rko_expense_id BIGINT,
+  p_expected_partner_name TEXT,
+  p_idempotency_key TEXT,
+  p_reason TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_key TEXT := NULLIF(TRIM(COALESCE(p_idempotency_key, '')), '');
+  v_norm_expected TEXT := LOWER(TRIM(COALESCE(p_expected_partner_name, '')));
+  v_reason TEXT := NULLIF(TRIM(COALESCE(p_reason, '')), '');
+  v_fingerprint TEXT;
+  v_existing_op RECORD;
+  v_new_rko RECORD;
+  v_deal RECORD;
+  v_comm RECORD;
+  v_op RECORD;
+  v_db_partner_id BIGINT;
+  v_db_partner_name TEXT;
+  v_rko_recipient TEXT;
+  v_expected_amount_minor BIGINT;
+  v_new_rko_ref TEXT;
+  v_has_other_pending BOOLEAN := FALSE;
+  v_next_status TEXT;
+  v_now TIMESTAMPTZ := NOW();
+  v_snapshot JSONB;
+BEGIN
+  IF v_key IS NULL THEN
+    RAISE EXCEPTION 'IDEMPOTENCY_KEY_REQUIRED: Параметр idempotency_key обязателен';
+  END IF;
+
+  IF p_new_rko_expense_id IS NULL THEN
+    RAISE EXCEPTION 'RKO_REQUIRED: Укажите ID нового проведённого РКО для завершения сверки';
+  END IF;
+
+  IF v_reason IS NULL OR LENGTH(v_reason) < 3 THEN
+    RAISE EXCEPTION 'RECONCILE_REASON_REQUIRED: Укажите основание завершения сверки с заменой РКО';
+  END IF;
+
+  v_fingerprint := p_deal_id::TEXT
+    || '|RECONCILE_PAYOUT_RKO|'
+    || COALESCE(p_actor_id::TEXT, '')
+    || '|' || COALESCE(p_payout_operation_id, 0)::TEXT
+    || '|' || p_new_rko_expense_id::TEXT
+    || '|' || v_norm_expected
+    || '|' || v_reason;
+
+  PERFORM pg_advisory_xact_lock(hashtextextended('mkt_comm_idemp:' || v_key, 0));
+
+  SELECT * INTO v_existing_op
+  FROM public.marketing_commission_operations
+  WHERE idempotency_key = v_key;
+
+  IF FOUND THEN
+    IF v_existing_op.request_fingerprint = v_fingerprint THEN
+      RETURN v_existing_op.response_snapshot || jsonb_build_object('idempotent', TRUE);
+    ELSE
+      RAISE EXCEPTION 'IDEMPOTENCY_CONFLICT: Ключ идемпотентности % уже использован с другими параметрами', v_key;
+    END IF;
+  END IF;
+
+  -- 1. Lock replacement RKO first
+  SELECT * INTO v_new_rko
+  FROM public.expenses
+  WHERE id = p_new_rko_expense_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'RKO_NOT_FOUND: Документ РКО #% не найден', p_new_rko_expense_id;
+  END IF;
+
+  IF v_new_rko.voided_at IS NOT NULL OR UPPER(COALESCE(v_new_rko.status, 'ACTIVE')) IN ('VOIDED', 'CANCELLED', 'REVERSED') THEN
+    RAISE EXCEPTION 'RKO_VOIDED: Нельзя привязать аннулированный РКО';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.marketing_commission_operations
+    WHERE rko_expense_id = p_new_rko_expense_id
+       OR reconciled_rko_expense_id = p_new_rko_expense_id
+  ) THEN
+    RAISE EXCEPTION 'RKO_ALREADY_LINKED: Этот РКО уже привязан к выплате комиссии';
+  END IF;
+
+  v_rko_recipient := NULLIF(TRIM(COALESCE(v_new_rko.recipient, '')), '');
+  IF v_rko_recipient IS NULL THEN
+    RAISE EXCEPTION 'RKO_RECIPIENT_REQUIRED: В документе РКО #% не указан получатель', p_new_rko_expense_id;
+  END IF;
+
+  -- 2. Lock Deal
+  SELECT * INTO v_deal
+  FROM public.deals
+  WHERE id = p_deal_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'DEAL_NOT_FOUND: Сделка % не найдена', p_deal_id;
+  END IF;
+
+  -- 3. Lock Commission
+  SELECT * INTO v_comm
+  FROM public.marketing_commissions
+  WHERE deal_id = p_deal_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'COMMISSION_NOT_FOUND: Запись комиссии по сделке % не найдена', p_deal_id;
+  END IF;
+
+  -- 4. Lock Payout Operation
+  SELECT * INTO v_op
+  FROM public.marketing_commission_operations
+  WHERE id = p_payout_operation_id
+    AND deal_id = p_deal_id
+    AND action_type = 'RECORD_PAYOUT'
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'PAYOUT_OPERATION_NOT_FOUND: Операция выплаты #% по сделке % не найдена', p_payout_operation_id, p_deal_id;
+  END IF;
+
+  IF v_op.reconciliation_status <> 'RECONCILIATION_REQUIRED' THEN
+    RAISE EXCEPTION 'PAYOUT_NOT_PENDING_RECONCILIATION: Операция выплаты #% не требует сверки (статус: %)', p_payout_operation_id, v_op.reconciliation_status;
+  END IF;
+
+  -- Validate partner recipient against DB
+  v_db_partner_id := COALESCE(v_comm.partner_id, v_deal.marketing_partner_id);
+  IF v_db_partner_id IS NOT NULL THEN
+    SELECT NULLIF(TRIM(name), '') INTO v_db_partner_name
+    FROM public.marketing_partners
+    WHERE id = v_db_partner_id;
+  ELSE
+    v_db_partner_name := NULLIF(TRIM(COALESCE(v_deal.marketer_name, '')), '');
+  END IF;
+
+  IF v_db_partner_name IS NULL THEN
+    RAISE EXCEPTION 'PARTNER_REQUIRED_FOR_PAYOUT: Для сверки у договора должен быть указан маркетинговый партнёр в БД';
+  END IF;
+
+  IF LOWER(v_rko_recipient) <> LOWER(v_db_partner_name) THEN
+    RAISE EXCEPTION 'RKO_RECIPIENT_MISMATCH: Получатель в новом РКО (%) не совпадает с партнёром договора в БД (%)', v_rko_recipient, v_db_partner_name;
+  END IF;
+
+  IF v_norm_expected <> '' AND v_norm_expected <> LOWER(v_db_partner_name) THEN
+    RAISE EXCEPTION 'RKO_RECIPIENT_MISMATCH: Переданный получатель (%) не совпадает с партнёром договора в БД (%)', p_expected_partner_name, v_db_partner_name;
+  END IF;
+
+  v_expected_amount_minor := GREATEST(0, v_op.amount_minor - COALESCE(v_op.refunded_amount_minor, 0));
+  IF COALESCE(v_new_rko.amount_minor, 0) <> v_expected_amount_minor THEN
+    RAISE EXCEPTION 'RKO_AMOUNT_MISMATCH: Сумма нового РКО (%) не совпадает с невозвращённой суммой выплаты (%)', v_new_rko.amount_minor, v_expected_amount_minor;
+  END IF;
+
+  v_new_rko_ref := COALESCE(NULLIF(TRIM(v_new_rko.reference), ''), 'РКО-' || v_new_rko.id::TEXT);
+
+  UPDATE public.marketing_commission_operations
+  SET reconciliation_status = 'RECONCILED_NEW_RKO',
+      reconciled_rko_expense_id = p_new_rko_expense_id,
+      reconciled_rko_reference = v_new_rko_ref
+  WHERE id = v_op.id;
+
+  SELECT EXISTS (
+    SELECT 1 FROM public.marketing_commission_operations
+    WHERE deal_id = p_deal_id
+      AND action_type = 'RECORD_PAYOUT'
+      AND reconciliation_status = 'RECONCILIATION_REQUIRED'
+  ) INTO v_has_other_pending;
+
+  -- paid_amount_minor is PRESERVED (zero duplicate money movement!)
+  v_next_status := CASE
+    WHEN v_has_other_pending THEN 'RECONCILIATION_REQUIRED'
+    WHEN v_comm.status = 'CANCELLED' THEN 'CANCELLED'
+    WHEN v_comm.paid_amount_minor >= v_comm.approved_amount_minor AND v_comm.approved_amount_minor > 0 THEN 'PAID'
+    WHEN v_comm.paid_amount_minor > 0 THEN 'PARTIALLY_PAID'
+    WHEN v_comm.approved_amount_minor > 0 THEN 'APPROVED'
+    ELSE 'CALCULATED'
+  END;
+
+  UPDATE public.marketing_commissions
+  SET reconciliation_required = v_has_other_pending,
+      reconciliation_reason = CASE WHEN v_has_other_pending THEN v_comm.reconciliation_reason ELSE NULL END,
+      status = v_next_status,
+      updated_at = v_now
+  WHERE deal_id = p_deal_id;
+
+  v_snapshot := jsonb_build_object(
+    'deal_id', p_deal_id,
+    'action_type', 'RECONCILE_PAYOUT_RKO',
+    'payout_operation_id', p_payout_operation_id,
+    'old_rko_expense_id', v_op.rko_expense_id,
+    'new_rko_expense_id', p_new_rko_expense_id,
+    'new_rko_reference', v_new_rko_ref,
+    'paid_amount_minor', v_comm.paid_amount_minor,
+    'reconciliation_required', v_has_other_pending,
+    'status', v_next_status,
+    'idempotent', FALSE
+  );
+
+  INSERT INTO public.marketing_commission_operations (
+    deal_id, action_type, amount_minor, refunded_operation_id,
+    idempotency_key, request_fingerprint, response_snapshot, notes, created_by
+  ) VALUES (
+    p_deal_id, 'RECONCILE_PAYOUT_RKO', 0, p_payout_operation_id,
+    v_key, v_fingerprint, v_snapshot, v_reason, p_actor_id
+  );
+
+  INSERT INTO public.deal_audit_logs (deal_id, user_id, action, changes_json)
+  VALUES (
+    p_deal_id,
+    p_actor_id,
+    'UPDATE_COMMISSION_STATUS',
+    jsonb_build_object(
+      'action_type', 'RECONCILE_PAYOUT_RKO',
+      'payout_operation_id', p_payout_operation_id,
+      'old_rko_expense_id', v_op.rko_expense_id,
+      'old_rko_reference', v_op.rko_reference,
+      'new_rko_expense_id', p_new_rko_expense_id,
+      'new_rko_reference', v_new_rko_ref,
+      'paid_amount_minor', v_comm.paid_amount_minor,
+      'reconciliation_required', v_has_other_pending,
+      'status', v_next_status,
+      'idempotency_key', v_key,
+      'notes', v_reason
+    )
+  );
+
+  RETURN v_snapshot;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.reconcile_marketing_commission_payout_with_rko_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reconcile_marketing_commission_payout_with_rko_atomic(BIGINT, BIGINT, BIGINT, BIGINT, TEXT, TEXT, TEXT) TO service_role, postgres;
+
+-- =============================================================================
 -- Trigger: When a linked RKO is voided in cash accounting, DO NOT auto-reduce
 -- `paid_amount_minor`. Mark operation & commission as RECONCILIATION_REQUIRED,
 -- preserve paid amount to block duplicate payout, and log audit warning.
--- Canonical lock order: (expenses locked by UPDATE) -> marketing_commission_operations -> deals -> marketing_commissions
+-- Canonical lock order: (expenses locked by UPDATE) -> deals -> marketing_commissions -> marketing_commission_operations
 -- =============================================================================
 CREATE OR REPLACE FUNCTION public.guard_void_rko_linked_commission()
 RETURNS TRIGGER
@@ -806,6 +1072,7 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
+  v_candidate RECORD;
   v_op RECORD;
   v_comm RECORD;
   v_next_status TEXT;
@@ -813,28 +1080,36 @@ BEGIN
   IF (NEW.voided_at IS NOT NULL AND OLD.voided_at IS NULL)
      OR (UPPER(COALESCE(NEW.status, '')) IN ('VOIDED', 'CANCELLED', 'REVERSED')
          AND UPPER(COALESCE(OLD.status, 'ACTIVE')) NOT IN ('VOIDED', 'CANCELLED', 'REVERSED')) THEN
-    FOR v_op IN
-      SELECT * FROM public.marketing_commission_operations
-      WHERE rko_expense_id = NEW.id
+    FOR v_candidate IN
+      SELECT id, deal_id
+      FROM public.marketing_commission_operations
+      WHERE (rko_expense_id = NEW.id OR reconciled_rko_expense_id = NEW.id)
         AND action_type = 'RECORD_PAYOUT'
-        AND voided_at IS NULL
-        AND reconciliation_status = 'OK'
-      ORDER BY id
-      FOR UPDATE
+        AND reconciliation_status IN ('OK', 'RECONCILED_NEW_RKO')
+      ORDER BY deal_id, id
     LOOP
-      UPDATE public.marketing_commission_operations
-      SET voided_at = NOW(),
-          void_reason = 'РКО аннулирован в кассовом учёте (требуется сверка)',
-          reconciliation_status = 'RECONCILIATION_REQUIRED'
-      WHERE id = v_op.id;
-
-      -- Lock deal before marketing_commissions to match RPC lock order
-      PERFORM 1 FROM public.deals WHERE id = v_op.deal_id FOR UPDATE;
+      -- Canonical lock order: deals -> marketing_commissions -> marketing_commission_operations
+      PERFORM 1 FROM public.deals WHERE id = v_candidate.deal_id FOR UPDATE;
 
       SELECT * INTO v_comm
       FROM public.marketing_commissions
-      WHERE deal_id = v_op.deal_id
+      WHERE deal_id = v_candidate.deal_id
       FOR UPDATE;
+
+      SELECT * INTO v_op
+      FROM public.marketing_commission_operations
+      WHERE id = v_candidate.id
+      FOR UPDATE;
+
+      IF NOT FOUND OR v_op.reconciliation_status NOT IN ('OK', 'RECONCILED_NEW_RKO') THEN
+        CONTINUE;
+      END IF;
+
+      UPDATE public.marketing_commission_operations
+      SET voided_at = COALESCE(voided_at, NOW()),
+          void_reason = 'РКО аннулирован в кассовом учёте (требуется сверка)',
+          reconciliation_status = 'RECONCILIATION_REQUIRED'
+      WHERE id = v_op.id;
 
       IF FOUND THEN
         v_next_status := CASE
@@ -846,7 +1121,7 @@ BEGIN
         UPDATE public.marketing_commissions
         SET status = v_next_status,
             reconciliation_required = TRUE,
-            reconciliation_reason = 'РКО ' || COALESCE(v_op.rko_reference, '#' || NEW.id::TEXT) || ' аннулирован в кассовом учёте; выплаченная сумма сохранена до подтверждения фактического возврата денег',
+            reconciliation_reason = 'РКО #' || NEW.id::TEXT || ' аннулирован в кассовом учёте; выплаченная сумма сохранена до подтверждения фактического возврата денег или привязки нового РКО',
             updated_at = NOW()
         WHERE deal_id = v_op.deal_id;
 
@@ -859,12 +1134,12 @@ BEGIN
             'action_type', 'RKO_VOIDED_RECONCILIATION_REQUIRED',
             'payout_operation_id', v_op.id,
             'rko_expense_id', NEW.id,
-            'rko_reference', v_op.rko_reference,
+            'rko_reference', COALESCE(v_op.reconciled_rko_reference, v_op.rko_reference),
             'preserved_paid_amount_minor', v_comm.paid_amount_minor,
             'paid_amount_minor', v_comm.paid_amount_minor,
             'status', v_next_status,
             'reconciliation_required', TRUE,
-            'notes', 'Внимание администратору: РКО аннулирован в кассовом учёте. Сумма фактической выплаты сохранена; требуется сверка или подтверждение возврата (CONFIRM_PAYOUT_REFUND).'
+            'notes', 'Внимание администратору: РКО аннулирован в кассовом учёте. Сумма фактической выплаты сохранена; требуется сверка (CONFIRM_PAYOUT_REFUND или RECONCILE_PAYOUT_RKO).'
           )
         );
       END IF;

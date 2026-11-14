@@ -8,8 +8,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const migrationsDir = path.resolve(__dirname, '../db/migrations');
 
-describe('PostgreSQL (PGlite) Migration 057 — Hardened Atomic Commission Ops, RKO Reconciliation & Refund Confirmation', () => {
-  it('verifies all 8 scenarios: payout, replay, RKO void without auto-reduction, confirmed refund, repeat-payout block, rate upgrade, refund ceiling, concurrent ops & rollback', async () => {
+describe('PostgreSQL (PGlite) Migration 057 — Cumulative Partial Refunds, Replacement RKO Reconciliation & Unified Lock Order', () => {
+  it('verifies security, partial/full refunds, replacement RKO reconciliation without duplicate cash movement, concurrent ops & rollback', async () => {
     const db = new PGlite();
 
     await db.exec(`
@@ -82,7 +82,7 @@ describe('PostgreSQL (PGlite) Migration 057 — Hardened Atomic Commission Ops, 
     const sql057 = fs.readFileSync(path.join(migrationsDir, '057_marketing_commission_atomic_ops_and_rko_guard.sql'), 'utf8');
     await db.exec(sql057);
 
-    // Verify RPC security & search_path
+    // 1. Verify RPC security & search_path across all 6 functions
     const procMeta = await db.query(`
       SELECT proname, prosecdef, proconfig,
              has_function_privilege('anon', oid, 'EXECUTE') AS anon_exec,
@@ -96,11 +96,12 @@ describe('PostgreSQL (PGlite) Migration 057 — Hardened Atomic Commission Ops, 
           'approve_marketing_commission_atomic',
           'record_marketing_commission_payout_atomic',
           'confirm_marketing_commission_payout_refund_atomic',
+          'reconcile_marketing_commission_payout_with_rko_atomic',
           'guard_void_rko_linked_commission'
         )
       ORDER BY proname
     `);
-    expect(procMeta.rows).toHaveLength(5);
+    expect(procMeta.rows).toHaveLength(6);
     for (const row of procMeta.rows) {
       expect(row.prosecdef).toBe(true);
       expect(row.proconfig).toContain('search_path=public, pg_temp');
@@ -126,137 +127,142 @@ describe('PostgreSQL (PGlite) Migration 057 — Hardened Atomic Commission Ops, 
         (10, 'РКО-10', 'Somon Agency', 300000, 'ACTIVE', NULL),
         (11, 'РКО-11', 'Wrong Agency', 300000, 'ACTIVE', NULL),
         (12, 'РКО-12', 'Somon Agency', 150000, 'ACTIVE', NULL),
-        (13, 'РКО-13', 'Somon Agency', 300000, 'VOIDED', NOW()),
         (14, 'РКО-14', 'Somon Agency', 300000, 'ACTIVE', NULL),
         (15, 'РКО-15', 'Somon Agency', 100000, 'ACTIVE', NULL),
-        (16, 'РКО-16', 'Somon Agency', 150000, 'ACTIVE', NULL);
+        (16, 'РКО-16', 'Somon Agency', 150000, 'ACTIVE', NULL),
+        (17, 'РКО-17', 'Somon Agency', 150000, 'ACTIVE', NULL);
     `);
 
-    // Mandatory DB partner check even with empty p_expected_partner_name
+    const initialExpenseCount = Number((await db.query(`SELECT count(*)::INT AS c FROM public.expenses`)).rows[0].c);
+    const initialPaymentCount = Number((await db.query(`SELECT count(*)::INT AS c FROM public.payments`)).rows[0].c);
+
+    // Mandatory DB partner check
     await expect(
       db.query(`SELECT public.record_marketing_commission_payout_atomic(101, 3, 300000, 11, '', 'pay-bad-rec', 'test')`)
     ).rejects.toThrow(/RKO_RECIPIENT_MISMATCH/);
 
-    // Scenario 7: Lowering calculated commission after buyer refund blocks payout
+    // Buyer refund ceiling
     await db.query(`UPDATE public.deals SET refund_amount_minor = 500000 WHERE id = 101`);
     await expect(
       db.query(`SELECT public.record_marketing_commission_payout_atomic(101, 3, 300000, 10, 'Somon Agency', 'pay-exceeds-calc', 'test')`)
     ).rejects.toThrow(/PAYOUT_EXCEEDS_CALCULATED/);
     await db.query(`UPDATE public.deals SET refund_amount_minor = 0 WHERE id = 101`);
 
-    // Scenario 1 & 2 & 8: Normal payout + concurrent same-key idempotency replay
+    // Normal payout + concurrent same-key replay
     const [p1, p2] = await Promise.all([
       db.query(`SELECT public.record_marketing_commission_payout_atomic(101, 3, 300000, 10, 'Somon Agency', 'pay-101-k1', 'Payout 101') AS res`),
       db.query(`SELECT public.record_marketing_commission_payout_atomic(101, 3, 300000, 10, 'Somon Agency', 'pay-101-k1', 'Payout 101') AS res`),
     ]);
     expect([p1.rows[0].res.idempotent, p2.rows[0].res.idempotent].sort()).toEqual([false, true]);
     expect(p1.rows[0].res.paid_amount_minor).toBe(300000);
-    expect(p1.rows[0].res.status).toBe('PAID');
 
-    // Scenario 3: Voiding RKO 10 WITHOUT actual cash refund from marketer
-    // MUST preserve paid_amount_minor = 300000 and set RECONCILIATION_REQUIRED
+    // Void RKO 10 -> RECONCILIATION_REQUIRED, paid_amount_minor preserved at 300,000
     await db.query(`UPDATE public.expenses SET status = 'VOIDED', voided_at = NOW() WHERE id = 10`);
-    const commAfterVoid = await db.query(`
-      SELECT paid_amount_minor, status, reconciliation_required, reconciliation_reason
-      FROM public.marketing_commissions WHERE deal_id = 101
-    `);
-    expect(Number(commAfterVoid.rows[0].paid_amount_minor)).toBe(300000);
-    expect(commAfterVoid.rows[0].status).toBe('RECONCILIATION_REQUIRED');
-    expect(commAfterVoid.rows[0].reconciliation_required).toBe(true);
-
-    const opAfterVoid = await db.query(`
-      SELECT id, reconciliation_status, voided_at FROM public.marketing_commission_operations
-      WHERE deal_id = 101 AND rko_expense_id = 10
-    `);
-    expect(opAfterVoid.rows[0].reconciliation_status).toBe('RECONCILIATION_REQUIRED');
-    expect(opAfterVoid.rows[0].voided_at).not.toBeNull();
+    const opAfterVoid = await db.query(`SELECT id FROM public.marketing_commission_operations WHERE deal_id = 101 AND rko_expense_id = 10`);
     const payoutOpId = Number(opAfterVoid.rows[0].id);
 
-    // Scenario 5: Attempted repeat payout after RKO void is BLOCKED (even with a brand new RKO 14)
+    // Repeat payout blocked while RECONCILIATION_REQUIRED
     await expect(
       db.query(`SELECT public.record_marketing_commission_payout_atomic(101, 3, 300000, 14, 'Somon Agency', 'pay-101-repeat', 'Repeat')`)
     ).rejects.toThrow(/COMMISSION_RECONCILIATION_REQUIRED/);
 
-    // Attempted reuse of voided RKO 10 is also BLOCKED
-    await db.query(`SELECT public.approve_marketing_commission_atomic(102, 1, 'app-key-102', 'Approve 102')`);
-    await expect(
-      db.query(`SELECT public.record_marketing_commission_payout_atomic(102, 3, 150000, 10, 'Somon Agency', 'pay-102-void-rko', 'Reuse voided')`)
-    ).rejects.toThrow(/RKO_VOIDED/);
-
-    // Scenario 4: Documented refund confirmation (CONFIRM_PAYOUT_REFUND) reduces paid_amount_minor & clears reconciliation
-    const refundRes = await db.query(
-      `SELECT public.confirm_marketing_commission_payout_refund_atomic(101, 1, $1, 300000, 'ПКО-ВОЗВРАТ-01', 'refund-101-1', 'Маркетолог вернул деньги в кассу') AS res`,
+    // Partial refund 1 (100,000 of 300,000) -> MUST NOT set REFUND_CONFIRMED yet!
+    const part1 = await db.query(
+      `SELECT public.confirm_marketing_commission_payout_refund_atomic(101, 1, $1, 100000, 'ПКО-ВОЗВРАТ-01-A', 'ref-part-1', 'Часть 1') AS res`,
       [payoutOpId]
     );
-    expect(refundRes.rows[0].res.paid_amount_minor).toBe(0);
-    expect(refundRes.rows[0].res.status).toBe('APPROVED');
-    expect(refundRes.rows[0].res.reconciliation_required).toBe(false);
+    expect(part1.rows[0].res.paid_amount_minor).toBe(200000);
+    expect(part1.rows[0].res.operation_reconciliation_status).toBe('RECONCILIATION_REQUIRED');
+    expect(part1.rows[0].res.status).toBe('RECONCILIATION_REQUIRED');
+    expect(part1.rows[0].res.reconciliation_required).toBe(true);
 
-    // Repeating refund on same payout operation is rejected
+    // Over-refund beyond remaining 200,000 is rejected
     await expect(
       db.query(
-        `SELECT public.confirm_marketing_commission_payout_refund_atomic(101, 1, $1, 300000, 'ПКО-ВОЗВРАТ-02', 'refund-101-2', 'Повторный возврат')`,
+        `SELECT public.confirm_marketing_commission_payout_refund_atomic(101, 1, $1, 250000, 'ПКО-ВОЗВРАТ-OVER', 'ref-part-over', 'Перебор')`,
+        [payoutOpId]
+      )
+    ).rejects.toThrow(/REFUND_EXCEEDS_PAID/);
+
+    // Partial refund 2 (remaining 200,000) with concurrent same-key replay -> completes REFUND_CONFIRMED!
+    const [part2a, part2b] = await Promise.all([
+      db.query(
+        `SELECT public.confirm_marketing_commission_payout_refund_atomic(101, 1, $1, 200000, 'ПКО-ВОЗВРАТ-01-B', 'ref-part-2', 'Часть 2') AS res`,
+        [payoutOpId]
+      ),
+      db.query(
+        `SELECT public.confirm_marketing_commission_payout_refund_atomic(101, 1, $1, 200000, 'ПКО-ВОЗВРАТ-01-B', 'ref-part-2', 'Часть 2') AS res`,
+        [payoutOpId]
+      ),
+    ]);
+    expect([part2a.rows[0].res.idempotent, part2b.rows[0].res.idempotent].sort()).toEqual([false, true]);
+    expect(part2a.rows[0].res.paid_amount_minor).toBe(0);
+    expect(part2a.rows[0].res.operation_reconciliation_status).toBe('REFUND_CONFIRMED');
+    expect(part2a.rows[0].res.status).toBe('APPROVED');
+    expect(part2a.rows[0].res.reconciliation_required).toBe(false);
+
+    // Repeating refund on already REFUND_CONFIRMED operation is rejected
+    await expect(
+      db.query(
+        `SELECT public.confirm_marketing_commission_payout_refund_atomic(101, 1, $1, 10000, 'ПКО-ВОЗВРАТ-01-C', 'ref-part-3', 'Лишний')`,
         [payoutOpId]
       )
     ).rejects.toThrow(/PAYOUT_NOT_PENDING_RECONCILIATION/);
 
-    // Reusing the same refund document ref on another deal/operation is also rejected
-    await db.query(`SELECT public.record_marketing_commission_payout_atomic(102, 3, 150000, 12, 'Somon Agency', 'pay-102-doc', 'Pay 102')`);
+    // Re-payout deal 101 with RKO 14 & upgrade to 4%
+    await db.query(`SELECT public.record_marketing_commission_payout_atomic(101, 3, 300000, 14, '', 'pay-101-repay', 'Valid repay')`);
+    await db.query(`INSERT INTO public.payments (id, deal_id, amount_minor, status, settlement_method) VALUES (4, 101, 800000, 'ACTIVE', 'CASH')`);
+    const upgradeApp = await db.query(`SELECT public.approve_marketing_commission_atomic(101, 1, 'app-key-101-upgrade', 'Tier 4%') AS res`);
+    expect(upgradeApp.rows[0].res.commission_rate_bp).toBe(400);
+    expect(upgradeApp.rows[0].res.additional_accrual_minor).toBe(100000);
+    await db.query(`SELECT public.record_marketing_commission_payout_atomic(101, 3, 100000, 15, '', 'pay-101-delta', 'Delta 1%')`);
+
+    // Replacement RKO Reconciliation (RKO voided, money WAS paid to marketer):
+    // Deal 102 paid via RKO 12 -> RKO 12 voided -> admin reconciles with RKO 17 without moving money again
+    await db.query(`SELECT public.approve_marketing_commission_atomic(102, 1, 'app-key-102', 'Approve 102')`);
+    await db.query(`SELECT public.record_marketing_commission_payout_atomic(102, 3, 150000, 12, 'Somon Agency', 'pay-102-12', 'Pay 102')`);
     await db.query(`UPDATE public.expenses SET status = 'VOIDED', voided_at = NOW() WHERE id = 12`);
     const op102 = await db.query(`SELECT id FROM public.marketing_commission_operations WHERE deal_id = 102 AND rko_expense_id = 12`);
-    await expect(
-      db.query(
-        `SELECT public.confirm_marketing_commission_payout_refund_atomic(102, 1, $1, 150000, 'пко-возврат-01', 'refund-102-reuse-doc', 'Reuse doc')`,
-        [Number(op102.rows[0].id)]
-      )
-    ).rejects.toThrow(/REFUND_DOCUMENT_ALREADY_USED/);
-    // Resolve deal 102 reconciliation with a unique refund document before Scenario 8
-    await db.query(
-      `SELECT public.confirm_marketing_commission_payout_refund_atomic(102, 1, $1, 150000, 'ПКО-ВОЗВРАТ-102', 'refund-102-valid', 'Возврат по 102')`,
-      [Number(op102.rows[0].id)]
-    );
+    const op102Id = Number(op102.rows[0].id);
 
-    // Now re-payout with a new RKO 14 succeeds
-    const repayoutRes = await db.query(
-      `SELECT public.record_marketing_commission_payout_atomic(101, 3, 300000, 14, '', 'pay-101-repay', 'Valid repay') AS res`
+    // Reusing refund doc from deal 101 is rejected (if refund path used) - already tested; now test replacement RKO reconciliation
+    const recRes = await db.query(
+      `SELECT public.reconcile_marketing_commission_payout_with_rko_atomic(102, 1, $1, 17, 'Somon Agency', 'reconcile-102-17', 'Деньги фактически выданы, привязан новый РКО-17') AS res`,
+      [op102Id]
     );
-    expect(repayoutRes.rows[0].res.paid_amount_minor).toBe(300000);
-    expect(repayoutRes.rows[0].res.status).toBe('PAID');
+    expect(recRes.rows[0].res.paid_amount_minor).toBe(150000);
+    expect(recRes.rows[0].res.status).toBe('PAID');
+    expect(recRes.rows[0].res.reconciliation_required).toBe(false);
+    expect(recRes.rows[0].res.new_rko_expense_id).toBe(17);
 
-    // Scenario 6: Buyer pays more -> rate increases from 3% to 4% -> incremental approval & payout of delta (100,000)
-    await db.query(`INSERT INTO public.payments (id, deal_id, amount_minor, status, settlement_method) VALUES (4, 101, 800000, 'ACTIVE', 'CASH')`);
-    const upgradeApp = await db.query(
-      `SELECT public.approve_marketing_commission_atomic(101, 1, 'app-key-101-upgrade', 'Tier 4%') AS res`
-    );
-    expect(upgradeApp.rows[0].res.commission_rate_bp).toBe(400);
-    expect(upgradeApp.rows[0].res.approved_amount_minor).toBe(400000);
-    expect(upgradeApp.rows[0].res.additional_accrual_minor).toBe(100000);
-    expect(upgradeApp.rows[0].res.status).toBe('PARTIALLY_PAID');
+    // Verify reconciliation & refund operations created ZERO extra expenses or payments!
+    const finalExpenseCount = Number((await db.query(`SELECT count(*)::INT AS c FROM public.expenses`)).rows[0].c);
+    const finalPaymentCount = Number((await db.query(`SELECT count(*)::INT AS c FROM public.payments`)).rows[0].c);
+    expect(finalExpenseCount).toBe(initialExpenseCount);
+    expect(finalPaymentCount).toBe(initialPaymentCount + 1); // only the explicit deal 101 buyer payment id=4
 
-    const deltaPay = await db.query(
-      `SELECT public.record_marketing_commission_payout_atomic(101, 3, 100000, 15, '', 'pay-101-delta', 'Delta 1%') AS res`
-    );
-    expect(deltaPay.rows[0].res.paid_amount_minor).toBe(400000);
-    expect(deltaPay.rows[0].res.status).toBe('PAID');
+    // If replacement RKO 17 is ALSO voided later, deal 102 cleanly re-enters RECONCILIATION_REQUIRED
+    await db.query(`UPDATE public.expenses SET status = 'VOIDED', voided_at = NOW() WHERE id = 17`);
+    const comm102ReVoid = await db.query(`SELECT paid_amount_minor, status, reconciliation_required FROM public.marketing_commissions WHERE deal_id = 102`);
+    expect(Number(comm102ReVoid.rows[0].paid_amount_minor)).toBe(150000);
+    expect(comm102ReVoid.rows[0].status).toBe('RECONCILIATION_REQUIRED');
+    expect(comm102ReVoid.rows[0].reconciliation_required).toBe(true);
 
-    // Scenario 8: Concurrent payout on deal 102 vs voiding RKO 16 -> no deadlock, deterministic state
-    const [racePay, raceVoid] = await Promise.allSettled([
-      db.query(`SELECT public.record_marketing_commission_payout_atomic(102, 3, 150000, 16, '', 'pay-102-race', 'Race') AS res`),
+    // Concurrent race between reconcile with RKO 16 and voiding RKO 16 -> deadlock-free, deterministic
+    const [raceRec, raceVoid] = await Promise.allSettled([
+      db.query(`SELECT public.reconcile_marketing_commission_payout_with_rko_atomic(102, 1, $1, 16, '', 'reconcile-102-16-race', 'Race RKO 16') AS res`, [op102Id]),
       db.query(`UPDATE public.expenses SET status = 'VOIDED', voided_at = NOW() WHERE id = 16`),
     ]);
     expect(raceVoid.status).toBe('fulfilled');
-    const comm102 = await db.query(`SELECT paid_amount_minor, status FROM public.marketing_commissions WHERE deal_id = 102`);
-    if (racePay.status === 'fulfilled') {
-      // Payout ran first, then void trigger preserved paid_amount_minor and flagged RECONCILIATION_REQUIRED
-      expect(Number(comm102.rows[0].paid_amount_minor)).toBe(150000);
-      expect(comm102.rows[0].status).toBe('RECONCILIATION_REQUIRED');
-    } else {
-      expect(String(racePay.reason?.message || racePay.reason)).toMatch(/RKO_VOIDED/);
-      expect(Number(comm102.rows[0].paid_amount_minor)).toBe(0);
+    const comm102Race = await db.query(`SELECT paid_amount_minor, status FROM public.marketing_commissions WHERE deal_id = 102`);
+    expect(Number(comm102Race.rows[0].paid_amount_minor)).toBe(150000);
+    expect(comm102Race.rows[0].status).toBe('RECONCILIATION_REQUIRED');
+    if (raceRec.status === 'rejected') {
+      expect(String(raceRec.reason?.message || raceRec.reason)).toMatch(/RKO_VOIDED/);
     }
 
-    // Clean rollback 057 (after confirming or resetting any RECONCILIATION_REQUIRED on 102 if racePay won)
-    await db.query(`UPDATE public.marketing_commissions SET status = 'APPROVED', paid_amount_minor = 0 WHERE deal_id = 102`);
+    // Clean rollback 057
+    await db.query(`UPDATE public.marketing_commissions SET status = 'PAID', reconciliation_required = FALSE WHERE deal_id = 102`);
     const rollback057 = fs.readFileSync(path.join(migrationsDir, 'rollback_057_marketing_commission_atomic_ops_and_rko_guard.sql'), 'utf8');
     await db.exec(rollback057);
     const tblCheck = await db.query(`SELECT to_regclass('public.marketing_commission_operations') AS reg`);

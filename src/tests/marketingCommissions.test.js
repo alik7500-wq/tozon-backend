@@ -389,5 +389,13 @@ describe('Marketing Commissions Registry (Backend)', () => {
         users.FINANCE_MANAGER
       )
     ).rejects.toMatchObject({ statusCode: 403 });
+
+    await expect(
+      MarketingCommissionsService.reconcilePayoutWithNewRko(
+        101,
+        { payoutOperationId: 1, newRkoExpenseId: 14, reason: 'Замена РКО', idempotencyKey: 'rec-1' },
+        users.FINANCE_MANAGER
+      )
+    ).rejects.toMatchObject({ statusCode: 403 });
   });
 });

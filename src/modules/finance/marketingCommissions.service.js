@@ -166,12 +166,34 @@ export class MarketingCommissionsService {
 
         if (payload.action_type === 'CONFIRM_PAYOUT_REFUND') {
           const refundedRkoId = payload.rko_expense_id ? Number(payload.rko_expense_id) : null;
+          const opStatus = payload.operation_reconciliation_status || 'REFUND_CONFIRMED';
           if (refundedRkoId && linksByDealId.has(dId)) {
             linksByDealId.set(
               dId,
               linksByDealId.get(dId).map((item) =>
                 item.rkoExpenseId === refundedRkoId
-                  ? { ...item, reconciliationStatus: 'REFUND_CONFIRMED', refundDocumentRef: payload.refund_document_ref || null }
+                  ? { ...item, reconciliationStatus: opStatus, refundDocumentRef: payload.refund_document_ref || null }
+                  : item
+              )
+            );
+          }
+          continue;
+        }
+
+        if (payload.action_type === 'RECONCILE_PAYOUT_RKO') {
+          const oldRkoId = payload.old_rko_expense_id ? Number(payload.old_rko_expense_id) : null;
+          const newRkoId = payload.new_rko_expense_id ? Number(payload.new_rko_expense_id) : null;
+          if (oldRkoId && newRkoId && linksByDealId.has(dId)) {
+            linksByDealId.set(
+              dId,
+              linksByDealId.get(dId).map((item) =>
+                item.rkoExpenseId === oldRkoId
+                  ? {
+                      ...item,
+                      rkoExpenseId: newRkoId,
+                      rkoReference: payload.new_rko_reference || `РКО-${newRkoId}`,
+                      reconciliationStatus: 'RECONCILED_NEW_RKO',
+                    }
                   : item
               )
             );
@@ -666,6 +688,73 @@ export class MarketingCommissionsService {
         throw new AppError(msg, 404, 'NOT_FOUND');
       }
       throw new AppError(msg || 'Ошибка подтверждения возврата выплаченной комиссии', 400, 'CONFIRM_PAYOUT_REFUND_FAILED');
+    }
+
+    return rpcResult;
+  }
+
+  static async reconcilePayoutWithNewRko(dealId, payload = {}, user = null) {
+    const role = normalizeRole(user);
+    if (role !== 'ADMIN') {
+      throw new AppError(
+        'Завершение сверки с привязкой нового РКО доступно только администратору (ADMIN)',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
+    const idempotencyKey = payload?.idempotencyKey ? String(payload.idempotencyKey).trim() : '';
+    if (!idempotencyKey) {
+      throw new AppError('Параметр idempotencyKey обязателен', 400, 'IDEMPOTENCY_KEY_REQUIRED');
+    }
+
+    const payoutOperationId = Number(payload?.payoutOperationId ?? payload?.payout_operation_id);
+    if (!Number.isInteger(payoutOperationId) || payoutOperationId <= 0) {
+      throw new AppError('Укажите корректный ID операции выплаты (payoutOperationId)', 400, 'INVALID_PAYOUT_OPERATION_ID');
+    }
+
+    const newRkoExpenseId = Number(payload?.newRkoExpenseId ?? payload?.new_rko_expense_id ?? payload?.rkoExpenseId);
+    if (!Number.isInteger(newRkoExpenseId) || newRkoExpenseId <= 0) {
+      throw new AppError('Укажите корректный ID нового проведённого РКО (newRkoExpenseId)', 400, 'RKO_REQUIRED');
+    }
+
+    const reason = String(payload?.reason || payload?.notes || '').trim();
+    if (reason.length < 3) {
+      throw new AppError('Укажите основание завершения сверки с заменой РКО', 400, 'RECONCILE_REASON_REQUIRED');
+    }
+
+    const atomicReady = await this.isAtomicRkoIntegrationReady();
+    if (!atomicReady) {
+      throw new AppError(
+        'Сверка выплаты с заменой РКО доступна только после применения миграции 057.',
+        409,
+        'ATOMIC_RKO_INTEGRATION_REQUIRED'
+      );
+    }
+
+    const db = getSecureDB();
+    const { data: rpcResult, error: rpcError } = await db.rpc('reconcile_marketing_commission_payout_with_rko_atomic', {
+      p_deal_id: Number(dealId),
+      p_actor_id: user?.id ? Number(user.id) : null,
+      p_payout_operation_id: payoutOperationId,
+      p_new_rko_expense_id: newRkoExpenseId,
+      p_expected_partner_name: payload?.expectedPartnerName || '',
+      p_idempotency_key: idempotencyKey,
+      p_reason: reason,
+    });
+
+    if (rpcError) {
+      const msg = String(rpcError.message || '');
+      if (/could not find the function|does not exist/i.test(msg) || rpcError.code === 'PGRST202' || rpcError.code === '42883') {
+        throw new AppError('Сверка выплаты доступна только после применения миграции 057.', 409, 'ATOMIC_RKO_INTEGRATION_REQUIRED');
+      }
+      if (msg.includes('IDEMPOTENCY_CONFLICT') || msg.includes('RKO_ALREADY_LINKED')) {
+        throw new AppError(msg, 409, msg.includes('IDEMPOTENCY_CONFLICT') ? 'IDEMPOTENCY_CONFLICT' : 'RKO_ALREADY_LINKED');
+      }
+      if (msg.includes('RKO_NOT_FOUND') || msg.includes('DEAL_NOT_FOUND') || msg.includes('COMMISSION_NOT_FOUND') || msg.includes('PAYOUT_OPERATION_NOT_FOUND')) {
+        throw new AppError(msg, 404, 'NOT_FOUND');
+      }
+      throw new AppError(msg || 'Ошибка завершения сверки с заменой РКО', 400, 'RECONCILE_PAYOUT_RKO_FAILED');
     }
 
     return rpcResult;
