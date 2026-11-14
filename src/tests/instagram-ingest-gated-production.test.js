@@ -5,6 +5,7 @@ import request from 'supertest';
 
 const { upsert } = vi.hoisted(() => ({ upsert: vi.fn() }));
 vi.mock('../db/connection.js', () => ({ getServiceDB: () => ({ from: () => ({ upsert }) }) }));
+vi.mock('../modules/integrations/instagram-connection.repository.js',()=>({connectedInstagramAccountIds:async()=>new Set(['17841447499018452','17841447499018453'])}));
 import webhookRouter from '../modules/integrations/instagram-ingest-gated.router.js';
 
 const app = express();
@@ -58,5 +59,15 @@ describe('isolated Instagram webhook ingestion', () => {
     const invalid = '{"object":';
     expect((await post(invalid)).status).toBe(400);
     expect(upsert).not.toHaveBeenCalled();
+  });
+  it('partitions a multi-account envelope and rejects an unknown entry before any writes',async()=>{
+    enable();upsert.mockResolvedValue({error:null});
+    const multi=JSON.stringify({object:'instagram',entry:[{id:'17841447499018452',messaging:[]},{id:'17841447499018453',messaging:[]}]});
+    expect((await post(multi)).status).toBe(200);expect(upsert).toHaveBeenCalledTimes(2);
+    expect(upsert.mock.calls.map(([row])=>row.instagram_user_id)).toEqual(['17841447499018452','17841447499018453']);
+    expect(upsert.mock.calls.every(([row])=>row.payload.entry.length===1)).toBe(true);
+    upsert.mockClear();
+    const foreign=JSON.stringify({object:'instagram',entry:[{id:'17841447499018452',messaging:[]},{id:'999999',messaging:[]}]});
+    expect((await post(foreign)).status).toBe(403);expect(upsert).not.toHaveBeenCalled();
   });
 });

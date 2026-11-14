@@ -1,7 +1,7 @@
 import { beforeEach, it, expect, vi } from 'vitest';
 const m=vi.hoisted(()=>({list:vi.fn(),messages:vi.fn(),send:vi.fn(),threads:vi.fn(),history:vi.fn(),save:vi.fn(),block:vi.fn()}));
 vi.mock('../modules/integrations/instagram-inbox.client.js',async original=>({...await original(),createInstagramInboxClient:()=>({conversations:m.list,messages:m.messages,send:m.send})}));
-vi.mock('../modules/integrations/instagram-connection.repository.js',()=>({getInstagramInboxCredentials:vi.fn()}));
+vi.mock('../modules/integrations/instagram-connection.repository.js',()=>({getAllInstagramInboxCredentials:vi.fn()}));
 vi.mock('../modules/integrations/instagram-live.repository.js',()=>({liveInboxEnabled:()=>true,readInstagramThreads:m.threads,readInstagramHistory:m.history,saveInstagramThread:m.save,blockInstagramReply:m.block}));
 import { createInstagramLiveInbox } from '../modules/integrations/instagram-live.service.js';
 import { InboxError } from '../modules/integrations/instagram-inbox.client.js';
