@@ -22,3 +22,7 @@ export const buyerCommunications=new BuyerCommunicationsService({repo:communicat
 export const buyerNotifications=new BuyerNotificationWorker({repo:communicationsRepo,identity:buyerIdentity,api:{send:async(...args)=>{
  const {getFinanceBot}=await import('../telegram-finance/start.js');return getFinanceBot().api.send(...args);
 }}});
+
+import {BuyerOnboardingService} from './onboarding.service.js';
+import {defaultSmsService} from '../sms/sms.service.js';
+export const buyerOnboarding=new BuyerOnboardingService({repo:new BuyerIdentityRepository(),sms:defaultSmsService,botIdentity:()=>buyerIdentity.botIdentity()});

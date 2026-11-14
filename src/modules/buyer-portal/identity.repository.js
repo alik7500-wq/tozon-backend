@@ -9,6 +9,9 @@ export class BuyerIdentityRepository {
   async createInvite(row) {
     return data(await this.db.from('buyer_portal_invites').insert(row).select('id,expires_at').single());
   }
+  async onboardingList(actor){return data(await this.db.rpc('buyer_portal_onboarding_list',{p_actor:actor}));}
+  async prepareSmsInvite({leadId,actor,hash,request,language,phone}){return data(await this.db.rpc('buyer_portal_prepare_sms_invite',{p_lead:leadId,p_actor:actor,p_hash:hash,p_request:request,p_language:language,p_phone:phone}));}
+  async finishSmsInvite(id,status){data(await this.db.from('buyer_portal_invites').update({sms_delivery_status:status,sms_sent_at:status==='SENT'?new Date().toISOString():null}).eq('id',id).eq('sms_delivery_status','SENDING'));}
   async requestConnection(tokenHash,tg){return data(await this.db.rpc('buyer_portal_request_connection',{p_token_hash:tokenHash,p_telegram:tg}));}
   async connectionRequests(dealId){return data(await this.db.from('buyer_portal_invites').select('id,claimed_telegram_id,claim_code,participant_id,expires_at').eq('deal_id',dealId).not('claimed_telegram_id','is',null).is('consumed_at',null).is('revoked_at',null).gt('expires_at',new Date().toISOString()));}
   async approveConnection(id,dealId,actor,tg,code){return data(await this.db.rpc('buyer_portal_approve_connection',{p_invite:id,p_deal:dealId,p_actor:actor,p_telegram:tg,p_code:code}));}
