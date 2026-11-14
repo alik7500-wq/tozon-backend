@@ -31,6 +31,7 @@ import {
 } from '../../middleware/cashDeskAuth.middleware.js';
 
 import paymentCalendarRouter from './payment_calendar.router.js';
+import { MarketingCommissionsService } from './marketingCommissions.service.js';
 
 const router = Router();
 
@@ -89,6 +90,64 @@ router.get('/cashflow/export.xlsx', exportCashflowExcel);
 router.get('/cashflow/export', exportCashflowExcel);
 router.get('/cashflow', getCashflow);
 router.get('/plan-fact', getPlanFactReport);
+
+// Marketer Commissions Registry (Финансы -> Комиссии маркетологов)
+router.get('/marketing-commissions', async (req, res, next) => {
+  try {
+    const data = await MarketingCommissionsService.getRegistry(req.query, req.user);
+    res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/marketing-commissions/export.xlsx', async (req, res, next) => {
+  try {
+    const buffer = await MarketingCommissionsService.exportWorkbook(req.query, req.user);
+    const dateStr = new Date().toISOString().split('T')[0];
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="tozon-marketing-commissions-${dateStr}.xlsx"`);
+    res.status(200).send(Buffer.from(buffer));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/marketing-commissions/rko-candidates', async (req, res, next) => {
+  try {
+    const data = await MarketingCommissionsService.getRkoCandidates(req.query, req.user);
+    res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/marketing-commissions/:dealId/approve', async (req, res, next) => {
+  try {
+    const deal = await MarketingCommissionsService.approveDealCommission(req.params.dealId, req.body, req.user);
+    res.status(200).json({ status: 'success', data: { deal } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/marketing-commissions/:dealId/payout', async (req, res, next) => {
+  try {
+    const deal = await MarketingCommissionsService.payoutDealCommission(req.params.dealId, req.body, req.user);
+    res.status(200).json({ status: 'success', data: { deal } });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/marketing-commissions/:dealId/cancel', async (req, res, next) => {
+  try {
+    const deal = await MarketingCommissionsService.cancelDealCommission(req.params.dealId, req.body, req.user);
+    res.status(200).json({ status: 'success', data: { deal } });
+  } catch (error) {
+    next(error);
+  }
+});
 
 export default router;
 

@@ -8,13 +8,20 @@ import { resolveCashDeskAccess } from '../../middleware/cashDeskAuth.middleware.
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 import rateLimit from 'express-rate-limit';
-import { buyerIdentity,buyerMaterials } from '../buyer-portal/instance.js';
+import { buyerIdentity,buyerMaterials,buyerCommunications } from '../buyer-portal/instance.js';
 import multer from 'multer';
 import { buyerEnabled, BuyerPortalError } from '../buyer-portal/identity.service.js';
 
 const router = express.Router();
 
 router.use(protect);
+router.use('/:id/buyer-inquiries',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404));
+const buyerCommunicationRun=fn=>async(req,res)=>{
+ res.set('Cache-Control','no-store');
+ try{res.json({data:await fn(req)});}catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_COMMUNICATION_UNAVAILABLE'});}
+};
+router.get('/:id/buyer-inquiries',buyerCommunicationRun(req=>buyerCommunications.staffList(parseRequiredBigInt(req.params.id,'id'),req.user)));
+router.post('/:id/buyer-inquiries/reply',buyerCommunicationRun(req=>buyerCommunications.reply(parseRequiredBigInt(req.params.id,'id'),req.user,req.body||{})));
 const buyerUpload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024,files:1,fields:5}}).single('file');
 router.use('/:id/buyer-documents',(req,res,next)=>buyerEnabled()?next():res.sendStatus(404));
 const buyerDocumentRun=fn=>async(req,res)=>{

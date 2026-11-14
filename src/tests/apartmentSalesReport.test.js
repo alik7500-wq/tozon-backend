@@ -1394,14 +1394,23 @@ describe('ApartmentSalesReportService — Stage 2 & Financial Expansion Verifica
     expect(partialDeal.commission.status).toBe(COMMISSION_STATUSES.PARTIALLY_PAID);
     expect(partialDeal.commission.paidCommissionUsd).toBe(1500);
 
-    // Duplicate payout with same idempotencyKey is blocked
+    // Replay with same idempotencyKey & same amount returns previous result without double payout
+    const replayed = await svc.updateDealCommission(
+      8002,
+      { action: 'RECORD_PAYOUT', payoutAmountUsd: 1500, idempotencyKey: 'payout-8002-1' },
+      adminUser
+    );
+    expect(replayed.idempotent).toBe(true);
+    expect(replayed.commission.paidCommissionUsd).toBe(1500);
+
+    // Replay with same idempotencyKey & different amount is rejected (409 IDEMPOTENCY_CONFLICT)
     await expect(
       svc.updateDealCommission(
         8002,
-        { action: 'RECORD_PAYOUT', payoutAmountUsd: 1500, idempotencyKey: 'payout-8002-1' },
+        { action: 'RECORD_PAYOUT', payoutAmountUsd: 500, idempotencyKey: 'payout-8002-1' },
         adminUser
       )
-    ).rejects.toThrow(/идемпотентности/);
+    ).rejects.toMatchObject({ statusCode: 409, code: 'IDEMPOTENCY_CONFLICT' });
 
     // Changing source to DIRECT after commission payout is blocked
     await expect(

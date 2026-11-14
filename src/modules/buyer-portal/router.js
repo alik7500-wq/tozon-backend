@@ -3,7 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { verifyMiniAppInitData } from './telegram-auth.js';
 import { buyerEnabled, BuyerPortalError } from './identity.service.js';
 
-export function createBuyerRouter(service, {enabled=buyerEnabled, botToken=()=>process.env.TELEGRAM_FINANCE_BOT_TOKEN,materials}={}) {
+export function createBuyerRouter(service, {enabled=buyerEnabled, botToken=()=>process.env.TELEGRAM_FINANCE_BOT_TOKEN,materials,communications}={}) {
   const router=Router();
   router.use((req,res,next)=>{
     res.set('Cache-Control','no-store');
@@ -30,6 +30,12 @@ export function createBuyerRouter(service, {enabled=buyerEnabled, botToken=()=>p
   router.get('/contracts',run(req=>service.contractList(req.buyer.telegramUserId)));
   router.post('/contract',run(req=>service.contract(req.buyer.telegramUserId,req.body?.dealId)));
   router.patch('/preferences',run(req=>service.preferences(req.buyer.telegramUserId,req.body?.language)));
+  router.get('/communication-settings',run(req=>communications.settings(req.buyer.telegramUserId)));
+  router.patch('/communication-settings',run(req=>communications.saveSettings(req.buyer.telegramUserId,req.body||{})));
+  router.get('/notices',run(req=>communications.notices(req.buyer.telegramUserId)));
+  router.post('/notice-read',run(req=>communications.read(req.buyer.telegramUserId,req.body?.id)));
+  router.post('/inquiries',run(req=>communications.history(req.buyer.telegramUserId,req.body?.dealId)));
+  router.post('/contact',rateLimit({windowMs:60000,limit:5,keyGenerator:req=>req.buyer.telegramUserId}),run(req=>communications.contact(req.buyer.telegramUserId,req.body||{})));
   router.post('/materials',run(req=>materials.manifest(req.buyer.telegramUserId,req.body?.dealId)));
   router.post('/asset',async(req,res)=>{
     try{const asset=await materials.asset(req.buyer.telegramUserId,req.body||{});

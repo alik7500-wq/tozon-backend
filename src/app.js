@@ -24,7 +24,7 @@ import visualMapsRouter from './modules/visual-maps/visual-maps.router.js';
 import leadsRouter from './modules/leads/leads.router.js';
 import dealsRouter from './modules/deals/deals.router.js';
 import { createBuyerRouter } from './modules/buyer-portal/router.js';
-import { buyerIdentity,buyerMaterials } from './modules/buyer-portal/instance.js';
+import { buyerIdentity,buyerMaterials,buyerCommunications } from './modules/buyer-portal/instance.js';
 import dashboardRouter from './modules/dashboard/dashboard.router.js';
 import usersRouter from './modules/users/users.router.js';
 import rolesRouter from './modules/users/roles.router.js';
@@ -82,7 +82,7 @@ app.use(pino({
     'req.body.secret',
     'req.body.token',
     'req.body.code',
-    'req.body.message.text'
+    'req.body.message'
   ],
   autoLogging: {
     ignore: (req) => req.url === '/api/health' || req.url?.startsWith('/api/integrations/instagram/callback') || req.url?.startsWith('/api/integrations/instagram/webhook'),
@@ -147,7 +147,7 @@ app.use('/api/inventory', layoutPresentationRouter);
 app.use('/api/visual-maps', visualMapsRouter);
 app.use('/api/leads', leadsRouter);
 app.use('/api/deals', dealsRouter);
-app.use('/api/buyer-portal', createBuyerRouter(buyerIdentity,{materials:buyerMaterials}));
+app.use('/api/buyer-portal', createBuyerRouter(buyerIdentity,{materials:buyerMaterials,communications:buyerCommunications}));
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/roles', rolesRouter);

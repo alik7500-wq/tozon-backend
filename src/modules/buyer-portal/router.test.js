@@ -12,11 +12,12 @@ function auth(id=101) {
   const key=createHmac('sha256','WebAppData').update(botToken).digest();
   return new URLSearchParams({...fields,hash:createHmac('sha256',key).update(check).digest('hex')}).toString();
 }
-let app,service,materials;
+let app,service,materials,communications;
 beforeEach(()=>{
   service={requestCode:vi.fn(async()=>({challengeId:'safe'})),confirmCode:vi.fn(async()=>({verified:true})),contracts:vi.fn(async()=>[]),preferences:vi.fn(async()=>({language:'ru'})),contractList:vi.fn(async()=>[]),contract:vi.fn(async()=>({id:1}))};
   materials={manifest:vi.fn(async()=>({plans:[],documents:[],tour:null})),asset:vi.fn(async()=>({buffer:Buffer.from('%PDF-1.7'),mime:'application/pdf',filename:'TOZON-document.pdf'}))};
-  app=express(); app.use(express.json()); app.use(createBuyerRouter(service,{enabled:()=>true,botToken:()=>botToken,materials}));
+  communications={settings:vi.fn(async()=>({enabled:true,language:'tj'})),saveSettings:vi.fn(async()=>({enabled:false,language:'ru'})),notices:vi.fn(async()=>[]),read:vi.fn(async()=>({read:true})),history:vi.fn(async()=>[]),contact:vi.fn(async()=>({id:'safe'}))};
+  app=express(); app.use(express.json()); app.use(createBuyerRouter(service,{enabled:()=>true,botToken:()=>botToken,materials,communications}));
 });
 it('rejects staff JWTs and unsigned Telegram IDs as buyer authentication',async()=>{
   await request(app).post('/otp').set('Authorization','Bearer staff-token').send({telegramId:101,token:'x'}).expect(401);
@@ -67,4 +68,23 @@ it('authenticates binary downloads and sends private attachment headers without 
  expect(response.headers['content-disposition']).toContain('attachment');
  await request(app).post('/materials').set('X-Telegram-Init-Data',auth()).send({dealId:1,telegramId:202}).expect(200);
  expect(materials.manifest).toHaveBeenCalledWith('101',1);
+});
+
+it('binds communication endpoints to the signed Telegram identity and hides private failures',async()=>{
+ await request(app).get('/communication-settings?telegramId=202').set('X-Telegram-Init-Data',auth()).expect(200);
+ expect(communications.settings).toHaveBeenCalledWith('101');
+ await request(app).patch('/communication-settings').set('X-Telegram-Init-Data',auth()).send({enabled:false,language:'ru',telegramId:202}).expect(200);
+ expect(communications.saveSettings).toHaveBeenCalledWith('101',expect.objectContaining({enabled:false}));
+ await request(app).post('/inquiries').set('X-Telegram-Init-Data',auth()).send({dealId:1,telegramId:202}).expect(200);
+ expect(communications.history).toHaveBeenCalledWith('101',1);
+ await request(app).get('/notices').expect(401);
+ await request(app).post('/notice-read').set('X-Telegram-Init-Data',auth()).send({id:'notice',telegramId:202}).expect(200);
+ expect(communications.read).toHaveBeenCalledWith('101','notice');
+ await request(app).post('/contact').set('X-Telegram-Init-Data',auth()).send({dealId:1,id:'client-uuid',message:'Question',telegramId:202}).expect(200);
+ expect(communications.contact).toHaveBeenCalledWith('101',expect.objectContaining({dealId:1,message:'Question'}));
+ communications.history.mockRejectedValue(new BuyerPortalError('BUYER_ACCESS_DENIED',403));
+ await request(app).post('/inquiries').set('X-Telegram-Init-Data',auth()).send({dealId:2}).expect(403);
+ communications.notices.mockRejectedValue(new Error('private DB info'));
+ const response=await request(app).get('/notices').set('X-Telegram-Init-Data',auth()).expect(503);
+ expect(response.body).toEqual({message:'BUYER_SERVICE_UNAVAILABLE'});
 });

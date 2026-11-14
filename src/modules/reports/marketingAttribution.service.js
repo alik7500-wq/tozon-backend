@@ -515,6 +515,10 @@ export function resolveDealAttributionAndCommission({
       calculatedCommissionUsd: minorToUsd(calculatedCommissionMinor),
       approvedCommissionUsd: minorToUsd(approvedCommissionMinor),
       paidCommissionUsd: minorToUsd(paidCommissionMinor),
+      payoutDeltaUsd: payload.payout_delta_minor !== undefined ? minorToUsd(payload.payout_delta_minor) : null,
+      additionalAccrualUsd: payload.additional_accrual_minor !== undefined ? minorToUsd(payload.additional_accrual_minor) : null,
+      rkoExpenseId: payload.rko_expense_id ? Number(payload.rko_expense_id) : null,
+      rkoReference: payload.rko_reference || null,
       notes: payload.notes || payload.cancel_reason || '',
       changedBy: log.user_id ? Number(log.user_id) : null,
       changedByName: userObj?.name || userObj?.full_name || payload.user_name || (log.user_id ? `ID ${log.user_id}` : 'Система'),
@@ -606,6 +610,29 @@ export function resolveDealAttributionAndCommission({
     sourceHistory: sourceHistory.reverse(),
     commissionHistory: commissionHistory.reverse(),
   };
+}
+
+const dealCommissionLocks = new Map();
+
+function withDealCommissionLock(dealId, fn) {
+  const key = String(dealId);
+  const prev = dealCommissionLocks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  const chained = prev.then(() => current, () => current);
+  dealCommissionLocks.set(key, chained);
+
+  return prev
+    .catch(() => undefined)
+    .then(fn)
+    .finally(() => {
+      release();
+      if (dealCommissionLocks.get(key) === chained) {
+        dealCommissionLocks.delete(key);
+      }
+    });
 }
 
 export class MarketingAttributionService {
@@ -1214,6 +1241,7 @@ export class MarketingAttributionService {
       );
     }
 
+    return withDealCommissionLock(id, async () => {
     const db = this.getDb(user);
     const { data: deal, error: dealErr } = await db
       .from('deals')
@@ -1259,6 +1287,78 @@ export class MarketingAttributionService {
     const nowIso = new Date().toISOString();
     const notes = String(payload?.notes || payload?.reason || '').trim();
     const idempotencyKey = payload?.idempotencyKey ? String(payload.idempotencyKey).trim() : null;
+
+    if (idempotencyKey && ['APPROVE', 'RECORD_PAYOUT', 'CANCEL'].includes(actionType)) {
+      const requestedAmountMinor = actionType === 'RECORD_PAYOUT'
+        ? (payload?.payoutAmountMinor !== undefined
+            ? Math.round(Number(payload.payoutAmountMinor) || 0)
+            : Math.round(Number(payload?.payoutAmountUsd ?? payload?.amountUsd ?? 0) * 100))
+        : actionType === 'APPROVE'
+          ? (payload?.approvedCommissionUsd !== undefined && payload?.approvedCommissionUsd !== null && payload?.approvedCommissionUsd !== ''
+              ? Math.round(Number(payload.approvedCommissionUsd) * 100)
+              : currentAttr.commission.calculatedCommissionMinor)
+          : 0;
+      const requestedRkoId = payload?.rkoExpenseId ?? payload?.rko_expense_id ?? null;
+
+      // Check existing logs on this deal first
+      const sameDealMatch = existingLogs.find((log) => {
+        if (log.action !== AUDIT_ACTION_COMMISSION) return false;
+        const p = typeof log.changes_json === 'string'
+          ? (() => { try { return JSON.parse(log.changes_json); } catch { return {}; } })()
+          : (log.changes_json || {});
+        return p.idempotency_key === idempotencyKey;
+      });
+
+      if (sameDealMatch) {
+        const p = typeof sameDealMatch.changes_json === 'string'
+          ? (() => { try { return JSON.parse(sameDealMatch.changes_json); } catch { return {}; } })()
+          : (sameDealMatch.changes_json || {});
+        const loggedAmountMinor = p.action_type === 'RECORD_PAYOUT'
+          ? Number(p.payout_delta_minor || 0)
+          : p.action_type === 'APPROVE'
+            ? Number(p.approved_amount_minor || 0)
+            : 0;
+        const sameAction = p.action_type === actionType;
+        const sameAmount = loggedAmountMinor === requestedAmountMinor;
+        const sameRko = actionType !== 'RECORD_PAYOUT'
+          || (Number(p.rko_expense_id || 0) === Number(requestedRkoId || 0));
+
+        if (sameAction && sameAmount && sameRko) {
+          const replayed = await this.enrichDealWithAttribution(deal, user);
+          return { ...replayed, idempotent: true };
+        }
+        throw new AppError(
+          'Ключ идемпотентности уже использован с другими параметрами (сумма, действие или РКО)',
+          409,
+          'IDEMPOTENCY_CONFLICT'
+        );
+      }
+
+      // Also check if idempotencyKey was already used on a DIFFERENT deal
+      try {
+        const { data: crossDealLogs } = await db
+          .from('deal_audit_logs')
+          .select('id, deal_id, changes_json')
+          .eq('action', AUDIT_ACTION_COMMISSION)
+          .neq('deal_id', id)
+          .limit(200);
+        const crossMatch = (crossDealLogs || []).find((log) => {
+          const p = typeof log.changes_json === 'string'
+            ? (() => { try { return JSON.parse(log.changes_json); } catch { return {}; } })()
+            : (log.changes_json || {});
+          return p.idempotency_key === idempotencyKey;
+        });
+        if (crossMatch) {
+          throw new AppError(
+            'Ключ идемпотентности уже использован для другого договора',
+            409,
+            'IDEMPOTENCY_CONFLICT'
+          );
+        }
+      } catch (err) {
+        if (err instanceof AppError) throw err;
+      }
+    }
 
     let auditChanges = {
       action_type: actionType,
@@ -1431,24 +1531,6 @@ export class MarketingAttributionService {
         throw new AppError('Сумма выплаты комиссии должна быть больше 0 USD', 400, 'INVALID_PAYOUT_AMOUNT');
       }
 
-      // Protection against duplicate payout request (explicit idempotencyKey)
-      if (idempotencyKey) {
-        const duplicateKeyExists = existingLogs.some((log) => {
-          if (log.action !== AUDIT_ACTION_COMMISSION) return false;
-          const p = typeof log.changes_json === 'string'
-            ? (() => { try { return JSON.parse(log.changes_json); } catch { return {}; } })()
-            : (log.changes_json || {});
-          return p.action_type === 'RECORD_PAYOUT' && p.idempotency_key === idempotencyKey;
-        });
-        if (duplicateKeyExists) {
-          throw new AppError(
-            'Повторный запрос на выплату комиссии с тем же ключом идемпотентности заблокирован',
-            409,
-            'DUPLICATE_COMMISSION_PAYOUT'
-          );
-        }
-      }
-
       const nextPaidMinor = currentAttr.commission.paidCommissionMinor + payoutMinor;
       if (nextPaidMinor > currentAttr.commission.approvedCommissionMinor) {
         throw new AppError(
@@ -1456,6 +1538,59 @@ export class MarketingAttributionService {
           400,
           'PAYOUT_EXCEEDS_APPROVED'
         );
+      }
+
+      let rkoExpenseId = payload?.rkoExpenseId ?? payload?.rko_expense_id ?? null;
+      let rkoReference = payload?.rkoReference ?? payload?.rko_reference ?? null;
+      if (rkoExpenseId !== null && rkoExpenseId !== undefined && rkoExpenseId !== '') {
+        const parsedRkoId = Number(rkoExpenseId);
+        if (!Number.isInteger(parsedRkoId) || parsedRkoId <= 0) {
+          throw new AppError('Некорректный ID документа РКО', 400, 'INVALID_RKO_REFERENCE');
+        }
+        const { data: rkoRow, error: rkoErr } = await db
+          .from('expenses')
+          .select('id, reference, status, voided_at, amount_minor, recipient')
+          .eq('id', parsedRkoId)
+          .maybeSingle();
+        if (rkoErr || !rkoRow) {
+          throw new AppError('Указанный документ РКО не найден в финансовом учёте', 404, 'RKO_NOT_FOUND');
+        }
+        if (['VOIDED', 'CANCELLED', 'REVERSED'].includes(String(rkoRow.status || '').toUpperCase()) || rkoRow.voided_at) {
+          throw new AppError('Нельзя привязать аннулированный документ РКО', 400, 'RKO_VOIDED');
+        }
+        if (rkoRow.amount_minor !== undefined && Number(rkoRow.amount_minor) !== payoutMinor) {
+          throw new AppError('Сумма в документе РКО не совпадает с суммой выплаты комиссии', 400, 'RKO_AMOUNT_MISMATCH');
+        }
+        if (
+          rkoRow.recipient &&
+          currentAttr.marketingPartnerName &&
+          String(rkoRow.recipient).trim().toLowerCase() !== String(currentAttr.marketingPartnerName).trim().toLowerCase()
+        ) {
+          throw new AppError('Получатель в документе РКО не совпадает с маркетинговым партнёром договора', 400, 'RKO_RECIPIENT_MISMATCH');
+        }
+        try {
+          const { data: allCommLogs } = await db
+            .from('deal_audit_logs')
+            .select('id, deal_id, changes_json')
+            .eq('action', AUDIT_ACTION_COMMISSION)
+            .limit(500);
+          const alreadyLinked = (allCommLogs || []).some((log) => {
+            const p = typeof log.changes_json === 'string'
+              ? (() => { try { return JSON.parse(log.changes_json); } catch { return {}; } })()
+              : (log.changes_json || {});
+            return p.action_type === 'RECORD_PAYOUT' && Number(p.rko_expense_id || 0) === parsedRkoId;
+          });
+          if (alreadyLinked) {
+            throw new AppError('Этот документ РКО уже привязан к другой выплате комиссии', 409, 'RKO_ALREADY_LINKED');
+          }
+        } catch (err) {
+          if (err instanceof AppError) throw err;
+        }
+        rkoExpenseId = rkoRow.id;
+        rkoReference = rkoReference || rkoRow.reference || `РКО-${rkoRow.id}`;
+      } else {
+        rkoExpenseId = null;
+        rkoReference = rkoReference ? String(rkoReference).trim() : null;
       }
 
       const nextStatus = nextPaidMinor >= currentAttr.commission.approvedCommissionMinor
@@ -1468,6 +1603,8 @@ export class MarketingAttributionService {
         paid_amount_minor: nextPaidMinor,
         status: nextStatus,
         paid_at: nowIso,
+        rko_expense_id: rkoExpenseId,
+        rko_reference: rkoReference,
       };
     } else if (actionType === 'CANCEL') {
       if (!notes || notes.length < 3) {
@@ -1529,6 +1666,7 @@ export class MarketingAttributionService {
     }
 
     return enriched;
+    });
   }
 }
 
