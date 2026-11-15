@@ -1571,7 +1571,8 @@ describe('Individual Per-Contract Tiered Marketer Commission Scale (0% / 2% / 3%
   it('applies exact integer threshold comparisons without intermediate float rounding', () => {
     const price = 4000000; // $40,000.00
     expect(computeTieredCommissionRateBp(0, price)).toBe(0);
-    expect(computeTieredCommissionRateBp(199999, price)).toBe(0); // 4.999975% (< 5%) -> 0%
+    expect(computeTieredCommissionRateBp(1, price)).toBe(200); // > 0% and < 10% -> 2%
+    expect(computeTieredCommissionRateBp(199999, price)).toBe(200); // 4.999975% (> 0% and < 10%) -> 2%
     expect(computeTieredCommissionRateBp(200000, price)).toBe(200); // 5.00% -> 2%
     expect(computeTieredCommissionRateBp(399999, price)).toBe(200); // 9.999975% (< 10%) -> 2%
     expect(computeTieredCommissionRateBp(400000, price)).toBe(300); // 10.00% -> 3%
@@ -1676,8 +1677,8 @@ describe('Individual Per-Contract Tiered Marketer Commission Scale (0% / 2% / 3%
     expect(approved3.commission.calculatedCommissionUsd).toBe(1600);
     expect(approved3.commission.remainingCommissionUsd).toBe(400);
 
-    // Stage 4: Refund / void reduces settled amount back to $1,000 (2.5% -> 0% commission) while $1,200 already paid
-    state.deal.payments = [{ id: 1, amount_minor: 100000, payment_date: '2026-10-15', status: 'ACTIVE', settlement_method: 'CASH' }];
+    // Stage 4: Refund / void reduces settled amount back to $0 (0% -> 0% commission) while $1,200 already paid
+    state.deal.payments = [];
     const overpaidDeal = await svc.enrichDealWithAttribution(state.deal, admin);
     expect(overpaidDeal.commission.commissionRatePercent).toBe(0);
     expect(overpaidDeal.commission.calculatedCommissionUsd).toBe(0);
@@ -1698,9 +1699,9 @@ describe('Individual Per-Contract Tiered Marketer Commission Scale (0% / 2% / 3%
       makeUnit({ id: 951, unitNumber: '1', areaX100: 5000, floorNumber: 1, buildingId: 1, buildingName: 'Блок А', buildingCode: 'БЛОК-А', projectId: 1, projectName: 'TOZON PLAZA', projectCode: 'TZN', status: 'SOLD' }),
       makeUnit({ id: 952, unitNumber: '2', areaX100: 5000, floorNumber: 1, buildingId: 1, buildingName: 'Блок А', buildingCode: 'БЛОК-А', projectId: 1, projectName: 'TOZON PLAZA', projectCode: 'TZN', status: 'SOLD' }),
     ];
-    // Deal 1: $50,000, paid $1,000 (2% < 5% -> 0% commission = $0)
+    // Deal 1: $50,000, paid $0 (0% -> 0% commission = $0)
     // Deal 2: $50,000, paid $10,000 (20% > 15% -> 4% commission = $2,000)
-    // Block aggregate payment % = $11,000 / $100,000 = 11% (which would be 3% = $3,000 if mistakenly computed at block level!)
+    // Block aggregate payment % = $10,000 / $100,000 = 10% (which would be 3% = $3,000 if mistakenly computed at block level!)
     // Correct sum of individual commissions = $0 + $2,000 = $2,000!
     const deals = [
       {
@@ -1716,7 +1717,7 @@ describe('Individual Per-Contract Tiered Marketer Commission Scale (0% / 2% / 3%
           projectCode: 'TZN',
           dealDate: '2026-10-15',
           finalPriceMinor: 5000000,
-          payments: [{ id: 1, amount_minor: 100000, payment_date: '2026-10-15', status: 'ACTIVE', settlement_method: 'CASH' }],
+          payments: [],
         }),
         sales_source: 'MARKETER',
         marketing_partner_id: 1,

@@ -180,7 +180,7 @@ export function computeDealSettledMinor(deal) {
 
     for (const p of deal.payments) {
       const status = String(p?.status || 'ACTIVE').toUpperCase();
-      if (status === 'VOIDED' || status === 'CANCELLED') continue;
+      if (status === 'VOIDED' || status === 'CANCELLED' || status === 'REVERSED' || Boolean(p?.voided_at)) continue;
       const amount = Math.max(0, Math.round(Number(p?.amount_minor) || 0));
       const method = String(p?.settlement_method || p?.payment_method || '').toUpperCase();
       if (method === 'BARTER') {
@@ -209,8 +209,8 @@ export function computeDealSettledMinor(deal) {
 /**
  * Individual per-contract marketer commission scale using exact integer threshold comparisons
  * (no intermediate percentage rounding):
- * - settled < 5%          -> 0% (0 bp)
- * - 5% <= settled < 10%   -> 2% (200 bp)
+ * - settled <= 0          -> 0% (0 bp)
+ * - 0 < settled < 10%     -> 2% (200 bp)
  * - 10% <= settled <= 15% -> 3% (300 bp)
  * - settled > 15%         -> 4% (400 bp)
  */
@@ -220,11 +220,9 @@ export function computeTieredCommissionRateBp(settledMinor, contractPriceMinor) 
   if (price <= 0 || settled <= 0) return 0;
 
   const lhs = BigInt(settled) * 100n;
-  const p5 = BigInt(price) * 5n;
   const p10 = BigInt(price) * 10n;
   const p15 = BigInt(price) * 15n;
 
-  if (lhs < p5) return 0;
   if (lhs < p10) return 200;
   if (lhs <= p15) return 300;
   return 400;
