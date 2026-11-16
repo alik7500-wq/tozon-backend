@@ -235,6 +235,34 @@ router.post('/distribution/settings', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// GET /api/leads/distribution/queue - Read-only unassigned lead queue for management.
+// Never expose the common pool to ordinary sales managers.
+router.get('/distribution/queue', async (req, res, next) => {
+  try {
+    if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+      return next(new AppError('Просмотр очереди распределения доступен только руководителю или администратору', 403));
+    }
+    const leads = await LeadsRepository.findAll({ unassigned: true });
+    const active = (leads || []).filter(lead =>
+      ['NEW', 'IN_PROGRESS', 'NEGOTIATION'].includes(lead.status) && !lead.archived_at
+    );
+    const now = Date.now();
+    const queue = active.map(lead => {
+      const createdAt = Date.parse(lead.created_at);
+      return {
+        id: lead.id,
+        full_name: lead.full_name,
+        source: lead.source,
+        status: lead.status,
+        created_at: lead.created_at,
+        interested_project_id: lead.interested_project_id,
+        waiting_minutes: Number.isFinite(createdAt) ? Math.max(0, Math.floor((now - createdAt) / 60000)) : null
+      };
+    });
+    res.status(200).json({ status: 'success', data: { total: queue.length, queue } });
+  } catch (error) { next(error); }
+});
+
 // GET /api/leads/winback/opportunities - Leads whose interested units became SOLD/RESERVED with available alternatives
 router.get('/winback/opportunities', async (req, res, next) => {
   try {
