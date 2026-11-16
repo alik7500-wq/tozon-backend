@@ -41,6 +41,15 @@ export class BuyerIdentityRepository {
   async contractList(telegramId){return data(await this.db.rpc('buyer_portal_contracts',{p_telegram_id:telegramId}));}
   async contractSnapshot(telegramId,dealId){return data(await this.db.rpc('buyer_portal_contract_snapshot',{p_telegram_id:telegramId,p_deal_id:dealId}));}
   async materials(telegramId,dealId){return data(await this.db.rpc('buyer_portal_materials',{p_telegram_id:telegramId,p_deal_id:dealId}));}
+  async construction(telegramId,dealId){return data(await this.db.rpc('buyer_portal_construction',{p_telegram_id:telegramId,p_deal_id:dealId}));}
+  async companyContact(){
+    try {
+      const {data:row,error}=await this.db.from('crm_document_settings').select('data').eq('id',1).maybeSingle();
+      if(error||!row?.data?.company)return null;
+      const c=row.data.company;
+      return {name:c.company_name||null,phone:c.company_phone||null,address:c.company_address||null};
+    } catch { return null; }
+  }
   async documentList(dealId,owner){return data(await this.db.from('buyer_portal_documents').select('id,title,kind,language,version,is_signed_original,status,created_at,published_at').eq('deal_id',dealId).eq('owner_lead_id',owner).order('created_at',{ascending:false}));}
   async staffDocument(dealId,id,owner){return data(await this.db.from('buyer_portal_documents').select('storage_path,mime_type,file_size,sha256').eq('deal_id',dealId).eq('id',id).eq('owner_lead_id',owner).maybeSingle());}
   async createDocument(row){return data(await this.db.rpc('buyer_portal_register_document',{p_document:row}));}

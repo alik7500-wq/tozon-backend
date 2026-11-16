@@ -29,4 +29,5 @@ create role anon;create role authenticated;create role service_role bypassrls;
  create table tours_360(id integer primary key,name text,project_id integer,is_active boolean,entity_type text,entity_id integer);
  create table panorama_360(id integer primary key,tour_id integer,name text,storage_path text,entity_type text,entity_id integer,initial_yaw numeric,initial_pitch numeric,initial_fov numeric,sort_order integer);
  create table panorama_hotspots(id integer primary key,panorama_id integer,hotspot_type text,label text,yaw numeric,pitch numeric,target_panorama_id integer);
+ create table project_media(id serial primary key,project_id integer not null,category text not null,title text not null,description text,storage_path text not null,mime_type text not null default 'image/jpeg',sort_order integer not null default 0,is_cover boolean not null default false,is_active boolean not null default true,created_at text not null,updated_at text not null);
  grant select,insert,update on all tables in schema public to service_role;grant usage,select on all sequences in schema public to service_role;

@@ -109,9 +109,17 @@ export class BuyerIdentityService {
     if(!snapshot){
       const archived=await this.repo.archiveSnapshot(telegramId(verifiedTelegramId),dealId);
       if(!archived)fail('BUYER_CONTRACT_UNAVAILABLE',404);
-      try{return projectBuyerArchive(archived);}catch{fail('BUYER_FINANCE_REVIEW_REQUIRED',409);}
+      try{
+        const projected=projectBuyerArchive(archived);
+        const company=typeof this.repo.companyContact==='function'?await this.repo.companyContact():null;
+        return company?{...projected,company}:projected;
+      }catch{fail('BUYER_FINANCE_REVIEW_REQUIRED',409);}
     }
-    try{return projectBuyerContract(snapshot);}catch{fail('BUYER_FINANCE_REVIEW_REQUIRED',409);}
+    try{
+      const projected=projectBuyerContract(snapshot);
+      const company=typeof this.repo.companyContact==='function'?await this.repo.companyContact():null;
+      return company?{...projected,company}:projected;
+    }catch{fail('BUYER_FINANCE_REVIEW_REQUIRED',409);}
   }
   async staffStatus(dealId,user,participantId) {
     const deal=await this.repo.deal(dealId); this.assertStaff(user,deal,{allowCancelled:true});

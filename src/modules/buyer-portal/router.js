@@ -2,6 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { verifyMiniAppInitData } from './telegram-auth.js';
 import { buyerEnabled, BuyerPortalError } from './identity.service.js';
+import { generateBuyerPdf } from './pdf-generator.js';
 
 export function createBuyerRouter(service, {enabled=buyerEnabled, botToken=()=>process.env.TELEGRAM_FINANCE_BOT_TOKEN,materials,communications}={}) {
   const router=Router();
@@ -38,6 +39,21 @@ export function createBuyerRouter(service, {enabled=buyerEnabled, botToken=()=>p
   router.post('/inquiries',run(req=>communications.history(req.buyer.telegramUserId,req.body?.dealId)));
   router.post('/contact',rateLimit({windowMs:60000,limit:5,keyGenerator:req=>req.buyer.telegramUserId}),run(req=>communications.contact(req.buyer.telegramUserId,req.body||{})));
   router.post('/materials',run(req=>materials.manifest(req.buyer.telegramUserId,req.body?.dealId)));
+  router.post('/construction',run(req=>materials.construction(req.buyer.telegramUserId,req.body?.dealId)));
+  router.post('/pdf',async(req,res)=>{
+    try{
+      const {dealId,kind,paymentId,language}=req.body||{};
+      if(!['CONTRACT','SCHEDULE','RECEIPT'].includes(kind))throw new BuyerPortalError('BUYER_MATERIAL_UNAVAILABLE',400);
+      if(kind==='RECEIPT'&&!/^[1-9]\d{0,12}$/.test(String(paymentId||'')))throw new BuyerPortalError('BUYER_MATERIAL_UNAVAILABLE',404);
+      const contract=await service.contract(req.buyer.telegramUserId,dealId);
+      if(kind==='SCHEDULE'&&contract.archived)throw new BuyerPortalError('BUYER_MATERIAL_UNAVAILABLE',404);
+      const pdf=await generateBuyerPdf(contract,{kind,paymentId,language:language==='ru'?'ru':'tj'});
+      if(!pdf)throw new BuyerPortalError('BUYER_MATERIAL_UNAVAILABLE',404);
+      const safeName=String(pdf.filename||'TOZON.pdf').replace(/[^A-Za-z0-9_.-]/g,'_');
+      res.set({'Content-Type':pdf.mime,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Content-Disposition':`attachment; filename="${safeName}"`});
+      res.send(pdf.buffer);
+    }catch(e){res.status(e instanceof BuyerPortalError?e.statusCode:503).json({message:e instanceof BuyerPortalError?e.message:'BUYER_MATERIAL_UNAVAILABLE'});}
+  });
   router.post('/asset',async(req,res)=>{
     try{const asset=await materials.asset(req.buyer.telegramUserId,req.body||{});
       res.set({'Content-Type':asset.mime,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store'});

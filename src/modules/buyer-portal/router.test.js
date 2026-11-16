@@ -14,8 +14,8 @@ function auth(id=101) {
 }
 let app,service,materials,communications;
 beforeEach(()=>{
-  service={requestCode:vi.fn(async()=>({challengeId:'safe'})),confirmCode:vi.fn(async()=>({verified:true})),contracts:vi.fn(async()=>[]),preferences:vi.fn(async()=>({language:'ru'})),contractList:vi.fn(async()=>[]),contract:vi.fn(async()=>({id:1}))};
-  materials={manifest:vi.fn(async()=>({plans:[],documents:[],tour:null})),asset:vi.fn(async()=>({buffer:Buffer.from('%PDF-1.7'),mime:'application/pdf',filename:'TOZON-document.pdf'}))};
+  service={requestCode:vi.fn(async()=>({challengeId:'safe'})),confirmCode:vi.fn(async()=>({verified:true})),contracts:vi.fn(async()=>[]),preferences:vi.fn(async()=>({language:'ru'})),contractList:vi.fn(async()=>[]),contract:vi.fn(async()=>({id:1,contractNumber:'001',contractDate:'2026-10-01',status:'SIGNED',property:{projectName:'TOZON',unitNumber:'7',areaM2x100:8180},summary:{currency:'USD',totalMinor:100000,paidMinor:40000,remainingMinor:60000},schedules:[],history:[{id:10,kind:'PAYMENT',number:'ПКО-10',date:'2026-11-01',amountMinor:40000,currency:'USD',status:'ACTIVE',method:'CASH'}]}))};
+  materials={manifest:vi.fn(async()=>({plans:[],documents:[],tour:null})),construction:vi.fn(async()=>({projectName:'TOZON',items:[]})),asset:vi.fn(async()=>({buffer:Buffer.from('%PDF-1.7'),mime:'application/pdf',filename:'TOZON-document.pdf'}))};
   communications={settings:vi.fn(async()=>({enabled:true,language:'tj'})),saveSettings:vi.fn(async()=>({enabled:false,language:'ru'})),notices:vi.fn(async()=>[]),read:vi.fn(async()=>({read:true})),history:vi.fn(async()=>[]),contact:vi.fn(async()=>({id:'safe'}))};
   app=express(); app.use(express.json()); app.use(createBuyerRouter(service,{enabled:()=>true,botToken:()=>botToken,materials,communications}));
 });
@@ -68,6 +68,15 @@ it('authenticates binary downloads and sends private attachment headers without 
  expect(response.headers['content-disposition']).toContain('attachment');
  await request(app).post('/materials').set('X-Telegram-Init-Data',auth()).send({dealId:1,telegramId:202}).expect(200);
  expect(materials.manifest).toHaveBeenCalledWith('101',1);
+ await request(app).post('/construction').set('X-Telegram-Init-Data',auth()).send({dealId:1,telegramId:202}).expect(200);
+ expect(materials.construction).toHaveBeenCalledWith('101',1);
+ await request(app).post('/pdf').send({dealId:1,kind:'CONTRACT'}).expect(401);
+ const pdfRes=await request(app).post('/pdf').set('X-Telegram-Init-Data',auth()).send({dealId:1,kind:'RECEIPT',paymentId:10,language:'tj',telegramId:202}).expect(200);
+ expect(service.contract).toHaveBeenCalledWith('101',1);
+ expect(pdfRes.headers['content-type']).toContain('application/pdf');
+ expect(pdfRes.headers['cache-control']).toBe('no-store');
+ expect(pdfRes.headers['x-content-type-options']).toBe('nosniff');
+ await request(app).post('/pdf').set('X-Telegram-Init-Data',auth()).send({dealId:1,kind:'RECEIPT',paymentId:999,language:'ru'}).expect(404);
 });
 
 it('binds communication endpoints to the signed Telegram identity and hides private failures',async()=>{

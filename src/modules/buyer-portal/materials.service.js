@@ -33,6 +33,20 @@ export class BuyerMaterialsService{
    tour:r.tour?{id:r.tour.id,name:r.tour.name,panoramas:r.tour.panoramas.map(p=>({id:p.id,name:p.name,yaw:p.yaw,pitch:p.pitch,fov:p.fov,hotspots:p.hotspots}))}:null,
    documents:visibleDocuments(r.documents||[]).map(({id,title,kind,language,version,isSignedOriginal,publishedAt})=>({id,title,kind,language,version,isSignedOriginal,publishedAt}))};
  }
+ async construction(tg,dealId){
+  if(!/^[1-9]\d{0,9}$/.test(String(dealId))||Number(dealId)>2147483647)return unavailable();
+  if(typeof this.repo.construction!=='function')return {projectName:null,lastUpdatedAt:null,latestTitle:null,latestDescription:null,items:[]};
+  const r=await this.repo.construction(String(tg),dealId);
+  if(!r)return unavailable();
+  const items=(r.items||[]).map(({id,title,description,createdAt,updatedAt})=>({id,title,description:description||null,createdAt,updatedAt}));
+  const latest=items[0]||null;
+  return {projectName:r.projectName||null,lastUpdatedAt:latest?.updatedAt||latest?.createdAt||null,latestTitle:latest?.title||null,latestDescription:latest?.description||null,items};
+ }
+ locateConstruction(r,id){
+  const item=(r?.items||[]).find(x=>String(x.id)===String(id));
+  if(!item||!item.storagePath)return unavailable();
+  return {path:item.storagePath,source:'project-media'};
+ }
  locate(r,type,id){
   if(type==='PLAN_2D'&&r.plan2d)return {path:r.plan2d,source:'PLAN'};
   if(type==='PLAN_3D'&&r.plan3d)return {path:r.plan3d,source:'PLAN'};
@@ -45,6 +59,18 @@ export class BuyerMaterialsService{
   return unavailable();
  }
  async asset(tg,{dealId,type,id}){
+  if(type==='CONSTRUCTION'){
+   if(!/^[1-9]\d{0,9}$/.test(String(dealId))||Number(dealId)>2147483647||typeof this.repo.construction!=='function')return unavailable();
+   const before=this.locateConstruction(await this.repo.construction(String(tg),dealId),id);
+   if(!/^[A-Za-z0-9_./-]+$/.test(before.path)||before.path.includes('..'))return unavailable();
+   const buffer=await this.storage.download('project-media',before.path);
+   if(buffer.length>max)return unavailable();
+   const after=this.locateConstruction(await this.repo.construction(String(tg),dealId),id);
+   if(before.path!==after.path)return unavailable();
+   const mime=imageMime(buffer);
+   if(!mime)return unavailable();
+   return {buffer,mime,filename:null};
+  }
   const before=this.locate(await this.raw(tg,dealId),type,id);let buffer;
   if(before.source==='PLAN'){
    const response=await this.fetchFn(safePlanUrl(before.path),{redirect:'error',signal:AbortSignal.timeout(15000)});
