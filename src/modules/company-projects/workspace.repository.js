@@ -1,6 +1,16 @@
 import { getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
+export async function readWorkspaceCashBook(actor,project,cashDesk=null){
+ const {data,error}=await getServiceDB().rpc('read_company_project_cash_book',{p_actor:actor,p_project:project,p_cash_desk:cashDesk});
+ if(error?.code==='42501')throw new AppError('Для кассовой книги нужны права на поступления и расходы этого проекта',403);
+ if(error?.code==='P0002')throw new AppError('Касса не найдена в выбранном проекте',404);
+ if(error?.code==='23514')throw new AppError('В кассовой истории есть противоречивые связи с проектом. Обратитесь к администратору для сверки.',409);
+ if(error?.code==='54000')throw new AppError('В кассе более 5000 документов. Для полного отчёта обратитесь к администратору.',422);
+ if(error)throw error;
+ return data;
+}
+
 export async function readWorkspace(actor, project, resource, { record = null, after = '', limit = 50 } = {}) {
   const { data, error } = await getServiceDB().rpc('read_company_project_workspace', {
     p_actor: actor, p_project: project, p_resource: resource, p_record: record, p_after: after, p_limit: limit,

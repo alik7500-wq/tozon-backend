@@ -3,10 +3,10 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
-const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn(),overview:vi.fn(),inventory:vi.fn(),stock:vi.fn()}));
+const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn(),overview:vi.fn(),inventory:vi.fn(),stock:vi.fn(),cashBook:vi.fn()}));
 vi.mock('../users/users.repository.js',()=>({UsersRepository:{findById:mocks.findUser}}));
 vi.mock('./workspace.commands.js',async original=>{const actual=await original();return {...actual,executeWorkspaceCommand:mocks.command};});
-vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options,readWorkspaceInventory:mocks.inventory,readWorkspaceOverview:mocks.overview,readWorkspaceStock:mocks.stock}));
+vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options,readWorkspaceInventory:mocks.inventory,readWorkspaceOverview:mocks.overview,readWorkspaceStock:mocks.stock,readWorkspaceCashBook:mocks.cashBook}));
 vi.mock('../../db/connection.js',()=>({getServiceDB:vi.fn()}));
 import router from './workspace.router.js';
 import { workspaceBoundary } from './workspace.boundary.js';
@@ -23,6 +23,13 @@ beforeEach(()=>{
  mocks.read.mockResolvedValue({records:[{id:1}],has_more:false});
 });
 describe('workspace route with real auth and global boundary',()=>{
+ it('reads the cash book using verified identity and strict cash-desk parameters',async()=>{
+  mocks.cashBook.mockResolvedValue({records:[]});const path=`/api/project-workspace/${project}/cash-book`;
+  expect((await auth(request(app).get(path))).headers['cache-control']).toBe('no-store');expect(mocks.cashBook).toHaveBeenCalledWith(10,project,null);
+  expect((await auth(request(app).get(path+`?cash_desk_id=${project}`))).status).toBe(200);expect(mocks.cashBook).toHaveBeenLastCalledWith(10,project,project);
+  for(const query of ['actor=2','cash_desk_id=1','limit=1',`cash_desk_id=${project}&cash_desk_id=${project}`])expect((await auth(request(app).get(path+'?'+query))).status).toBe(400);
+  expect(mocks.cashBook).toHaveBeenCalledTimes(2);
+ });
  it('reads stock only through verified identity and strict own-warehouse parameters',async()=>{
   mocks.stock.mockResolvedValue({records:[]});const path=`/api/project-workspace/${project}/stock`;
   expect((await auth(request(app).get(path))).status).toBe(200);expect(mocks.stock).toHaveBeenCalledWith(10,project,null);
