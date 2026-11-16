@@ -280,14 +280,15 @@ export class RoundRobinService {
       inFlightWorkloadReservations.set(repId, (inFlightWorkloadReservations.get(repId) || 0) + 1);
 
       // Auto-release after 15 seconds in case caller fails before DB write
-      const timer = setTimeout(() => {
-        RoundRobinService.releaseInFlight(repId);
-      }, 15000);
-
+      let released = false;
       const releaseSlot = () => {
+        if (released) return;
+        released = true;
         clearTimeout(timer);
         RoundRobinService.releaseInFlight(repId);
       };
+      const timer = setTimeout(releaseSlot, 15000);
+      timer.unref?.();
 
       return {
         responsible_user_id: repId,
