@@ -34,7 +34,7 @@ export async function processScheduledLeadQueue({ db = getServiceDB(), limit = 1
       .is('archived_at', null)
       .is('responsible_user_id', null)
       .in('status', ['NEW', 'IN_PROGRESS', 'NEGOTIATION'])
-      .gte('created_at', cutoff)
+      .gte('created_at', new Date(cutoff).toISOString())
       .order('created_at', { ascending: true })
       .limit(limit);
     if (error) throw error;
