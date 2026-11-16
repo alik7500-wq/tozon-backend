@@ -321,7 +321,19 @@ export class LeadsRepository {
 
         if (!rpcErr && rpcResult && rpcResult.success) {
           const updatedLead = await this.findById(cleanId);
-          if (cleanTargetId) {
+          // Atomic RPC reports PRESERVED_EXISTING as success, but this is not a
+          // new assignment. Do not generate duplicate tasks or notifications.
+          if (rpcResult.status === 'PRESERVED_EXISTING') {
+            return updatedLead;
+          }
+          if (requireAtomic && (
+            rpcResult.status !== 'ASSIGNED' ||
+            Number(rpcResult.responsible_user_id) !== Number(cleanTargetId)
+          )) {
+            throw new AppError('Атомарное назначение не подтверждено: лид оставлен в текущем состоянии', 409);
+          }
+          if (cleanTargetId && rpcResult.status === 'ASSIGNED' &&
+              Number(rpcResult.responsible_user_id) === Number(cleanTargetId)) {
             TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
               console.warn('Failed to generate call task on lead assigned:', err);
             });
