@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { assertWorkspacePilotRuntime, isProjectOnlyUser } from './workspace.boundary.js';
-import { readWorkspace, readWorkspaceOptions, readWorkspaceOverview, readWorkspaceInventory, readWorkspaceStock, readWorkspaceCashBook } from './workspace.repository.js';
+import { readWorkspace, readWorkspaceOptions, readWorkspaceOverview, readWorkspaceInventory, readWorkspaceStock, readWorkspaceCashBook, searchWorkspace } from './workspace.repository.js';
 import { parseWorkspaceCommand, executeWorkspaceCommand } from './workspace.commands.js';
 import {offerSchema,prepareOffer} from './workspace.offer.js';
 
@@ -85,6 +85,19 @@ router.get('/projects', async (req, res, next) => {
 });
 router.get('/:project/overview',async(req,res,next)=>{
  try{const project=parse(z.uuid(),req.params.project);parse(z.object({}).strict(),req.query);res.json({status:'success',data:await readWorkspaceOverview(req.user.id,project)});}catch(e){next(e);}
+});
+router.get('/:project/search',async(req,res,next)=>{
+ try{
+  const project=parse(z.uuid(),req.params.project),query=parse(z.object({q:z.string().trim().min(1).max(100).refine(q=>q.length>=2||/^[0-9]$/.test(q)).regex(/^[^\u0000-\u001f\u007f]+$/u)}).strict(),req.query);
+  res.json({status:'success',data:await searchWorkspace(req.user.id,project,query)});
+ }catch(e){next(e);}
+});
+router.get('/:project/search/:resource/:record',async(req,res,next)=>{
+ try{
+  const project=parse(z.uuid(),req.params.project),resource=parse(z.enum(['leads','deals','units']),req.params.resource);
+  const record=parse(z.string().regex(/^[1-9]\d{0,9}$/).transform(Number).refine(n=>n<=2147483647),req.params.record);parse(z.object({}).strict(),req.query);
+  res.json({status:'success',data:await searchWorkspace(req.user.id,project,{resource,record})});
+ }catch(e){next(e);}
 });
 router.get('/:project/inventory',async(req,res,next)=>{
  try{

@@ -3,10 +3,10 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
-const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn(),overview:vi.fn(),inventory:vi.fn(),stock:vi.fn(),cashBook:vi.fn()}));
+const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn(),overview:vi.fn(),inventory:vi.fn(),stock:vi.fn(),cashBook:vi.fn(),search:vi.fn()}));
 vi.mock('../users/users.repository.js',()=>({UsersRepository:{findById:mocks.findUser}}));
 vi.mock('./workspace.commands.js',async original=>{const actual=await original();return {...actual,executeWorkspaceCommand:mocks.command};});
-vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options,readWorkspaceInventory:mocks.inventory,readWorkspaceOverview:mocks.overview,readWorkspaceStock:mocks.stock,readWorkspaceCashBook:mocks.cashBook}));
+vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options,readWorkspaceInventory:mocks.inventory,readWorkspaceOverview:mocks.overview,readWorkspaceStock:mocks.stock,readWorkspaceCashBook:mocks.cashBook,searchWorkspace:mocks.search}));
 vi.mock('../../db/connection.js',()=>({getServiceDB:vi.fn()}));
 import router from './workspace.router.js';
 import { workspaceBoundary } from './workspace.boundary.js';
@@ -23,6 +23,13 @@ beforeEach(()=>{
  mocks.read.mockResolvedValue({records:[{id:1}],has_more:false});
 });
 describe('workspace route with real auth and global boundary',()=>{
+ it('validates search and preview parameters and always uses the verified actor',async()=>{
+  mocks.search.mockResolvedValue({groups:[]});const path=`/api/project-workspace/${project}/search`;
+  expect((await auth(request(app).get(path+'?q=Plaza'))).headers['cache-control']).toBe('no-store');expect(mocks.search).toHaveBeenCalledWith(10,project,{q:'Plaza'});
+  expect((await auth(request(app).get(path+'/leads/80'))).status).toBe(200);expect(mocks.search).toHaveBeenLastCalledWith(10,project,{resource:'leads',record:80});
+  for(const suffix of ['?q=a','?q=aa&actor=30','?q=aa&q=bb','/leads/0','/leads/2147483648','/expenses/1','/units/1?actor=30'])expect((await auth(request(app).get(path+suffix))).status).toBe(400);
+  expect(mocks.search).toHaveBeenCalledTimes(2);
+ });
  it('reads the cash book using verified identity and strict cash-desk parameters',async()=>{
   mocks.cashBook.mockResolvedValue({records:[]});const path=`/api/project-workspace/${project}/cash-book`;
   expect((await auth(request(app).get(path))).headers['cache-control']).toBe('no-store');expect(mocks.cashBook).toHaveBeenCalledWith(10,project,null);

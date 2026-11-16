@@ -1,6 +1,15 @@
 import { getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 
+export async function searchWorkspace(actor,project,{q=null,resource=null,record=null}={}){
+ const {data,error}=await getServiceDB().rpc('search_company_project_workspace',{p_actor:actor,p_project:project,p_query:q,p_resource:resource,p_record:record});
+ if(error?.code==='42501')throw new AppError('Нет доступа к поиску в этом проекте или разделе',403);
+ if(error?.code==='P0002')throw new AppError('Запись не найдена или больше недоступна',404);
+ if(error?.code==='22023')throw new AppError('Введите от 2 до 100 символов или одну цифру номера',400);
+ if(error)throw error;
+ return data;
+}
+
 export async function readWorkspaceCashBook(actor,project,cashDesk=null){
  const {data,error}=await getServiceDB().rpc('read_company_project_cash_book',{p_actor:actor,p_project:project,p_cash_desk:cashDesk});
  if(error?.code==='42501')throw new AppError('Для кассовой книги нужны права на поступления и расходы этого проекта',403);
