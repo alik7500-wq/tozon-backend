@@ -10,6 +10,7 @@ create table if not exists public.lead_queue_scheduler_control (
 );
 insert into public.lead_queue_scheduler_control(id) values (1)
 on conflict (id) do nothing;
+alter table public.lead_queue_scheduler_control enable row level security;
 revoke all on public.lead_queue_scheduler_control from public, anon, authenticated;
 grant select on public.lead_queue_scheduler_control to service_role;
 
