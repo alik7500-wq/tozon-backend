@@ -8,6 +8,7 @@ import { AppError } from '../../shared/errors/errorHandler.js';
 import { normalizeRow, digest } from './intake.validation.js';
 import { validateSettings, previewImport, commitImport, dbCheck } from './intake.service.js';
 import { readIntakeFile } from './intake.files.js';
+import { assignNewIntakeLead } from './intake.assignment.js';
 const router=Router();
 const wrap=fn=>async(req,res,next)=>{try{await fn(req,res)}catch(error){next(error)}};
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -25,6 +26,8 @@ router.post('/google/:id',limitWebhook,wrap(async(req,res)=>{
  const key=req.body.external_key;
  if(typeof key!=='string'||!key.trim()||key.length>128)throw new AppError('Отсутствует уникальный идентификатор ответа формы',422);
  const result=dbCheck(await getServiceDB().rpc('crm_intake_lead',{p_scope:`GOOGLE:${config.id}`,p_key:key,p_lead:data,p_settings:{},p_actor:null,p_integration:config.id}));
+ // Only newly created, unassigned leads are eligible; duplicate/repeat inquiries preserve ownership.
+ await assignNewIntakeLead(result, { hasExplicitManager: config.manager_id != null });
  // No customer details or CRM credentials are returned to the external caller.
  res.json({data:result});
 }));
