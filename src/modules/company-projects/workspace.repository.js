@@ -34,3 +34,13 @@ export async function readWorkspaceInventory(actor,project,complex=null){
   if(error)throw error;
   return data;
 }
+
+export async function readWorkspaceStock(actor,project,warehouse=null){
+ const {data,error}=await getServiceDB().rpc('read_company_project_stock',{p_actor:actor,p_project:project,p_warehouse:warehouse});
+ if(error?.code==='42501')throw new AppError('Нет доступа к складам этого проекта',403);
+ if(error?.code==='P0002')throw new AppError('Склад не найден в выбранном проекте',404);
+ if(error?.code==='23514')throw new AppError('В складской истории есть противоречивые связи с проектом. Обратитесь к администратору для проверки.',409);
+ if(error?.code==='54000')throw new AppError('В складе более 5000 строк остатков. Обратитесь к администратору для разделения отчёта.',422);
+ if(error)throw error;
+ return data;
+}

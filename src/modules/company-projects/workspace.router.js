@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { protect } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { assertWorkspacePilotRuntime, isProjectOnlyUser } from './workspace.boundary.js';
-import { readWorkspace, readWorkspaceOptions, readWorkspaceOverview, readWorkspaceInventory } from './workspace.repository.js';
+import { readWorkspace, readWorkspaceOptions, readWorkspaceOverview, readWorkspaceInventory, readWorkspaceStock } from './workspace.repository.js';
 import { parseWorkspaceCommand, executeWorkspaceCommand } from './workspace.commands.js';
 import {offerSchema,prepareOffer} from './workspace.offer.js';
 
@@ -91,6 +91,12 @@ router.get('/:project/inventory',async(req,res,next)=>{
   const project=parse(z.uuid(),req.params.project);
   const query=parse(z.object({complex_id:z.string().regex(/^[1-9]\d{0,9}$/).transform(Number).refine(n=>n<=2147483647).optional()}).strict(),req.query);
   res.json({status:'success',data:await readWorkspaceInventory(req.user.id,project,query.complex_id??null)});
+ }catch(e){next(e);}
+});
+router.get('/:project/stock',async(req,res,next)=>{
+ try{
+  const project=parse(z.uuid(),req.params.project),query=parse(z.object({warehouse_id:z.uuid().optional()}).strict(),req.query);
+  res.json({status:'success',data:await readWorkspaceStock(req.user.id,project,query.warehouse_id??null)});
  }catch(e){next(e);}
 });
 router.post('/:project/commands', async (req, res, next) => {

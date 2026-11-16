@@ -3,10 +3,10 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
-const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn(),overview:vi.fn(),inventory:vi.fn()}));
+const mocks=vi.hoisted(()=>({findUser:vi.fn(),read:vi.fn(),command:vi.fn(),options:vi.fn(),overview:vi.fn(),inventory:vi.fn(),stock:vi.fn()}));
 vi.mock('../users/users.repository.js',()=>({UsersRepository:{findById:mocks.findUser}}));
 vi.mock('./workspace.commands.js',async original=>{const actual=await original();return {...actual,executeWorkspaceCommand:mocks.command};});
-vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options,readWorkspaceInventory:mocks.inventory,readWorkspaceOverview:mocks.overview}));
+vi.mock('./workspace.repository.js',()=>({readWorkspace:mocks.read,readWorkspaceOptions:mocks.options,readWorkspaceInventory:mocks.inventory,readWorkspaceOverview:mocks.overview,readWorkspaceStock:mocks.stock}));
 vi.mock('../../db/connection.js',()=>({getServiceDB:vi.fn()}));
 import router from './workspace.router.js';
 import { workspaceBoundary } from './workspace.boundary.js';
@@ -23,6 +23,14 @@ beforeEach(()=>{
  mocks.read.mockResolvedValue({records:[{id:1}],has_more:false});
 });
 describe('workspace route with real auth and global boundary',()=>{
+ it('reads stock only through verified identity and strict own-warehouse parameters',async()=>{
+  mocks.stock.mockResolvedValue({records:[]});const path=`/api/project-workspace/${project}/stock`;
+  expect((await auth(request(app).get(path))).status).toBe(200);expect(mocks.stock).toHaveBeenCalledWith(10,project,null);
+  expect((await auth(request(app).get(path+`?warehouse_id=${project}`))).headers['cache-control']).toBe('no-store');
+  expect(mocks.stock).toHaveBeenLastCalledWith(10,project,project);
+  for(const query of ['actor=2','warehouse_id=1','limit=1'])expect((await auth(request(app).get(path+'?'+query))).status).toBe(400);
+  expect(mocks.stock).toHaveBeenCalledTimes(2);
+ });
  it('requires verified authentication and never trusts query actor overrides',async()=>{
   expect((await request(app).get('/api/project-workspace/projects')).status).toBe(401);
   expect((await auth(request(app).get(`/api/project-workspace/${project}/units?actor=999`))).status).toBe(400);
