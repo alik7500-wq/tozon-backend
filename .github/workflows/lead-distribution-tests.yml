@@ -27,4 +27,4 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Run lead distribution tests
-        run: npx vitest run src/modules/leads/roundRobin.service.test.js src/modules/lead-intake/intake.assignment.test.js --fileParallelism=false
+        run: npx vitest run src/modules/leads/roundRobin.service.test.js src/modules/lead-intake/intake.assignment.test.js src/modules/leads/leadQueueScheduler.service.test.js --fileParallelism=false
