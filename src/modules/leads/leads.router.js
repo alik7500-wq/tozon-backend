@@ -276,8 +276,21 @@ router.post('/distribution/process-queue', async (req, res, next) => {
     if (!Number.isInteger(limit) || limit < 1 || limit > 25) {
       return next(new AppError('Параметр limit должен быть целым числом от 1 до 25', 400));
     }
+    // Historical pool leads require explicit approval. Never sweep the entire pool
+    // automatically: it may contain older leads awaiting management review.
+    const approvedIds = req.body?.lead_ids;
+    if (!Array.isArray(approvedIds) || approvedIds.length === 0 || approvedIds.length > 25 ||
+        approvedIds.some(id => !/^[1-9]\\d*$/.test(String(id))) ||
+        new Set(approvedIds.map(String)).size !== approvedIds.length) {
+      return next(new AppError('Укажите уникальные lead_ids (от 1 до 25) для подтверждённой обработки', 400));
+    }
+    if (approvedIds.length > limit) {
+      return next(new AppError('Количество lead_ids не должно превышать limit', 400));
+    }
+    const approvedSet = new Set(approvedIds.map(String));
     const candidates = (await LeadsRepository.findAll({ unassigned: true }))
-      .filter(lead => ['NEW', 'IN_PROGRESS', 'NEGOTIATION'].includes(lead.status))
+      .filter(lead => approvedSet.has(String(lead.id)) &&
+        ['NEW', 'IN_PROGRESS', 'NEGOTIATION'].includes(lead.status))
       .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
       .slice(0, limit);
 
