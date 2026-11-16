@@ -296,7 +296,7 @@ export class LeadsRepository {
    * Validates target user is an active sales representative (is_sales_rep = true).
    * Concurrency-guarded to prevent parallel overwrites of the same lead.
    */
-  static async assignManager(leadId, targetUserId, reason = null, actorUserId = null, isManual = true) {
+  static async assignManager(leadId, targetUserId, reason = null, actorUserId = null, isManual = true, requireAtomic = false) {
     const cleanId = parseRequiredBigInt(leadId, 'leadId');
     const lockKey = String(cleanId);
     if (activeLeadAssignmentLocks.has(lockKey)) {
@@ -335,7 +335,14 @@ export class LeadsRepository {
         }
       } catch (atomicErr) {
         if (atomicErr instanceof AppError) throw atomicErr;
-        // RPC not defined yet on DB; seamlessly continue to transactional fallback below
+        if (requireAtomic) {
+          throw new AppError('Атомарное назначение недоступно; заявка оставлена в общем пуле', 503);
+        }
+        // Legacy manual assignment fallback only. Automated queue must use atomic RPC.
+      }
+
+      if (requireAtomic) {
+        throw new AppError('Атомарное назначение не подтверждено; заявка оставлена в общем пуле', 503);
       }
 
       const db = getDB();
