@@ -263,6 +263,59 @@ router.get('/distribution/queue', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// POST /api/leads/distribution/process-queue
+// Explicit admin action only; scheduled execution requires a separate authenticated worker.
+// The endpoint does not override existing owners and respects distribution settings.
+router.post('/distribution/process-queue', async (req, res, next) => {
+  try {
+    if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+      return next(new AppError('Обработка очереди доступна только руководителю или администратору', 403));
+    }
+    const rawLimit = req.body?.limit ?? 10;
+    const limit = Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 25) {
+      return next(new AppError('Параметр limit должен быть целым числом от 1 до 25', 400));
+    }
+    const candidates = (await LeadsRepository.findAll({ unassigned: true }))
+      .filter(lead => ['NEW', 'IN_PROGRESS', 'NEGOTIATION'].includes(lead.status))
+      .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+      .slice(0, limit);
+
+    const results = [];
+    for (const candidate of candidates) {
+      // Recheck immediately before each assignment: another worker or manager may have taken it.
+      const current = await LeadsRepository.findById(candidate.id);
+      if (!current || current.responsible_user_id ||
+          !['NEW', 'IN_PROGRESS', 'NEGOTIATION'].includes(current.status)) {
+        results.push({ id: candidate.id, status: 'SKIPPED_CHANGED' });
+        continue;
+      }
+      const distribution = await RoundRobinService.resolveAssignment(null, current.responsible_user_id);
+      try {
+        if (!distribution.responsible_user_id) {
+          results.push({ id: candidate.id, status: 'IN_POOL', reason: distribution.reason });
+          // No eligible rep or disabled distribution: avoid hammering subsequent candidates.
+          break;
+        }
+        // The atomic assignment RPC provides the cross-instance assignment guard.
+        const assigned = await LeadsRepository.assignManager(
+          candidate.id, distribution.responsible_user_id,
+          'Автоматическое распределение из общего пула', req.user.id, false
+        );
+        results.push({ id: candidate.id, status: 'ASSIGNED', responsible_user_id: assigned.responsible_user_id });
+      } catch (error) {
+        results.push({ id: candidate.id, status: 'ERROR', reason: error?.message || 'Assignment failed' });
+      } finally {
+        distribution.releaseSlot?.();
+      }
+    }
+    res.status(200).json({
+      status: 'success',
+      data: { processed: results.length, assigned: results.filter(r => r.status === 'ASSIGNED').length, results }
+    });
+  } catch (error) { next(error); }
+});
+
 // GET /api/leads/winback/opportunities - Leads whose interested units became SOLD/RESERVED with available alternatives
 router.get('/winback/opportunities', async (req, res, next) => {
   try {
