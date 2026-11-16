@@ -300,8 +300,12 @@ router.post('/distribution/process-queue', async (req, res, next) => {
         // The atomic assignment RPC provides the cross-instance assignment guard.
         const assigned = await LeadsRepository.assignManager(
           candidate.id, distribution.responsible_user_id,
-          'Автоматическое распределение из общего пула', req.user.id, false
+          'Автоматическое распределение из общего пула', req.user.id, false, true
         );
+        if (Number(assigned?.responsible_user_id) !== Number(distribution.responsible_user_id)) {
+          results.push({ id: candidate.id, status: 'SKIPPED_CHANGED' });
+          continue;
+        }
         results.push({ id: candidate.id, status: 'ASSIGNED', responsible_user_id: assigned.responsible_user_id });
       } catch (error) {
         results.push({ id: candidate.id, status: 'ERROR', reason: error?.message || 'Assignment failed' });
