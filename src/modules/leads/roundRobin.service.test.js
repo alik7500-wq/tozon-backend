@@ -104,6 +104,27 @@ describe('lead distribution safety', () => {
     expect(result.responsible_user_id).toBeNull();
   });
 
+  it('does not oversubscribe capacity during concurrent requests', async () => {
+    mocks.getSettings.mockResolvedValue({ ...settings, maxOpenLeadsPerRep: 1 });
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => RoundRobinService.resolveAssignment())
+    );
+    const assigned = results.filter(r => r.responsible_user_id !== null);
+    expect(assigned).toHaveLength(2);
+    expect(new Set(assigned.map(r => r.responsible_user_id)).size).toBe(2);
+    for (const result of assigned) result.releaseSlot();
+  });
+
+  it('releasing a reservation twice does not free another request slot', async () => {
+    mocks.getSettings.mockResolvedValue({ ...settings, maxOpenLeadsPerRep: 1 });
+    const first = await RoundRobinService.resolveAssignment();
+    const second = await RoundRobinService.resolveAssignment();
+    first.releaseSlot();
+    first.releaseSlot();
+    expect(RoundRobinService.getInFlightWorkload(second.responsible_user_id)).toBe(1);
+    second.releaseSlot();
+  });
+
   it('releases the reserved slot after successful selection', async () => {
     const result = await RoundRobinService.resolveAssignment();
     expect([3, 11]).toContain(result.responsible_user_id);
