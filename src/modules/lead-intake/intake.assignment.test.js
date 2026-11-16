@@ -39,12 +39,15 @@ describe('new intake lead assignment', () => {
   it('assigns only new leads through atomic RPC and releases slot', async () => {
     expect(await assignNewIntakeLead({ outcome: 'CREATED', lead_id: 9 })).toBe(true);
     expect(mocks.assignManager).toHaveBeenCalledWith(9, 3, 'Auto', null, false, true);
-    expect(mocks.resolveAssignment.mock.results[0].value).toBeDefined();
+    const selection = await mocks.resolveAssignment.mock.results[0].value;
+    expect(selection.releaseSlot).toHaveBeenCalledOnce();
   });
 
   it('keeps saved intake successful if assignment fails', async () => {
     mocks.assignManager.mockRejectedValue(new Error('Database unavailable'));
     expect(await assignNewIntakeLead({ outcome: 'CREATED', lead_id: 9 })).toBe(false);
+    const selection = await mocks.resolveAssignment.mock.results[0].value;
+    expect(selection.releaseSlot).toHaveBeenCalledOnce();
   });
 
   it('leaves lead unassigned when no rep is available', async () => {
