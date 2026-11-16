@@ -303,7 +303,23 @@ router.post('/', async (req, res, next) => {
       payload.responsible_user_id = req.user.id;
     }
 
-    const lead = await LeadsRepository.create(payload);
+    // CRM-created leads follow the same distribution policy as webhook leads.
+    // An explicit owner (including a manager creating their own lead) is preserved.
+    const hasExplicitOwner = payload.responsible_user_id !== null
+      && payload.responsible_user_id !== undefined
+      && payload.responsible_user_id !== '';
+    let distribution;
+    let lead;
+    try {
+      if (!hasExplicitOwner) {
+        distribution = await RoundRobinService.resolveAssignment();
+        payload.responsible_user_id = distribution.responsible_user_id;
+        payload.assigned_at = distribution.assigned_at;
+      }
+      lead = await LeadsRepository.create(payload);
+    } finally {
+      distribution?.releaseSlot?.();
+    }
 
     if (lead.responsible_user_id) {
       await TasksService.onLeadCreated(lead, parseOptionalBigInt(req.user.id) || 1);
