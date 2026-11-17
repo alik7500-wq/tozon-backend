@@ -69,4 +69,47 @@ describe('scheduled lead queue safety', () => {
     await expect(processScheduledLeadQueue({ db })).rejects.toEqual({ message: 'unavailable' });
     expect(release).toHaveBeenCalledOnce();
   });
+  it('assigns three new leads across two available managers without touching older records', async () => {
+    const leads = [101, 102, 103].map(id => ({
+      id, status: 'NEW', responsible_user_id: null
+    }));
+    const { db, query } = mockDb(leads);
+    mocks.findById.mockImplementation(async id => ({
+      id, status: 'NEW', responsible_user_id: null
+    }));
+    mocks.resolve
+      .mockResolvedValueOnce({ responsible_user_id: 3, releaseSlot: vi.fn() })
+      .mockResolvedValueOnce({ responsible_user_id: 11, releaseSlot: vi.fn() })
+      .mockResolvedValueOnce({ responsible_user_id: 3, releaseSlot: vi.fn() });
+    mocks.assignManager.mockImplementation(async (_id, userId) => ({
+      responsible_user_id: userId
+    }));
+    const result = await processScheduledLeadQueue({ db });
+    expect(result).toMatchObject({ status: 'COMPLETED', processed: 3, assigned: 3 });
+    expect(mocks.assignManager.mock.calls.map(call => [call[0], call[1]])).toEqual([
+      [101, 3], [102, 11], [103, 3]
+    ]);
+    expect(query.gte).toHaveBeenCalledWith('created_at', new Date(cutoff).toISOString());
+    expect(query.limit).toHaveBeenCalledWith(10);
+  });
+  it('stops immediately when distribution is disabled during a batch', async () => {
+    const { db } = mockDb([
+      { id: 101, status: 'NEW', responsible_user_id: null },
+      { id: 102, status: 'NEW', responsible_user_id: null }
+    ]);
+    mocks.settings
+      .mockResolvedValueOnce({ state: 'SUCCESS', enabled: true })
+      .mockResolvedValueOnce({ state: 'SUCCESS', enabled: true })
+      .mockResolvedValueOnce({ state: 'SUCCESS', enabled: false });
+    const result = await processScheduledLeadQueue({ db });
+    expect(result).toMatchObject({ status: 'STOPPED', assigned: 1 });
+    expect(mocks.assignManager).toHaveBeenCalledTimes(1);
+  });
+  it('does not assign anything when the distribution setting is disabled', async () => {
+    const { db } = mockDb();
+    mocks.settings.mockResolvedValue({ state: 'SUCCESS', enabled: false });
+    expect((await processScheduledLeadQueue({ db })).status).toBe('DISTRIBUTION_DISABLED');
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
 });
