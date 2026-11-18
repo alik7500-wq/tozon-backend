@@ -506,8 +506,12 @@ export class SmsService {
         throw new AppError(payCtx?.reason || 'Платёж не найден для формирования шаблона', 400);
       }
 
-      if ((!language || language === 'ru') && payCtx.isMultiCurrency && code === 'PAYMENT_RECEIVED' && !tmplObj?.customized_at && (!text || text === tmplObj?.text)) {
-        resolvedText = 'Уважаемый(ая) {{client_name}}! По договору №{{contract_number}} принята оплата {{payment_amount}} TJS по курсу {{exchange_rate}} (эквивалент {{payment_equivalent}} USD). Всего оплачено {{total_paid}} USD. Остаток: {{remaining_balance}} USD. Спасибо! TOZON-PLAZA.';
+      if (payCtx.isMultiCurrency && code === 'PAYMENT_RECEIVED' && !tmplObj?.customized_at && (!text || text === tmplObj?.text)) {
+        // Both languages must show the actual TJS payment, applied exchange rate and USD equivalent.
+        // All financial figures come from the same authoritative payment snapshot.
+        resolvedText = language === 'tj'
+          ? 'Муҳтарам {{client_name}}! Тибқи шартномаи №{{contract_number}} пардохти {{payment_amount}} TJS бо қурби {{exchange_rate}} (баробар ба {{payment_equivalent}} USD) қабул шуд. Ҳамагӣ пардохтшуда: {{total_paid}} USD. Бақия: {{remaining_balance}} USD. Ташаккур! TOZON-PLAZA.'
+          : 'Уважаемый(ая) {{client_name}}! По договору №{{contract_number}} принята оплата {{payment_amount}} TJS по курсу {{exchange_rate}} (эквивалент {{payment_equivalent}} USD). Всего оплачено {{total_paid}} USD. Остаток: {{remaining_balance}} USD. Спасибо! TOZON-PLAZA.';
         resolvedText = resolvedText.replace(/\{\{\s*client_name\s*\}\}/g, clientName);
       }
 
