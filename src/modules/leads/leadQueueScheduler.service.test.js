@@ -37,6 +37,10 @@ describe('scheduled lead queue safety', () => {
     mocks.resolve.mockResolvedValue({ responsible_user_id: 3, releaseSlot: vi.fn() });
     mocks.assignManager.mockResolvedValue({ responsible_user_id: 3 });
   });
+  it('does not require a database connection when scheduler is disabled', async () => {
+    delete process.env.LEAD_QUEUE_SCHEDULER_ENABLED;
+    await expect(processScheduledLeadQueue()).resolves.toMatchObject({ status: 'DISABLED' });
+  });
   it('requires explicit environment opt-in', async () => {
     delete process.env.LEAD_QUEUE_SCHEDULER_ENABLED;
     const { db } = mockDb();
