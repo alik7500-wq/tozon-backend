@@ -4,6 +4,11 @@ const expense = (patch = {}) => ({ id: 1, amount_minor: 10001, currency: 'USD', 
 const allocation = (patch = {}) => ({ expense_id: 1, mode: 'SHARED', shares: [{ building_id: 3, weight: 200 }, { building_id: 4, weight: 100 }], ...patch });
 const report = (patch = {}) => buildCostReport({ buildings: [{ id: 3 }, { id: 4 }], bases: [{ building_id: 3, sellable_area_m2: 200 }, { building_id: 4, sellable_area_m2: 100 }], registry: {}, expenses: [expense()], allocations: [allocation()], advances: [], asOf: '2026-10-18', ...patch });
 describe('Paid block costs', () => {
+  it('automatically excludes an RKO employee advance even with an existing allocation', () => {
+    const r=report({expenses:[expense({settlement_account:'EMPLOYEE'})]});
+    expect(r.rows[0].state).toBe('AUTO_EXCLUDED');
+    expect(r.totals.allocated_usd_minor).toBe(0);
+  });
   it('splits cents exactly and calculates using total sellable area', () => {
     const r = report();
     expect(r.blocks.map(b => b.amount_usd_minor)).toEqual([6667, 3334]);

@@ -8,7 +8,7 @@ export function exclusionReason(e, advanceIds = new Set()) {
   if (e.status && e.status !== 'ACTIVE') return 'РКО не проведён';
   if (e.transfer_id || /TRANSFER/.test(e.operation_type || '') || ['INTERNAL_TRANSFER', 'Внутренние перемещения между кассами'].includes(e.category)) return 'Перемещение между кассами';
   if (e.operation_type === 'CONVERSION' || ['CURRENCY_CONVERSION', 'Конвертация валюты'].includes(e.category) || (e.conversion_id && !e.conversion_expense_id)) return 'Обмен валюты';
-  if (advanceIds.has(e.id)) return 'Выдача под отчёт — ещё не расход';
+  if (e.settlement_account === 'EMPLOYEE' || advanceIds.has(e.id)) return 'Выдача под отчёт — ещё не расход';
   return null;
 }
 

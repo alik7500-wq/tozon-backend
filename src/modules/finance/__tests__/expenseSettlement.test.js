@@ -8,6 +8,11 @@ const desk='ab90800a-73af-4cf7-88c2-397c304e2edf';
 const payload={amount:'100',currency:'TJS',date:'2026-10-02',exchange_rate:10,idempotency_key:'EXP-linked',cash_desk_id:desk,settlement_party_id:party,settlement_account:'PAYABLE'};
 beforeEach(()=>vi.clearAllMocks());
 describe('Expense settlement integration',()=>{
+ it('maps employee RKO into the existing advance report, without a second posting',()=>{
+  const rows=[{id:101,account:'EMPLOYEE',amount:'100',party_id:party}];
+  expect(settlementCashDocuments(rows)[0].kind).toBe('ADVANCE_ISSUE');
+  expect(settlementCashEntries(rows)[0].account).toBe('EMPLOYEE');
+ });
  it('validates paired fields and permits explicit removal',()=>{
   expect(expenseSettlement({})).toBeNull();
   expect(()=>expenseSettlement({settlement_party_id:party})).toThrow('контрагента');

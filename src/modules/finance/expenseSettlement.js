@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { AppError } from '../../shared/errors/errorHandler.js';
-const fields=z.object({settlement_party_id:z.string().uuid().nullable(),settlement_account:z.enum(['PAYABLE','ADVANCE_GIVEN','RECEIVABLE','ADVANCE_RECEIVED']).nullable()}).strict().refine(v=>Boolean(v.settlement_party_id)===Boolean(v.settlement_account),'Выберите контрагента и назначение расчёта');
+const fields=z.object({settlement_party_id:z.string().uuid().nullable(),settlement_account:z.enum(['PAYABLE','ADVANCE_GIVEN','RECEIVABLE','ADVANCE_RECEIVED','EMPLOYEE']).nullable()}).strict().refine(v=>Boolean(v.settlement_party_id)===Boolean(v.settlement_account),'Выберите контрагента и назначение расчёта');
 export function expenseSettlement(data,original=null){
  const requested=Object.hasOwn(data,'settlement_party_id')||Object.hasOwn(data,'settlement_account');
  if(!requested)return null;
@@ -11,7 +11,7 @@ export function expenseSettlement(data,original=null){
  return r.data;
 }
 export function settlementCashDocuments(rows){
- return rows.map(e=>({id:`expense:${e.id}`,number:e.id,kind:'SETTLEMENT_PAYMENT',status:'POSTED',doc_date:e.doc_date,currency:e.currency,party_id:e.party_id,
+ return rows.map(e=>({id:`expense:${e.id}`,number:e.id,kind:e.account==='EMPLOYEE'?'ADVANCE_ISSUE':'SETTLEMENT_PAYMENT',status:'POSTED',doc_date:e.doc_date,currency:e.currency,party_id:e.party_id,
   amount:Math.abs(Number(e.amount)),balance_type:e.account,expense_id:e.id,basis:e.description||'Автоматический расчёт по РКО',lines:[],automatic_expense:true,
   created_by:e.created_by_user_id,created_at:e.created_at}));
 }
