@@ -9,7 +9,7 @@ import { LeadsRepository } from './leads.repository.js';
  * LEAD_QUEUE_SCHEDULER_ENABLED=true and database control.enabled=true.
  * PostgreSQL lease protects multiple instances; atomic lead RPC protects owners.
  */
-export async function processScheduledLeadQueue({ db = getServiceDB(), limit = 10 } = {}) {
+export async function processScheduledLeadQueue({ db, limit = 10 } = {}) {
   if (process.env.LEAD_QUEUE_SCHEDULER_ENABLED !== 'true') {
     return { status: 'DISABLED', processed: 0, assigned: 0 };
   }
@@ -20,6 +20,8 @@ export async function processScheduledLeadQueue({ db = getServiceDB(), limit = 1
     return { status: 'DISTRIBUTION_DISABLED', processed: 0, assigned: 0 };
   }
 
+  // Resolve the database only after both feature switches have been checked.
+  db ??= getServiceDB();
   const token = randomUUID();
   const { data: cutoff, error: claimError } = await db.rpc('claim_lead_queue_scheduler', {
     p_token: token, p_lease_seconds: 300
