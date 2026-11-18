@@ -35,7 +35,7 @@ router.get('/state', wrap(async (req, res) => {
     all(db, 'buildings', 'id,project_id,name,archived_at'), all(db, 'projects', 'id,name,archived_at'),
     all(db, 'sections', 'id,building_id,archived_at'), all(db, 'floors', 'id,section_id,archived_at'),
     all(db, 'units', 'id,floor_id,area_m2_x100,archived_at'), keyedAll(db, 'cost_building_bases', 'building_id'),
-    all(db, 'expenses', 'id,cash_desk_id,amount_minor,currency,expense_date,category,description,reference,amount_usd,exchange_rate,operation_type,status,voided_at,transfer_id,conversion_id,conversion_expense_id'),
+    all(db, 'expenses', 'id,settlement_account,cash_desk_id,amount_minor,currency,expense_date,category,description,reference,amount_usd,exchange_rate,operation_type,status,voided_at,transfer_id,conversion_id,conversion_expense_id'),
     keyedAll(db, 'cost_expense_allocations', 'expense_id'), all(db, 'construction_documents', 'id,number,kind,status,expense_id,doc_date,currency,exchange_rate,project_id,work_type'),
     all(db, 'cost_material_usages'), all(db, 'cost_material_payment_links'), all(db, 'construction_stock_entries'), all(db, 'construction_materials', 'id,name,unit')
   ]);

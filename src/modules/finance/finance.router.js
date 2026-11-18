@@ -70,7 +70,7 @@ router.get('/settlement-parties', async(req,res,next)=>{
  try{
   const access=req.cashDeskAccess;
   if(!access?.isAdmin&&!access?.canCreateExpense&&!access?.canEditExpense){res.status(403).json({message:'Нет права оформления РКО'});return;}
-  const {data,error}=await getServiceDB().from('construction_parties').select('id,name,kind,active').neq('kind','EMPLOYEE').order('name');
+  const {data,error}=await getServiceDB().from('construction_parties').select('id,name,kind,active').order('name');
   if(error)throw error;
   res.json({status:'success',data:{parties:data}});
  }catch(e){next(e);}

@@ -23,10 +23,13 @@ beforeAll(async()=>{
  await db.exec(read('supabase/migrations/20261012103959_construction_cash_link_validation.sql'));
  const source=read('src/db/migrations/015_user_cash_desk_access.sql');const start=source.indexOf('CREATE OR REPLACE FUNCTION public.create_atomic_expense(');
  await db.exec(source.slice(start,source.indexOf('$$;',start)+3));
- await db.exec('create table buildings(id integer primary key)');
+ await db.exec('create table buildings(id integer primary key,project_id integer,archived_at text)');
+ await db.exec(read('supabase/migrations/20261018084531_block_cost_accounting.sql'));
  await db.exec(read('supabase/migrations/20261018100726_material_cost_tables.sql'));
+ await db.exec(read('supabase/migrations/20261018100730_material_cost_functions.sql'));
  await db.exec(read('supabase/migrations/20261018184855_receipt_price_corrections.sql'));
  await db.exec(read('supabase/migrations/20261018192434_automatic_expense_settlements.sql'));
+ await db.exec(read('supabase/migrations/20261118182200_automatic_employee_advances.sql'));
  party=(await db.query("insert into construction_parties(name,kind) values('Supplier','SUPPLIER') returning id")).rows[0].id;
  desk=(await db.query("insert into dictionaries(type,name) values('CASH_DESK','Main') returning id")).rows[0].id;
  warehouse=(await db.query("insert into construction_warehouses(name) values('Main') returning id")).rows[0].id;
@@ -35,6 +38,18 @@ beforeAll(async()=>{
 },30000);
 afterAll(async()=>db.close());beforeEach(async()=>db.exec('begin'));afterEach(async()=>db.exec('rollback'));
 describe('Automatic RKO settlements from the cash source',()=>{
+ it('tracks an employee advance once, follows edits and voids, and rejects a duplicate manual link',async()=>{
+  const employee=(await q("insert into construction_parties(name,kind) values('Storekeeper','EMPLOYEE') returning id"))[0].id;
+  const payload={settlement_party_id:employee,settlement_account:'EMPLOYEE'};
+  const e=await create(payload); await create(payload);
+  expect((await q("select * from construction_expense_settlements where account='EMPLOYEE'")).length).toBe(1);
+  expect(await total()).toBe(100);
+  await expect(q("select cost_save_allocation($1,'DIRECT',array[3],'Advance is not cost',0,1)",[e.id])).rejects.toThrow('подотчёт');
+  await expect(q("insert into construction_documents(kind,doc_date,currency,party_id,basis,amount,expense_id,created_by) values('ADVANCE_ISSUE','2026-10-02','TJS',$1,'Advance',100,$2,1)",[employee,e.id])).rejects.toThrow('автоматически учтён');
+  await q('update expenses set amount_minor=15000 where id=$1',[e.id]); expect(await total()).toBe(150);
+  await q("update expenses set status='VOIDED',voided_at=now() where id=$1",[e.id]);expect(await total()).toBe(0);
+  await expect(create({...payload,idempotency_key:'wrong-direction',settlement_account:'PAYABLE'})).rejects.toThrow('активного');
+ });
  it('reduces supplier debt without another construction or cash document',async()=>{
   const d=(await q("insert into construction_documents(kind,doc_date,currency,party_id,basis,amount,balance_type,created_by) values('OPENING_SETTLEMENT','2026-10-01','TJS',$1,'Opening',500,'PAYABLE',1) returning id",[party]))[0];
   await q('select construction_post($1,1)',[d.id]);await create();
@@ -78,7 +93,7 @@ describe('Automatic RKO settlements from the cash source',()=>{
   await expect(q("update expenses set settlement_party_id=$1,settlement_account='PAYABLE' where id=$2",[party,manual.id])).rejects.toThrow('уже связан');
  });
  it('supports linking existing RKO and rejects invalid accounts, dates, transfers and inactive users',async()=>{
-  await expect(create({settlement_account:'EMPLOYEE'})).rejects.toThrow('Проверьте');
+  await expect(create({settlement_account:'EMPLOYEE'})).rejects.toThrow('активного');
   await expect(create({expense_date:'2026-09-30'})).rejects.toThrow('начала учёта');
   await expect(create({is_transfer:true})).rejects.toThrow('обычный');
   await q('update users set is_active=false where id=2');await expect(create({},2)).rejects.toThrow('доступа');
