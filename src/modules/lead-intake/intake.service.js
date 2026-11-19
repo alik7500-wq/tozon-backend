@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { getServiceDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { digest, normalizeSettings, prepareRows } from './intake.validation.js';
+import { assignNewIntakeLead } from './intake.assignment.js';
 export const dbCheck = result => { if(result.error) {console.warn('[lead-intake] database failure',{code:result.error.code});throw new AppError('Не удалось выполнить операцию с лидами. Повторите попытку.',503);}return result.data; };
 export async function validateSettings(raw) {
  const settings=normalizeSettings(raw), db=getServiceDB();
@@ -38,6 +39,7 @@ export async function commitImport(body,user) {
   if(row.errors.length||row.repeated){results.push({row:row.row,outcome:row.errors.length?'INVALID':'FILE_DUPLICATE',message:row.errors.join('; ')});continue;}
   try{
    const result=dbCheck(await getServiceDB().rpc('crm_intake_lead',{p_scope:'FILE',p_key:digest({settings,row:row.data}),p_lead:row.data,p_settings:settings,p_actor:user.id,p_integration:null}));
+   await assignNewIntakeLead(result, { hasExplicitManager: settings.manager_id != null });
    results.push({row:row.row,...result});
   }catch{results.push({row:row.row,outcome:'ERROR',message:'Не сохранено. Повторите импорт: обработанные строки не продублируются.'});}
  }

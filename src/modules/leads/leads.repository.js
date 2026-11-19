@@ -296,7 +296,7 @@ export class LeadsRepository {
    * Validates target user is an active sales representative (is_sales_rep = true).
    * Concurrency-guarded to prevent parallel overwrites of the same lead.
    */
-  static async assignManager(leadId, targetUserId, reason = null, actorUserId = null, isManual = true) {
+  static async assignManager(leadId, targetUserId, reason = null, actorUserId = null, isManual = true, requireAtomic = false) {
     const cleanId = parseRequiredBigInt(leadId, 'leadId');
     const lockKey = String(cleanId);
     if (activeLeadAssignmentLocks.has(lockKey)) {
@@ -321,7 +321,19 @@ export class LeadsRepository {
 
         if (!rpcErr && rpcResult && rpcResult.success) {
           const updatedLead = await this.findById(cleanId);
-          if (cleanTargetId) {
+          // Atomic RPC reports PRESERVED_EXISTING as success, but this is not a
+          // new assignment. Do not generate duplicate tasks or notifications.
+          if (rpcResult.status === 'PRESERVED_EXISTING') {
+            return updatedLead;
+          }
+          if (requireAtomic && (
+            rpcResult.status !== 'ASSIGNED' ||
+            Number(rpcResult.responsible_user_id) !== Number(cleanTargetId)
+          )) {
+            throw new AppError('Атомарное назначение не подтверждено: лид оставлен в текущем состоянии', 409);
+          }
+          if (cleanTargetId && rpcResult.status === 'ASSIGNED' &&
+              Number(rpcResult.responsible_user_id) === Number(cleanTargetId)) {
             TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
               console.warn('Failed to generate call task on lead assigned:', err);
             });
@@ -335,7 +347,14 @@ export class LeadsRepository {
         }
       } catch (atomicErr) {
         if (atomicErr instanceof AppError) throw atomicErr;
-        // RPC not defined yet on DB; seamlessly continue to transactional fallback below
+        if (requireAtomic) {
+          throw new AppError('Атомарное назначение недоступно; заявка оставлена в общем пуле', 503);
+        }
+        // Legacy manual assignment fallback only. Automated queue must use atomic RPC.
+      }
+
+      if (requireAtomic) {
+        throw new AppError('Атомарное назначение не подтверждено; заявка оставлена в общем пуле', 503);
       }
 
       const db = getDB();
