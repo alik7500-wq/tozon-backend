@@ -1970,7 +1970,7 @@ export class FinanceRepository {
     const fromAmountMinor = Math.round(fromAmount * 100);
     const toAmountMinor = Math.round(toAmount * 100);
 
-    const convId = `conv_${Date.now()}`;
+    const convId = crypto.randomUUID();
     const expRef = data.reference || `ОБМЕН-${Date.now().toString().slice(-5)}`;
     const incRef = `ПКО-${expRef}`;
 
