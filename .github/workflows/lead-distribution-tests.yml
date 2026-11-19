@@ -38,3 +38,18 @@ jobs:
           output=$(node src/modules/leads/runLeadQueueScheduler.js)
           echo "$output"
           test "$output" = "[lead-queue-scheduler] Disabled; no changes made"
+      - name: Reject enabled scheduler with wrong Supabase project
+        env:
+          LEAD_QUEUE_SCHEDULER_ENABLED: 'true'
+          LEAD_QUEUE_EXPECTED_PROJECT_REF: 'yaolkwbnhnacxxjpgiyu'
+          SUPABASE_URL: 'https://yeslzrrcwgcqfxhgbrqk.supabase.co'
+          SUPABASE_KEY: ''
+          SUPABASE_SERVICE_ROLE_KEY: ''
+        run: |
+          set +e
+          output=$(node src/modules/leads/runLeadQueueScheduler.js 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          test "$status" -ne 0
+          echo "$output" | grep -q 'LEAD_QUEUE_DATABASE_PROJECT_MISMATCH'
