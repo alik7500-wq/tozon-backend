@@ -28,3 +28,13 @@ jobs:
         run: npm ci
       - name: Run lead distribution tests
         run: npx vitest run src/modules/leads/roundRobin.service.test.js src/modules/lead-intake/intake.assignment.test.js src/modules/leads/leadQueueScheduler.service.test.js --fileParallelism=false
+      - name: Verify disabled scheduler needs no Supabase credentials
+        env:
+          LEAD_QUEUE_SCHEDULER_ENABLED: 'false'
+          SUPABASE_URL: ''
+          SUPABASE_KEY: ''
+          SUPABASE_SERVICE_ROLE_KEY: ''
+        run: |
+          output=$(node src/modules/leads/runLeadQueueScheduler.js)
+          echo "$output"
+          test "$output" = "[lead-queue-scheduler] Disabled; no changes made"
