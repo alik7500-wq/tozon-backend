@@ -143,11 +143,9 @@ export class RoundRobinService {
         .is('archived_at', null);
 
       if (error) {
-        console.warn('[RoundRobinService] Failed to query open leads count, proceeding with base list:', error.message);
-        return vettedManagers.map(m => {
-          const inFlight = inFlightWorkloadReservations.get(Number(m.id)) || 0;
-          return { ...m, openLeadsCount: inFlight, dbOpenLeadsCount: 0, inFlightCount: inFlight, capacityLimit: maxCapacity };
-        });
+        // Fail closed: unknown workloads must never be treated as zero capacity usage.
+        console.warn('[RoundRobinService] Failed to query open leads count; retaining leads in pool:', error.message);
+        return [];
       }
 
       const counts = {};
@@ -171,11 +169,9 @@ export class RoundRobinService {
           };
         })
         .filter(m => m.openLeadsCount < maxCapacity);
-    } catch {
-      return vettedManagers.map(m => {
-        const inFlight = inFlightWorkloadReservations.get(Number(m.id)) || 0;
-        return { ...m, openLeadsCount: inFlight, dbOpenLeadsCount: 0, inFlightCount: inFlight, capacityLimit: maxCapacity };
-      });
+    } catch (error) {
+      console.warn('[RoundRobinService] Workload lookup unavailable; retaining leads in pool:', error?.message);
+      return [];
     }
   }
 
@@ -284,14 +280,15 @@ export class RoundRobinService {
       inFlightWorkloadReservations.set(repId, (inFlightWorkloadReservations.get(repId) || 0) + 1);
 
       // Auto-release after 15 seconds in case caller fails before DB write
-      const timer = setTimeout(() => {
-        RoundRobinService.releaseInFlight(repId);
-      }, 15000);
-
+      let released = false;
       const releaseSlot = () => {
+        if (released) return;
+        released = true;
         clearTimeout(timer);
         RoundRobinService.releaseInFlight(repId);
       };
+      const timer = setTimeout(releaseSlot, 15000);
+      timer.unref?.();
 
       return {
         responsible_user_id: repId,

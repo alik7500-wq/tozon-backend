@@ -235,6 +235,104 @@ router.post('/distribution/settings', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+// GET /api/leads/distribution/queue - Read-only unassigned lead queue for management.
+// Never expose the common pool to ordinary sales managers.
+router.get('/distribution/queue', async (req, res, next) => {
+  try {
+    if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+      return next(new AppError('Просмотр очереди распределения доступен только руководителю или администратору', 403));
+    }
+    const leads = await LeadsRepository.findAll({ unassigned: true });
+    const active = (leads || []).filter(lead =>
+      ['NEW', 'IN_PROGRESS', 'NEGOTIATION'].includes(lead.status) && !lead.archived_at
+    );
+    const now = Date.now();
+    const queue = active.map(lead => {
+      const createdAt = Date.parse(lead.created_at);
+      return {
+        id: lead.id,
+        full_name: lead.full_name,
+        source: lead.source,
+        status: lead.status,
+        created_at: lead.created_at,
+        interested_project_id: lead.interested_project_id,
+        waiting_minutes: Number.isFinite(createdAt) ? Math.max(0, Math.floor((now - createdAt) / 60000)) : null
+      };
+    });
+    res.status(200).json({ status: 'success', data: { total: queue.length, queue } });
+  } catch (error) { next(error); }
+});
+
+// POST /api/leads/distribution/process-queue
+// Explicit admin action only; scheduled execution requires a separate authenticated worker.
+// The endpoint does not override existing owners and respects distribution settings.
+router.post('/distribution/process-queue', async (req, res, next) => {
+  try {
+    if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+      return next(new AppError('Обработка очереди доступна только руководителю или администратору', 403));
+    }
+    const rawLimit = req.body?.limit ?? 10;
+    const limit = Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 25) {
+      return next(new AppError('Параметр limit должен быть целым числом от 1 до 25', 400));
+    }
+    // Historical pool leads require explicit approval. Never sweep the entire pool
+    // automatically: it may contain older leads awaiting management review.
+    const approvedIds = req.body?.lead_ids;
+    if (!Array.isArray(approvedIds) || approvedIds.length === 0 || approvedIds.length > 25 ||
+        approvedIds.some(id => !/^[1-9]\\d*$/.test(String(id))) ||
+        new Set(approvedIds.map(String)).size !== approvedIds.length) {
+      return next(new AppError('Укажите уникальные lead_ids (от 1 до 25) для подтверждённой обработки', 400));
+    }
+    if (approvedIds.length > limit) {
+      return next(new AppError('Количество lead_ids не должно превышать limit', 400));
+    }
+    const approvedSet = new Set(approvedIds.map(String));
+    const candidates = (await LeadsRepository.findAll({ unassigned: true }))
+      .filter(lead => approvedSet.has(String(lead.id)) &&
+        ['NEW', 'IN_PROGRESS', 'NEGOTIATION'].includes(lead.status))
+      .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+      .slice(0, limit);
+
+    const results = [];
+    for (const candidate of candidates) {
+      // Recheck immediately before each assignment: another worker or manager may have taken it.
+      const current = await LeadsRepository.findById(candidate.id);
+      if (!current || current.responsible_user_id ||
+          !['NEW', 'IN_PROGRESS', 'NEGOTIATION'].includes(current.status)) {
+        results.push({ id: candidate.id, status: 'SKIPPED_CHANGED' });
+        continue;
+      }
+      const distribution = await RoundRobinService.resolveAssignment(null, current.responsible_user_id);
+      try {
+        if (!distribution.responsible_user_id) {
+          results.push({ id: candidate.id, status: 'IN_POOL', reason: distribution.reason });
+          // No eligible rep or disabled distribution: avoid hammering subsequent candidates.
+          break;
+        }
+        // The atomic assignment RPC provides the cross-instance assignment guard.
+        const assigned = await LeadsRepository.assignManager(
+          candidate.id, distribution.responsible_user_id,
+          'Автоматическое распределение из общего пула', req.user.id, false, true
+        );
+        if (Number(assigned?.responsible_user_id) !== Number(distribution.responsible_user_id)) {
+          results.push({ id: candidate.id, status: 'SKIPPED_CHANGED' });
+          continue;
+        }
+        results.push({ id: candidate.id, status: 'ASSIGNED', responsible_user_id: assigned.responsible_user_id });
+      } catch (error) {
+        results.push({ id: candidate.id, status: 'ERROR', reason: error?.message || 'Assignment failed' });
+      } finally {
+        distribution.releaseSlot?.();
+      }
+    }
+    res.status(200).json({
+      status: 'success',
+      data: { processed: results.length, assigned: results.filter(r => r.status === 'ASSIGNED').length, results }
+    });
+  } catch (error) { next(error); }
+});
+
 // GET /api/leads/winback/opportunities - Leads whose interested units became SOLD/RESERVED with available alternatives
 router.get('/winback/opportunities', async (req, res, next) => {
   try {
@@ -303,7 +401,23 @@ router.post('/', async (req, res, next) => {
       payload.responsible_user_id = req.user.id;
     }
 
-    const lead = await LeadsRepository.create(payload);
+    // CRM-created leads follow the same distribution policy as webhook leads.
+    // An explicit owner (including a manager creating their own lead) is preserved.
+    const hasExplicitOwner = payload.responsible_user_id !== null
+      && payload.responsible_user_id !== undefined
+      && payload.responsible_user_id !== '';
+    let distribution;
+    let lead;
+    try {
+      if (!hasExplicitOwner) {
+        distribution = await RoundRobinService.resolveAssignment();
+        payload.responsible_user_id = distribution.responsible_user_id;
+        payload.assigned_at = distribution.assigned_at;
+      }
+      lead = await LeadsRepository.create(payload);
+    } finally {
+      distribution?.releaseSlot?.();
+    }
 
     if (lead.responsible_user_id) {
       await TasksService.onLeadCreated(lead, parseOptionalBigInt(req.user.id) || 1);

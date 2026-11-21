@@ -1,0 +1,55 @@
+name: Lead distribution tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/modules/leads/**'
+      - 'src/modules/lead-intake/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/lead-distribution-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lead-distribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Run lead distribution tests
+        run: npx vitest run src/modules/leads/roundRobin.service.test.js src/modules/lead-intake/intake.assignment.test.js src/modules/leads/leadQueueScheduler.service.test.js --fileParallelism=false
+      - name: Verify disabled scheduler needs no Supabase credentials
+        env:
+          LEAD_QUEUE_SCHEDULER_ENABLED: 'false'
+          SUPABASE_URL: ''
+          SUPABASE_KEY: ''
+          SUPABASE_SERVICE_ROLE_KEY: ''
+        run: |
+          output=$(node src/modules/leads/runLeadQueueScheduler.js)
+          echo "$output"
+          test "$output" = "[lead-queue-scheduler] Disabled; no changes made"
+      - name: Reject enabled scheduler with wrong Supabase project
+        env:
+          LEAD_QUEUE_SCHEDULER_ENABLED: 'true'
+          LEAD_QUEUE_EXPECTED_PROJECT_REF: 'yaolkwbnhnacxxjpgiyu'
+          SUPABASE_URL: 'https://yeslzrrcwgcqfxhgbrqk.supabase.co'
+          SUPABASE_KEY: ''
+          SUPABASE_SERVICE_ROLE_KEY: ''
+        run: |
+          set +e
+          output=$(node src/modules/leads/runLeadQueueScheduler.js 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          test "$status" -ne 0
+          echo "$output" | grep -q 'LEAD_QUEUE_DATABASE_PROJECT_MISMATCH'
