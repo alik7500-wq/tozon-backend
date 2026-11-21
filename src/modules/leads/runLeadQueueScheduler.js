@@ -1,7 +1,8 @@
 // Import database-dependent modules only after the opt-in check.
 // connection.js exits the process if Supabase credentials are absent.
 async function main() {
-  if (process.env.LEAD_QUEUE_SCHEDULER_ENABLED !== 'true') {
+  const probeOnly = process.env.LEAD_QUEUE_CONNECTION_PROBE === 'true';
+  if (!probeOnly && process.env.LEAD_QUEUE_SCHEDULER_ENABLED !== 'true') {
     console.log('[lead-queue-scheduler] Disabled; no changes made');
     return;
   }
@@ -26,6 +27,23 @@ async function main() {
       target.pathname !== '/' ||
       target.search || target.hash) {
     throw new Error('LEAD_QUEUE_DATABASE_PROJECT_MISMATCH');
+  }
+
+  if (probeOnly) {
+    if (process.env.LEAD_QUEUE_SCHEDULER_ENABLED === 'true') {
+      throw new Error('CONNECTION_PROBE_REQUIRES_SCHEDULER_DISABLED');
+    }
+    const { getServiceDB } = await import('../../db/connection.js');
+    const { data, error } = await getServiceDB()
+      .from('lead_queue_scheduler_control')
+      .select('enabled')
+      .eq('id', 1)
+      .single();
+    if (error || !data || data.enabled !== false) {
+      throw new Error('LEAD_QUEUE_CONNECTION_PROBE_FAILED');
+    }
+    console.log('[lead-queue-scheduler] Test database connection OK; scheduler remains disabled');
+    return;
   }
 
   const { connectDB } = await import('../../db/connection.js');
