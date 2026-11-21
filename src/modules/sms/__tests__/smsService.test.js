@@ -1,3 +1,4 @@
+vi.mock('../../company-projects/workspace.background.js',()=>({assertLegacyAutomationAllowed:vi.fn().mockResolvedValue(undefined)}));
 import { smsTemplateFixtures } from './smsTemplates.fixture.js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SmsService } from '../sms.service.js';
@@ -822,6 +823,8 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
     });
 
     it('2 & 3. MEETING_REMINDER preview resolves meeting_date and meeting_time', async () => {
+      vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2026-10-19T08:00:00Z'));
+      try {
       const { LeadsRepository } = await import('../../leads/leads.repository.js');
       const { TasksRepository } = await import('../../tasks/tasks.repository.js');
 
@@ -843,6 +846,7 @@ describe('SmsService Audit Flow & Fail-Closed Rules', () => {
       expect(preview.text).toContain('14:30');
       expect(preview.text).not.toContain('{{meeting_date}}');
       expect(preview.text).not.toContain('{{meeting_time}}');
+      }finally{vi.useRealTimers();}
     });
 
     it('4. Wrong-client meeting is rejected by preview', async () => {

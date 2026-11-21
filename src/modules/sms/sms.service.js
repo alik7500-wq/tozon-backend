@@ -1,3 +1,4 @@
+import {assertLegacyAutomationAllowed} from '../company-projects/workspace.background.js';
 import { getDB } from '../../db/connection.js';
 import { normalizeSmsLanguage, resolveSmsTemplateLanguage } from './smsLanguages.js';
 import { PayomSmsProvider } from './sms.provider.js';
@@ -655,6 +656,8 @@ export class SmsService {
     // Persist the actual language selected for this dispatch; null means legacy caller.
     const smsLanguage = language ? normalizeSmsLanguage(language) : null;
 
+    await assertLegacyAutomationAllowed({client_id:normClientId,deal_id:normDealId,contract_id:contractId,payment_id:normPaymentId,task_id:normTaskId,phone});
+
     // Duplicate send protection for PAYMENT_RECEIVED
     if (templateCode === 'PAYMENT_RECEIVED' && normPaymentId) {
       try {
@@ -773,6 +776,8 @@ export class SmsService {
 
       await SmsRepository.updateMessageStatus(dbRecord.id, { status: 'sending' });
     }
+
+    await assertLegacyAutomationAllowed({client_id:normClientId,deal_id:normDealId,payment_id:normPaymentId,task_id:normTaskId,phone:normalizedPhone});
 
     // 6. Call SMS Provider (Only reached if DB persistence succeeded)
     const providerResult = await this.provider.sendSms({

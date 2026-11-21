@@ -1,0 +1,82 @@
+{
+  "checked_at_utc": "2026-11-21T10:21:56.029435+00:00",
+  "responses": [
+    {
+      "path": "/",
+      "status": 200,
+      "cache_control": "no-store",
+      "build_id": "dae973f3191edf691858ea6a1042d025"
+    },
+    {
+      "path": "/index.html",
+      "status": 200,
+      "cache_control": "no-store",
+      "build_id": "dae973f3191edf691858ea6a1042d025"
+    },
+    {
+      "path": "/crm-version.json",
+      "status": 200,
+      "cache_control": "no-store",
+      "build_id": "dae973f3191edf691858ea6a1042d025"
+    },
+    {
+      "path": "/sw.js",
+      "status": 200,
+      "cache_control": "no-store",
+      "build_id": null
+    }
+  ],
+  "post_live": {
+    "checked_at_utc": "2026-11-21T10:22:49.853061+00:00",
+    "deploy_id": "dep-dc0n18p7lnhs7395sst0",
+    "responses": [
+      {
+        "path": "/",
+        "status": 200,
+        "cache_control": "no-store",
+        "build_id": "2e210d935487ff0545aa908dfa8592ef"
+      },
+      {
+        "path": "/index.html",
+        "status": 200,
+        "cache_control": "no-store",
+        "build_id": "2e210d935487ff0545aa908dfa8592ef"
+      },
+      {
+        "path": "/crm-version.json",
+        "status": 200,
+        "cache_control": "no-store",
+        "build_id": "2e210d935487ff0545aa908dfa8592ef"
+      },
+      {
+        "path": "/sw.js",
+        "status": 200,
+        "cache_control": "no-store",
+        "build_id": null
+      },
+      {
+        "path": "/login",
+        "status": 200,
+        "cache_control": "public, max-age=0, s-maxage=300",
+        "build_id": "2e210d935487ff0545aa908dfa8592ef"
+      }
+    ]
+  },
+  "browser": {
+    "completed": true,
+    "loaded_build_before_and_after": "dae973f3191edf691858ea6a1042d025",
+    "notice_candidate": "2e210d935487ff0545aa908dfa8592ef",
+    "selected_project": "Tozon Plaza",
+    "unit_number": "101",
+    "before_and_after_notice_and_later": {
+      "rate": "9.24",
+      "deposit_tjs": "12345.67",
+      "term_months": "11"
+    },
+    "card_remained_open": true,
+    "later_removed_notice": true,
+    "business_form_submitted": false,
+    "explicit_reload_tested": false,
+    "screenshot": "company-project-update-preserves-draft.jpg"
+  }
+}

@@ -1,3 +1,4 @@
+import {assertLegacyAutomationAllowed} from '../company-projects/workspace.background.js';
 import { SmsSettingsRepository } from './smsSettings.repository.js';
 import { SmsEventsRepository } from './smsEvents.repository.js';
 import { defaultSmsEventsService } from './smsEvents.service.js';
@@ -63,6 +64,9 @@ export class SmsAutoDispatcher {
         continue;
       }
 
+      try {await assertLegacyAutomationAllowed({client_id:event.client_id,deal_id:event.deal_id,payment_id:event.payment_id,schedule_id:event.schedule_id,task_id:event.task_id});}
+      catch(e){if(e.code==='PROJECT_AUTOMATION_HELD'){stats.skipped++;continue;}throw e;}
+
       // 1. Atomic claim: transition status from AWAITING_CONFIRMATION to PROCESSING
       const claimedEvent = await SmsEventsRepository.atomicStartProcessing(event.id);
       if (!claimedEvent) {
@@ -81,7 +85,7 @@ export class SmsAutoDispatcher {
         try {
           await this.smsEventsService.validateEventContext(claimedEvent);
         } catch (err) {
-          if (['SMS_RULE_DISABLED', 'SMS_EVENT_STALE', 'SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(err.code)) {
+          if (['SCHEDULE_CANCELLED', 'SMS_RULE_DISABLED', 'SMS_EVENT_STALE', 'SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(err.code)) {
             await SmsEventsRepository.cancelEvent({ id: claimedEvent.id, reason: err.message });
             stats.skipped++;
             continue;
@@ -142,6 +146,7 @@ export class SmsAutoDispatcher {
         // 6. Provider Call
         let providerResult;
         try {
+          await assertLegacyAutomationAllowed({client_id:claimedEvent.client_id,deal_id:claimedEvent.deal_id,schedule_id:claimedEvent.schedule_id,phone:normPhone.normalized});
           providerResult = await this.smsService.provider.sendSms({
             phone: normPhone.normalized,
             text: preview.text

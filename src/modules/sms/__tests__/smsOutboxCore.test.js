@@ -1,3 +1,4 @@
+vi.mock('../../company-projects/workspace.background.js',()=>({assertLegacyAutomationAllowed:vi.fn().mockResolvedValue(undefined)}));
 import { SmsSettingsRepository } from '../smsSettings.repository.js';
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import fs from 'fs';

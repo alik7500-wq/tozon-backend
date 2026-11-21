@@ -1,3 +1,4 @@
+vi.mock('../company-projects/workspace.background.js',()=>({assertLegacyAutomationAllowed:vi.fn().mockResolvedValue(undefined)}));
 import {it,expect,vi} from 'vitest';
 import {FinanceBot} from './bot.js';
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};

@@ -1,3 +1,4 @@
+vi.mock('../../company-projects/workspace.background.js',()=>({assertLegacyAutomationAllowed:vi.fn().mockResolvedValue(undefined)}));
 import { SmsRepository } from '../sms.repository.js';
 import { smsTemplateFixtures } from './smsTemplates.fixture.js';
 import { SmsSettingsRepository } from '../smsSettings.repository.js';
@@ -13,6 +14,7 @@ describe('SMS API Routes (/api/sms)', () => {
   let managerToken;
 
   beforeEach(() => {
+    vi.stubEnv('JWT_SECRET','sms-router-synthetic-secret');
     vi.spyOn(SmsRepository,'getTemplates').mockResolvedValue(smsTemplateFixtures);
     vi.spyOn(SmsSettingsRepository,'getRule').mockResolvedValue({enabled:true,mode:'INHERIT',offset_days:3,template_code:'PAYMENT_REMINDER'});
     vi.spyOn(SmsSettingsRepository,'daily').mockResolvedValue(0);

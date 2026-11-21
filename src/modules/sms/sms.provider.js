@@ -1,3 +1,4 @@
+import {assertLegacyAutomationAllowed} from '../company-projects/workspace.background.js';
 /**
  * Base SMS Provider Interface and Payom.tj Implementation.
  */
@@ -42,6 +43,7 @@ export class PayomSmsProvider extends BaseSmsProvider {
    *   { "telephone": "+992XXXXXXXXX", "text": "...", "senderName": "TOZON-PLAZA", "type": "SMS" }
    */
   async sendSms({ phone, text, senderName }) {
+    await assertLegacyAutomationAllowed({phone});
     const finalSenderName = senderName || this.defaultSenderName;
     const activeToken = this.explicitToken || process.env.PAYOM_API_TOKEN || null;
 

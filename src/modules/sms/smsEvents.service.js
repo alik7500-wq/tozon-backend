@@ -1,3 +1,4 @@
+import {assertLegacyAutomationAllowed} from '../company-projects/workspace.background.js';
 import { SmsSettingsRepository } from './smsSettings.repository.js';
 import crypto from 'crypto';
 import { getBusinessDate } from '../../utils/businessTime.js';
@@ -51,6 +52,7 @@ export class SmsEventsService {
    * Auto-cancels stale events if context is no longer applicable.
    */
   async validateEventContext(event) {
+    await assertLegacyAutomationAllowed({client_id:event.client_id,deal_id:event.deal_id,payment_id:event.payment_id,schedule_id:event.schedule_id,task_id:event.task_id});
     if(event.payload_json?.managed_rule || event.event_type === 'PAYMENT_REMINDER') {
       const rule=await SmsSettingsRepository.getRule(event.event_type);
       if(!rule.enabled) throw new AppError('Отправка этого вида сообщений отключена',400,'SMS_RULE_DISABLED');
@@ -105,6 +107,7 @@ export class SmsEventsService {
       const deal = await DealsRepository.getDealById(dealId);
       const schedules = deal?.schedules || deal?.deal_payment_schedules || [];
       const sched = schedules.find((s) => parseOptionalBigInt(s.id) === scheduleId);
+      if (!sched || sched.status==='CANCELLED') throw new AppError('График отменён или больше не относится к договору',400,'SCHEDULE_CANCELLED');
       if (sched) {
         const unpaidMinor = (sched.amount_minor || 0) - (sched.paid_amount_minor || 0);
         if (unpaidMinor <= 0) {
@@ -136,7 +139,7 @@ export class SmsEventsService {
     try {
       await this.validateEventContext(event);
     } catch (err) {
-      if (['SMS_EVENT_STALE', 'SMS_RULE_DISABLED', 'SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(err.code)) {
+      if (['SCHEDULE_CANCELLED', 'SMS_EVENT_STALE', 'SMS_RULE_DISABLED', 'SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(err.code)) {
         if (event.status === 'AWAITING_CONFIRMATION') {
           await SmsEventsRepository.cancelEvent({ id: event.id, reason: err.message });
         }
@@ -227,7 +230,7 @@ export class SmsEventsService {
       try {
         await this.validateEventContext(claimedEvent);
       } catch (staleErr) {
-        if (['SMS_EVENT_STALE', 'SMS_RULE_DISABLED', 'SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(staleErr.code)) {
+        if (['SCHEDULE_CANCELLED', 'SMS_EVENT_STALE', 'SMS_RULE_DISABLED', 'SCHEDULE_ALREADY_PAID', 'DEBT_CLEARED', 'MEETING_CLOSED_OR_CANCELLED', 'DEAL_CANCELLED', 'PAYMENT_VOIDED'].includes(staleErr.code)) {
           await SmsEventsRepository.cancelEvent({ id: claimedEvent.id, userId, reason: staleErr.message });
           throw new AppError(`Событие больше не актуально: ${staleErr.message}`, 400, 'EVENT_NO_LONGER_APPLICABLE');
         }

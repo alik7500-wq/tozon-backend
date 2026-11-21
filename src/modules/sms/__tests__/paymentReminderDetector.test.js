@@ -475,4 +475,10 @@ describe('V1.5C PAYMENT_REMINDER Detector Tests', () => {
       expect(queryCount1000).toBe(3);
     });
   });
+ it('does not turn cancelled rows or project contracts into legacy SMS/notification candidates',async()=>{
+  const base={id:90,deal_id:9,due_date:'2026-10-12',amount_minor:10000,paid_amount_minor:0,status:'UPCOMING',deals:{id:9,status:'SIGNED',lead_id:9,leads:{id:9,full_name:'Fixture',phone:'+992000000009'}}};
+  setupMockDb([{...base,status:'CANCELLED'},{...base,id:91,deals:{...base.deals,company_project_id:'00000000-0000-4000-8000-000000000001'}}]);
+  const stats=await PaymentReminderDetector.detectPaymentReminders({businessDate:'2026-10-10',isDryRun:true});expect(stats.eligible).toBe(0);expect(stats.skipped_cancelled).toBe(1);expect(stats.skipped_ineligible_deal).toBe(1);expect(stats.candidates).toEqual([]);
+ });
+
 });
