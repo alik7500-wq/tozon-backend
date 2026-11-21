@@ -1,5 +1,7 @@
 # Stage 26 — Confirmed app-update notices
 
+Follow-up: [Stage 27](COMPANY_PROJECTS_STAGE_27.md) records the 2026-11-21 live release/draft browser check and verification of the four exact-path no-store rules. The limitations below describe the original Stage 26 delivery.
+
 ## Delivery and scope
 
 Frontend runtime `c93886586a3a445e99c6e7fd70f17339182ed78b`, branch `feature/company-projects-foundation`. Only the isolated test static frontend is redeployed. The backend, database, employee grants, financial records, production and main branches are unchanged.

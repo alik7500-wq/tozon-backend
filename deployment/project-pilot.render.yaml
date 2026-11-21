@@ -43,6 +43,19 @@ services:
     autoDeployTrigger: "off"
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
+    headers:
+      - path: /
+        name: Cache-Control
+        value: no-store
+      - path: /index.html
+        name: Cache-Control
+        value: no-store
+      - path: /crm-version.json
+        name: Cache-Control
+        value: no-store
+      - path: /sw.js
+        name: Cache-Control
+        value: no-store
     envVars:
       - key: VITE_API_URL
         value: https://tozon-crm-commercial-test-api.onrender.com
