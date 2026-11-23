@@ -18,6 +18,47 @@ const read = async (table, columns, filter, value) => {
   return data ?? [];
 };
 
+const positiveInt = value => Number.isSafeInteger(value) && value > 0;
+const nonnegativeInt = value => Number.isSafeInteger(value) && value >= 0;
+
+router.post('/', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+    return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
+  }
+  const b = req.body ?? {};
+  const links = b.links;
+  if (!positiveInt(b.project_id) || !nonnegativeInt(b.original_home_area_x100) ||
+      !nonnegativeInt(b.compensated_area_x100) || !nonnegativeInt(b.paid_area_x100) ||
+      !nonnegativeInt(b.price_per_m2_minor) ||
+      !Array.isArray(links) || links.length < 1 || links.length > 20 ||
+      !links.every(x => positiveInt(x?.unit_id) && positiveInt(x?.deal_id))) {
+    return res.status(400).json({ message: 'INVALID_RESETTLEMENT_INPUT' });
+  }
+  try {
+    const { data, error } = await getServiceDB().rpc('create_resettlement_draft', {
+      p_project_id: b.project_id,
+      p_original_home_area_x100: b.original_home_area_x100,
+      p_compensated_area_x100: b.compensated_area_x100,
+      p_paid_area_x100: b.paid_area_x100,
+      p_price_per_m2_minor: b.price_per_m2_minor,
+      p_created_by: Number(req.user.id),
+      p_links: links.map(x => ({ unit_id: x.unit_id, deal_id: x.deal_id }))
+    });
+    if (error) {
+      const known = ['INVALID_RESETTLEMENT_VALUES','INVALID_RESETTLEMENT_LINKS','INVALID_RESETTLEMENT_LINK',
+        'INVALID_ACTOR','UNIT_NOT_FOUND','DEAL_UNIT_MISMATCH','DIFFERENT_BUYERS',
+        'ALREADY_LINKED','DUPLICATE_LINK','AREA_MISMATCH'];
+      if (known.includes(error.message)) return res.status(409).json({ message: error.message });
+      throw error;
+    }
+    return res.status(201).json({ data: { id: data, status: 'DRAFT' } });
+  } catch (error) {
+    console.error('Resettlement creation failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
 router.get('/', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   try {
