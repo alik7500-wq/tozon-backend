@@ -81,6 +81,37 @@ router.get('/', async (req, res) => {
   }
 });
 
+router.post('/:id/approve', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+    return res.status(403).json({ message: 'RESETTLEMENT_APPROVAL_DENIED' });
+  }
+  if (!/^[1-9][0-9]*$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id))) {
+    return res.status(400).json({ message: 'INVALID_CASE_ID' });
+  }
+  const note = req.body?.note;
+  if (note !== undefined && (typeof note !== 'string' || note.length > 2000)) {
+    return res.status(400).json({ message: 'INVALID_APPROVAL_NOTE' });
+  }
+  try {
+    const { data, error } = await getServiceDB().rpc('approve_resettlement_case', {
+      p_case_id: Number(req.params.id),
+      p_actor_id: Number(req.user.id),
+      p_note: note ?? null
+    });
+    if (error) {
+      const known = ['RESETTLEMENT_NOT_FOUND', 'RESETTLEMENT_NOT_DRAFT',
+        'INVALID_APPROVER', 'RESETTLEMENT_APPROVAL_INTEGRITY_FAILED'];
+      if (known.includes(error.message)) return res.status(409).json({ message: error.message });
+      throw error;
+    }
+    return res.json({ data: { id: data, status: 'APPROVED' } });
+  } catch (error) {
+    console.error('Resettlement approval failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!/^[1-9][0-9]*$/.test(req.params.id)) return res.status(400).json({ message: 'INVALID_CASE_ID' });
