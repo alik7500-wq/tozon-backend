@@ -113,6 +113,44 @@ router.post('/:id/approve', async (req, res) => {
   }
 });
 
+// Read-only allocation validation. Signing and ledger changes are deliberately NOT performed.
+router.post('/:id/allocation-preview', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
+  if (!/^[1-9][0-9]*$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id))) return res.status(400).json({ message: 'INVALID_CASE_ID' });
+  const allocations = req.body?.allocations;
+  if (!Array.isArray(allocations) || allocations.length < 1 || allocations.length > 20 ||
+      !allocations.every(x => positiveInt(x?.deal_id) && nonnegativeInt(x?.allocated_minor)) ||
+      new Set(allocations.map(x => x.deal_id)).size !== allocations.length) {
+    return res.status(400).json({ message: 'INVALID_ALLOCATION' });
+  }
+  try {
+    const id = Number(req.params.id);
+    const [c] = await read('resettlement_cases', 'id,status,payable_total_minor', 'id', id);
+    if (!c) return res.status(404).json({ message: 'RESETTLEMENT_NOT_FOUND' });
+    if (c.status !== 'APPROVED') return res.status(409).json({ message: 'RESETTLEMENT_NOT_APPROVED' });
+    const links = await read('resettlement_case_units', 'deal_id', 'case_id', id);
+    const ids = links.map(x => x.deal_id);
+    if (ids.length !== allocations.length || ids.some(x => !allocations.some(a => a.deal_id === x))) {
+      return res.status(409).json({ message: 'ALLOCATION_LINK_MISMATCH' });
+    }
+    const sum = allocations.reduce((total, x) => total + x.allocated_minor, 0);
+    if (!Number.isSafeInteger(sum) || sum !== Number(c.payable_total_minor)) {
+      return res.status(409).json({ message: 'ALLOCATION_TOTAL_MISMATCH', expected_minor: c.payable_total_minor });
+    }
+    const details = [];
+    for (const a of allocations) {
+      const [d] = await read('deals', 'id,status,final_price_minor,currency', 'id', a.deal_id);
+      if (!d || d.currency !== 'USD') return res.status(409).json({ message: 'ALLOCATION_DEAL_CURRENCY_MISMATCH' });
+      details.push({ deal_id: d.id, status: d.status, existing_contract_minor: d.final_price_minor, allocated_minor: a.allocated_minor, amendment_required: d.status === 'SIGNED' && Number(d.final_price_minor) !== a.allocated_minor });
+    }
+    return res.json({ data: { case_id: id, payable_total_minor: c.payable_total_minor, allocations: details, validated: true, saved: false, contract_signed: false } });
+  } catch (error) {
+    console.error('Resettlement allocation preview failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!/^[1-9][0-9]*$/.test(req.params.id)) return res.status(400).json({ message: 'INVALID_CASE_ID' });
