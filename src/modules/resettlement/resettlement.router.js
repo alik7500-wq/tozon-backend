@@ -1,16 +1,44 @@
 import express from 'express';
-import { protect, restrictTo } from '../../middleware/auth.middleware.js';
+import { protect } from '../../middleware/auth.middleware.js';
 import { getServiceDB } from '../../db/connection.js';
 
 const router = express.Router();
 router.use(protect);
-router.use(restrictTo('ADMIN', 'DIRECTOR', 'FINANCE_MANAGER'));
+// Explicit role check: restrictTo permits section-matrix users on GET routes.
+router.use((req, res, next) => {
+  if (!['ADMIN', 'DIRECTOR', 'FINANCE_MANAGER'].includes(req.user?.role)) {
+    return res.status(403).json({ message: 'RESETTLEMENT_ACCESS_DENIED' });
+  }
+  next();
+});
 
 const read = async (table, columns, filter, value) => {
   const { data, error } = await getServiceDB().from(table).select(columns).eq(filter, value);
   if (error) throw error;
   return data ?? [];
 };
+
+router.get('/', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const rawProject = req.query.project_id;
+    if (rawProject !== undefined && !/^[1-9][0-9]*$/.test(String(rawProject))) {
+      return res.status(400).json({ message: 'INVALID_PROJECT_ID' });
+    }
+    const pageSize = 50;
+    const db = getServiceDB();
+    let query = db.from('resettlement_cases')
+      .select('id,project_id,original_home_area_x100,compensated_area_x100,paid_area_x100,payable_total_minor,status,created_at')
+      .order('id', { ascending: false }).limit(pageSize);
+    if (rawProject !== undefined) query = query.eq('project_id', Number(rawProject));
+    const { data, error } = await query;
+    if (error) throw error;
+    return res.json({ data: data ?? [], limit: pageSize });
+  } catch (error) {
+    console.error('Resettlement list failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
 
 router.get('/:id', async (req, res) => {
   res.set('Cache-Control', 'no-store');
