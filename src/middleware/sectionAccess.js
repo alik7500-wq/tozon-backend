@@ -70,6 +70,15 @@ export const authorizeSectionRequest = async req => {
     req.sectionAccessGranted = true;
     return;
   }
+  // Resettlement has its own strict role and write guards in the router.
+  // Allow eligible matrix users through this global section gate.
+  if (path === '/api/resettlements' || path.startsWith('/api/resettlements/')) {
+    if (!['ADMIN', 'DIRECTOR', 'FINANCE_MANAGER'].includes(user.role)) {
+      throw new AppError('Нет доступа к модулю переселения', 403);
+    }
+    req.sectionAccessGranted = true;
+    return;
+  }
   if (path.startsWith('/api/discount-schemes')) {
     if (read) allowed = hasAny(user, ['deals.view','settings.view']);
     else key = 'settings.view';
