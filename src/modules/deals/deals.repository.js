@@ -462,6 +462,16 @@ export class DealsRepository {
     if (deal.status === 'SIGNED') throw new AppError('Сделка уже подписана', 400);
     if (deal.status === 'CANCELLED') throw new AppError('Нельзя подписать отмененную сделку', 400);
 
+    // A resettlement deal must not be signed through the generic flow:
+    // this flow does not reconcile the signed contract amount with the
+    // case-wide approved allocation and existing payments.
+    const { data: resettlementLinks, error: resettlementError } = await getServiceDB()
+      .from('resettlement_case_units').select('case_id').eq('deal_id', id).limit(1);
+    if (resettlementError) throw new AppError('Не удалось проверить связь сделки с переселением', 503);
+    if (resettlementLinks?.length) {
+      throw new AppError('Договор относится к переселению. Используйте специальное оформление с согласованной стоимостью и дополнительным соглашением.', 409);
+    }
+
     const rawSalesSource = String(payload?.sales_source || payload?.salesSource || '').trim().toUpperCase();
     if (['DIRECT', 'MARKETER'].includes(rawSalesSource)) {
       await marketingAttributionService.updateDealSalesSource(
