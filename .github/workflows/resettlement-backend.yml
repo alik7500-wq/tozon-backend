@@ -18,6 +18,8 @@ jobs:
       - run: node --check src/modules/resettlement/resettlement.router.js
       - run: node --check src/app.js
       - run: npm ci
+      - name: Resettlement API unit tests
+        run: npx vitest run src/modules/resettlement/__tests__/resettlement.router.test.js
       - name: Full backend regression suite (diagnostic; requires dedicated test DB and fixtures)
         continue-on-error: true
         run: npm test
