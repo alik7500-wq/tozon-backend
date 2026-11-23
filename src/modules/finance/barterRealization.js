@@ -21,7 +21,15 @@ export function applyBarterResults(map,desks,results) {
   }
   if(result && map[result.name]) {
    const target=map[result.name];target.isAnalytical=true;target.USD+=usd;target.TJS+=tjs;
-   target.resultDetails.push({asset:r.asset_name,date:r.realization_date,costTjs:Number(r.cost_tjs_minor)/100,proceedsTjs:Number(r.proceeds_tjs_minor)/100,sellingCostTjs:Number(r.selling_cost_tjs_minor)/100,resultTjs:tjs,resultUsd:usd});
+   const snapshot=r.source_snapshot;
+   const principal=Number(snapshot?.receivable_at_realization_tjs);
+   const received=Number(snapshot?.received_tjs);
+   const schedule=Object.entries(snapshot?.schedule || {})
+    .filter(([date,amount])=>/^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(amount) && amount>0)
+    .map(([date,amount])=>({date,amount})).sort((a,b)=>a.date.localeCompare(b.date));
+   const receivable=principal>0 && Number.isFinite(principal) && Number.isFinite(received) && received>=0
+    ? {principal,received,schedule} : undefined;
+   target.resultDetails.push({asset:r.asset_name,date:r.realization_date,costTjs:Number(r.cost_tjs_minor)/100,proceedsTjs:Number(r.proceeds_tjs_minor)/100,sellingCostTjs:Number(r.selling_cost_tjs_minor)/100,resultTjs:tjs,resultUsd:usd,receivable});
   }
  }
 }
