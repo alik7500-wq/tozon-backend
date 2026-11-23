@@ -31,6 +31,7 @@ router.post('/', async (req, res) => {
   if (!positiveInt(b.project_id) || !nonnegativeInt(b.original_home_area_x100) ||
       !nonnegativeInt(b.compensated_area_x100) || !nonnegativeInt(b.paid_area_x100) ||
       !nonnegativeInt(b.price_per_m2_minor) ||
+      b.compensated_area_x100 < b.original_home_area_x100 ||
       !Array.isArray(links) || links.length < 1 || links.length > 20 ||
       !links.every(x => positiveInt(x?.unit_id) && positiveInt(x?.deal_id))) {
     return res.status(400).json({ message: 'INVALID_RESETTLEMENT_INPUT' });
