@@ -151,6 +151,33 @@ router.post('/:id/allocation-preview', async (req, res) => {
   }
 });
 
+router.post('/:id/sign-deal', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
+  const { deal_id, approval_id, signed_document_ref } = req.body ?? {};
+  if (!positiveInt(Number(req.params.id)) || !positiveInt(deal_id) || !positiveInt(approval_id) ||
+      typeof signed_document_ref !== 'string' || signed_document_ref.trim().length < 3 || signed_document_ref.length > 500) {
+    return res.status(400).json({ message: 'INVALID_SIGNING_REQUEST' });
+  }
+  try {
+    const { data, error } = await getServiceDB().rpc('sign_resettlement_deal_atomic', {
+      p_case_id: Number(req.params.id), p_deal_id: deal_id, p_actor_id: Number(req.user.id),
+      p_approval_id: approval_id, p_signed_document_ref: signed_document_ref.trim()
+    });
+    if (error) {
+      const known = ['INVALID_ACTOR','SIGNED_DOCUMENT_REQUIRED','CASE_NOT_APPROVED',
+        'LATEST_APPROVAL_REQUIRED','ALLOCATION_INTEGRITY_FAILED','CONTRACT_AMENDMENTS_REQUIRED',
+        'DEAL_NOT_RESERVED','UNIT_NOT_RESERVED','DEAL_CHANGED','UNIT_CHANGED'];
+      if (known.includes(error.message)) return res.status(409).json({ message: error.message });
+      throw error;
+    }
+    return res.status(200).json({ data: { deal_id: data, signed: true } });
+  } catch (error) {
+    console.error('Resettlement deal signing failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
 router.get('/:id/signing-readiness', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!/^[1-9][0-9]*$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id))) return res.status(400).json({ message: 'INVALID_CASE_ID' });
