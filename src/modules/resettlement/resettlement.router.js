@@ -128,9 +128,43 @@ router.get('/:id', async (req, res) => {
       const deal = item.deal_id ? (await read('deals', 'id,contract_number,status,final_price_minor,currency', 'id', item.deal_id))[0] : null;
       units.push({ ...item, unit: unit ?? null, deal: deal ?? null });
     }
+    // Read-only payment snapshot; does not alter accounting records.
+    const dealIds = [...new Set(linked.map(x => x.deal_id).filter(Boolean))];
+    let paymentRows = [];
+    if (dealIds.length) {
+      const { data: payments, error: paymentsError } = await getServiceDB()
+        .from('payments')
+        .select('id,deal_id,amount_minor,currency,status,operation_type,settlement_method,payment_date,document_number,customer_pko_number')
+        .in('deal_id', dealIds).order('id', { ascending: true });
+      if (paymentsError) throw paymentsError;
+      paymentRows = payments ?? [];
+    }
+    const active = paymentRows.filter(p => p.status === 'ACTIVE' && p.operation_type === 'STANDARD');
+    const unsupported = active.filter(p => p.currency !== 'USD' || !Number.isSafeInteger(Number(p.amount_minor)));
+    const usdPayments = active.filter(p => p.currency === 'USD' && Number.isSafeInteger(Number(p.amount_minor)));
+    const cashReceivedMinor = usdPayments.filter(p => p.settlement_method === 'CASH')
+      .reduce((sum, p) => sum + Number(p.amount_minor), 0);
+    const nonCashCreditedMinor = usdPayments.filter(p => p.settlement_method !== 'CASH')
+      .reduce((sum, p) => sum + Number(p.amount_minor), 0);
+    const receivedTotalMinor = cashReceivedMinor + nonCashCreditedMinor;
+    const financials = {
+      cash_received_minor: cashReceivedMinor,
+      non_cash_credited_minor: nonCashCreditedMinor,
+      total_recorded_minor: receivedTotalMinor,
+      preliminary_balance_minor: unsupported.length ? null : Number(cases[0].payable_total_minor) - receivedTotalMinor,
+      balance_is_provisional: true,
+      excluded_payment_count: unsupported.length,
+      payments: paymentRows.map(p => ({
+        id: p.id, deal_id: p.deal_id, payment_date: p.payment_date,
+        amount_minor: p.amount_minor, currency: p.currency,
+        status: p.status, operation_type: p.operation_type,
+        settlement_method: p.settlement_method,
+        document_number: p.document_number, customer_pko_number: p.customer_pko_number
+      }))
+    };
     const c = cases[0];
     const linkedArea = units.reduce((sum, u) => sum + Number(u.area_x100), 0);
-    return res.json({ data: { ...c, units, linked_area_x100: linkedArea, area_matches: linkedArea === c.compensated_area_x100 + c.paid_area_x100 } });
+    return res.json({ data: { ...c, units, linked_area_x100: linkedArea, financials, area_matches: linkedArea === c.compensated_area_x100 + c.paid_area_x100 } });
   } catch (error) {
     console.error('Resettlement read failed:', error?.code ?? error?.name ?? 'UNKNOWN');
     return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
