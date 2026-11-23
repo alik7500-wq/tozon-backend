@@ -297,8 +297,11 @@ export class FinanceRepository {
 
     if (error) throw error;
 
+    const {data: barterResults,error: barterError}=await getServiceDB().from('barter_realization_results').select('reclassified_payment_id').eq('status','ACTIVE');
+    if(barterError) throw barterError;
+    const {payments: cashPayments}=excludeReclassifiedTransfers(paymentsData || [],[],barterResults || []);
     const customerBook = filters.customer_book === '1' || filters.customer_book === true;
-    const allPayments = customerBook ? (paymentsData || []).filter(isCustomerPko) : (paymentsData || []);
+    const allPayments = customerBook ? cashPayments.filter(isCustomerPko) : cashPayments;
     
     // Helper to extract tag from comment
     const extractTag = (text, tagName) => {
@@ -1153,7 +1156,9 @@ export class FinanceRepository {
 
     if (error) throw error;
 
-    const allExpenses = expensesData || [];
+    const {data: barterResults,error: barterError}=await getServiceDB().from('barter_realization_results').select('reclassified_expense_id').eq('status','ACTIVE');
+    if(barterError) throw barterError;
+    const {expenses: allExpenses}=excludeReclassifiedTransfers([],expensesData || [],barterResults || []);
     
     let normalizedList = allExpenses
       .filter(e => filters.include_voided ? true : (e.status !== 'VOIDED' && e.status !== 'CANCELLED' && e.status !== 'REVERSED' && !e.voided_at))
