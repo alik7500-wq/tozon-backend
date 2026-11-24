@@ -96,3 +96,35 @@ describe('resettlement API validation and permissions', () => {
     expect(res.body.message).toBe('ALREADY_LINKED');
   });
 });
+
+describe('resettlement allocation preview safety', () => {
+  it('rejects malformed allocation without database access', async () => {
+    const res = await request(app).post('/api/resettlements/1/allocation-preview')
+      .send({ allocations: [{ deal_id: 27, allocated_minor: -1 }] });
+    expect(res.status).toBe(400);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it('denies finance manager the allocation preview endpoint', async () => {
+    authUser.role = 'FINANCE_MANAGER';
+    const res = await request(app).post('/api/resettlements/1/allocation-preview')
+      .send({ allocations: [{ deal_id: 27, allocated_minor: 1400800 }] });
+    expect(res.status).toBe(403);
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it('rejects allocations that exceed the approved case total', async () => {
+    from.mockImplementation(table => ({
+      select: () => ({
+        eq: () => Promise.resolve({ data: table === 'resettlement_cases'
+          ? [{ id: 1, status: 'APPROVED', payable_total_minor: 1400800 }]
+          : [{ deal_id: 27 }, { deal_id: 42 }], error: null })
+      })
+    }));
+    const res = await request(app).post('/api/resettlements/1/allocation-preview')
+      .send({ allocations: [{ deal_id: 27, allocated_minor: 1400800 }, { deal_id: 42, allocated_minor: 1 }] });
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('ALLOCATION_TOTAL_MISMATCH');
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});

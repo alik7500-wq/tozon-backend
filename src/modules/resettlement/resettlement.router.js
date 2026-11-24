@@ -113,6 +113,196 @@ router.post('/:id/approve', async (req, res) => {
   }
 });
 
+// Read-only allocation validation. Signing and ledger changes are deliberately NOT performed.
+router.post('/:id/allocation-preview', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
+  if (!/^[1-9][0-9]*$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id))) return res.status(400).json({ message: 'INVALID_CASE_ID' });
+  const allocations = req.body?.allocations;
+  if (!Array.isArray(allocations) || allocations.length < 1 || allocations.length > 20 ||
+      !allocations.every(x => positiveInt(x?.deal_id) && nonnegativeInt(x?.allocated_minor)) ||
+      new Set(allocations.map(x => x.deal_id)).size !== allocations.length) {
+    return res.status(400).json({ message: 'INVALID_ALLOCATION' });
+  }
+  try {
+    const id = Number(req.params.id);
+    const [c] = await read('resettlement_cases', 'id,status,payable_total_minor', 'id', id);
+    if (!c) return res.status(404).json({ message: 'RESETTLEMENT_NOT_FOUND' });
+    if (c.status !== 'APPROVED') return res.status(409).json({ message: 'RESETTLEMENT_NOT_APPROVED' });
+    const links = await read('resettlement_case_units', 'deal_id', 'case_id', id);
+    const ids = links.map(x => x.deal_id);
+    if (ids.length !== allocations.length || ids.some(x => !allocations.some(a => a.deal_id === x))) {
+      return res.status(409).json({ message: 'ALLOCATION_LINK_MISMATCH' });
+    }
+    const sum = allocations.reduce((total, x) => total + x.allocated_minor, 0);
+    if (!Number.isSafeInteger(sum) || sum !== Number(c.payable_total_minor)) {
+      return res.status(409).json({ message: 'ALLOCATION_TOTAL_MISMATCH', expected_minor: c.payable_total_minor });
+    }
+    const details = [];
+    for (const a of allocations) {
+      const [d] = await read('deals', 'id,status,final_price_minor,currency', 'id', a.deal_id);
+      if (!d || d.currency !== 'USD') return res.status(409).json({ message: 'ALLOCATION_DEAL_CURRENCY_MISMATCH' });
+      details.push({ deal_id: d.id, status: d.status, existing_contract_minor: d.final_price_minor, allocated_minor: a.allocated_minor, amendment_required: d.status === 'SIGNED' && Number(d.final_price_minor) !== a.allocated_minor });
+    }
+    return res.json({ data: { case_id: id, payable_total_minor: c.payable_total_minor, allocations: details, validated: true, saved: false, contract_signed: false } });
+  } catch (error) {
+    console.error('Resettlement allocation preview failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
+router.get('/:id/signings', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!/^[1-9][0-9]*$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id))) {
+    return res.status(400).json({ message: 'INVALID_CASE_ID' });
+  }
+  try {
+    const id = Number(req.params.id);
+    const cases = await read('resettlement_cases', 'id', 'id', id);
+    if (!cases.length) return res.status(404).json({ message: 'RESETTLEMENT_NOT_FOUND' });
+    const { data, error } = await getServiceDB().from('resettlement_deal_signings')
+      .select('id,deal_id,approval_id,signed_document_ref,signed_by,signed_at')
+      .eq('case_id', id).order('signed_at', { ascending: false }).limit(100);
+    if (error) throw error;
+    return res.json({ data: data ?? [] });
+  } catch (error) {
+    console.error('Resettlement signing history failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
+router.post('/:id/sign-deal', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
+  const { deal_id, approval_id, signed_document_ref } = req.body ?? {};
+  if (!positiveInt(Number(req.params.id)) || !positiveInt(deal_id) || !positiveInt(approval_id) ||
+      typeof signed_document_ref !== 'string' || signed_document_ref.trim().length < 3 || signed_document_ref.length > 500) {
+    return res.status(400).json({ message: 'INVALID_SIGNING_REQUEST' });
+  }
+  try {
+    const { data, error } = await getServiceDB().rpc('sign_resettlement_deal_atomic', {
+      p_case_id: Number(req.params.id), p_deal_id: deal_id, p_actor_id: Number(req.user.id),
+      p_approval_id: approval_id, p_signed_document_ref: signed_document_ref.trim()
+    });
+    if (error) {
+      const known = ['INVALID_ACTOR','SIGNED_DOCUMENT_REQUIRED','CASE_NOT_APPROVED',
+        'LATEST_APPROVAL_REQUIRED','ALLOCATION_INTEGRITY_FAILED','ALLOCATION_LINK_MISMATCH','CONTRACT_AMENDMENTS_REQUIRED',
+        'DEAL_NOT_RESERVED','UNIT_NOT_RESERVED','DEAL_CHANGED','UNIT_CHANGED'];
+      if (known.includes(error.message)) return res.status(409).json({ message: error.message });
+      throw error;
+    }
+    return res.status(200).json({ data: { deal_id: data, signed: true } });
+  } catch (error) {
+    console.error('Resettlement deal signing failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
+router.get('/:id/signing-readiness', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!/^[1-9][0-9]*$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id))) return res.status(400).json({ message: 'INVALID_CASE_ID' });
+  try {
+    const id = Number(req.params.id);
+    const cases = await read('resettlement_cases', 'id,status,payable_total_minor', 'id', id);
+    if (!cases.length) return res.status(404).json({ message: 'RESETTLEMENT_NOT_FOUND' });
+    const links = await read('resettlement_case_units', 'deal_id,unit_id', 'case_id', id);
+    const { data: approvals, error } = await getServiceDB().from('resettlement_allocation_approvals')
+      .select('id,approval_version,supporting_document_ref').eq('case_id', id)
+      .order('approval_version', { ascending: false }).limit(1);
+    if (error) throw error;
+    const latest = approvals?.[0] ?? null;
+    const allocations = latest ? await read('resettlement_allocation_lines', 'deal_id,allocated_minor', 'approval_id', latest.id) : [];
+    const deals = await Promise.all(links.map(async link => {
+      const found = await read('deals', 'id,contract_number,status,final_price_minor,currency', 'id', link.deal_id);
+      const deal = found[0] ?? null;
+      const allocated = allocations.find(a => Number(a.deal_id) === Number(link.deal_id));
+      const blockers = [];
+      if (!latest) blockers.push('ALLOCATION_NOT_APPROVED');
+      if (!allocated) blockers.push('ALLOCATION_LINE_MISSING');
+      if (!deal) blockers.push('DEAL_NOT_FOUND');
+      if (deal?.currency !== 'USD') blockers.push('CURRENCY_MISMATCH');
+      if (deal && allocated && Number(deal.final_price_minor) !== Number(allocated.allocated_minor)) blockers.push('CONTRACT_AMOUNT_REQUIRES_LEGAL_RECONCILIATION');
+      return { deal_id: link.deal_id, contract_number: deal?.contract_number ?? null,
+        status: deal?.status ?? null, contract_amount_minor: deal?.final_price_minor ?? null,
+        approved_amount_minor: allocated?.allocated_minor ?? null, blockers };
+    }));
+    const blockers = [];
+    if (cases[0].status !== 'APPROVED') blockers.push('CASE_NOT_APPROVED');
+    if (!latest) blockers.push('ALLOCATION_NOT_APPROVED');
+    const linkedIds = new Set(links.map(x => Number(x.deal_id)));
+    const allocationIds = new Set(allocations.map(x => Number(x.deal_id)));
+    if (allocations.length !== links.length ||
+        linkedIds.size !== links.length ||
+        allocationIds.size !== allocations.length ||
+        [...linkedIds].some(dealId => !allocationIds.has(dealId)) ||
+        [...allocationIds].some(dealId => !linkedIds.has(dealId)) ||
+        allocations.some(a => !Number.isSafeInteger(Number(a.allocated_minor)) || Number(a.allocated_minor) < 0) ||
+        allocations.reduce((sum, a) => sum + Number(a.allocated_minor), 0) !== Number(cases[0].payable_total_minor))
+      blockers.push('ALLOCATION_INTEGRITY_FAILED');
+    if (deals.some(d => d.blockers.length)) blockers.push('DEAL_RECONCILIATION_REQUIRED');
+    return res.json({ data: { ready: blockers.length === 0, blockers, approval_version: latest?.approval_version ?? null, deals } });
+  } catch (error) {
+    console.error('Resettlement signing readiness failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
+router.get('/:id/allocations', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!/^[1-9][0-9]*$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id))) return res.status(400).json({ message: 'INVALID_CASE_ID' });
+  try {
+    const id = Number(req.params.id);
+    const cases = await read('resettlement_cases', 'id', 'id', id);
+    if (!cases.length) return res.status(404).json({ message: 'RESETTLEMENT_NOT_FOUND' });
+    const { data, error } = await getServiceDB().from('resettlement_allocation_approvals')
+      .select('id,approval_version,payable_total_minor,supporting_document_ref,approved_by,approved_at')
+      .eq('case_id', id).order('approval_version', { ascending: false });
+    if (error) throw error;
+    const approvals = [];
+    for (const approval of data ?? []) {
+      const lines = await read('resettlement_allocation_lines', 'deal_id,allocated_minor', 'approval_id', approval.id);
+      approvals.push({ ...approval, allocations: lines });
+    }
+    return res.json({ data: approvals });
+  } catch (error) {
+    console.error('Resettlement allocations read failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
+router.post('/:id/approve-allocation', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
+  if (!/^[1-9][0-9]*$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id))) return res.status(400).json({ message: 'INVALID_CASE_ID' });
+  const allocations = req.body?.allocations;
+  const documentRef = req.body?.supporting_document_ref;
+  if (!Array.isArray(allocations) || allocations.length < 1 || allocations.length > 20 ||
+      !allocations.every(a => positiveInt(a?.deal_id) && nonnegativeInt(a?.allocated_minor)) ||
+      new Set(allocations.map(a => a.deal_id)).size !== allocations.length ||
+      typeof documentRef !== 'string' || documentRef.trim().length < 3 || documentRef.length > 500) {
+    return res.status(400).json({ message: 'INVALID_ALLOCATION_APPROVAL' });
+  }
+  try {
+    const { data, error } = await getServiceDB().rpc('approve_resettlement_allocation', {
+      p_case_id: Number(req.params.id),
+      p_actor_id: Number(req.user.id),
+      p_document_ref: documentRef.trim(),
+      p_allocations: allocations
+    });
+    if (error) {
+      const known = ['INVALID_ACTOR','INVALID_DOCUMENT_REF','INVALID_ALLOCATIONS',
+        'RESETTLEMENT_NOT_FOUND','RESETTLEMENT_NOT_APPROVED','ALLOCATION_TOTAL_MISMATCH',
+        'ALLOCATION_LINK_MISMATCH','ALLOCATION_CURRENCY_MISMATCH'];
+      if (known.includes(error.message)) return res.status(409).json({ message: error.message });
+      throw error;
+    }
+    return res.status(201).json({ data: { approval_id: data, saved: true, contract_signed: false } });
+  } catch (error) {
+    console.error('Resettlement allocation approval failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!/^[1-9][0-9]*$/.test(req.params.id)) return res.status(400).json({ message: 'INVALID_CASE_ID' });
