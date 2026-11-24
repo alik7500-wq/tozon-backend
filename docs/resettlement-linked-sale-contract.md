@@ -1,6 +1,6 @@
 # Resettlement-linked sale: implementation contract
 
-Status: DESIGN / NOT IMPLEMENTED. No production data mutation authorized by this document.
+Status: FEATURE BRANCH IMPLEMENTATION / NOT DEPLOYED. No production data mutation authorized by this document.
 
 ## Business invariants
 - One resettlement case may link multiple apartments/deals for one buyer.
@@ -10,11 +10,12 @@ Status: DESIGN / NOT IMPLEMENTED. No production data mutation authorized by this
 - Do not silently rewrite signed deal #27, its payment schedule, price, receipts, cash journals or history.
 - Do not turn RESERVED unit 91 into SOLD until a legitimate sale contract is executed through existing workflow.
 - Existing signed and reserved deal amounts are not an approved allocation of the resettlement case payable.
+- **Owner-confirmed allocation (2026-11-24):** unit 91 / apartment 17: 43.22 m² entirely compensated, **0 USD payable**; unit 92 / apartment 16: 46.78 m² compensated plus 35.02 m² payable at 400 USD/m², **14,008 USD payable**. The 90.00 m² free area consists of 43.22 + 46.78 m². The 125.02 m² gross apartment area remains in area reporting. This allocation is a business instruction, NOT a signed legal amendment or approval record.
 
 ## Required workflow before enabling linked sale
 1. ADMIN/DIRECTOR opens an APPROVED case and initiates 'Оформить продажу в рамках переселения' for a linked RESERVED deal.
 2. Present explicit financial reconciliation: case payable, all linked contract amounts, actual cash receipts, non-cash credits, and provisional balance. Distinguish contractual debt from analytical case balance.
-3. Require approved allocation of the 1,400,800 cents across the linked deals (integer cents, nonnegative, sum exactly case payable), and written amendment/reconciliation of already signed deal #27 before any replacement of its contractual amount. No default allocation inferred from square metres, unit order or existing deal face prices.
+3. Require approved allocation of the 1,400,800 cents across the linked deals (integer cents, nonnegative, sum exactly case payable): **deal 27 / unit 92 = 1,400,800 cents; deal 42 / unit 91 = 0 cents**, as confirmed by the owner on 2026-11-24. Require written amendment/reconciliation of already signed deal #27 before any replacement of its contractual amount. Existing face prices are not an approved allocation.
 4. Maintain an immutable approval/audit record with actor, timestamp, prior and new allocation, and reference to the signed supporting document.
 5. Use transaction-safe idempotent backend operation; recheck case APPROVED, unit RESERVED, same buyer, project, allocation sum, no concurrent sale, and permissions ADMIN/DIRECTOR. Failure must roll back all operations.
 6. Invoke existing contract signing workflow to update deal/unit state, not a direct status SQL update. Do not create duplicate payment records, schedule rows or sale counts.
