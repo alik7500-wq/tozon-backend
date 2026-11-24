@@ -166,7 +166,7 @@ router.post('/:id/sign-deal', async (req, res) => {
     });
     if (error) {
       const known = ['INVALID_ACTOR','SIGNED_DOCUMENT_REQUIRED','CASE_NOT_APPROVED',
-        'LATEST_APPROVAL_REQUIRED','ALLOCATION_INTEGRITY_FAILED','CONTRACT_AMENDMENTS_REQUIRED',
+        'LATEST_APPROVAL_REQUIRED','ALLOCATION_INTEGRITY_FAILED','ALLOCATION_LINK_MISMATCH','CONTRACT_AMENDMENTS_REQUIRED',
         'DEAL_NOT_RESERVED','UNIT_NOT_RESERVED','DEAL_CHANGED','UNIT_CHANGED'];
       if (known.includes(error.message)) return res.status(409).json({ message: error.message });
       throw error;
