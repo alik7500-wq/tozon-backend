@@ -32,7 +32,7 @@ begin
  if exists(select 1 from public.deals where unit_id=p_unit_id and status in ('SIGNED','RESERVED')) or exists(select 1 from public.resettlement_case_units where unit_id=p_unit_id) then raise exception 'ALREADY_ALLOCATED';end if;
  v_now:=to_char(now() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"');
  insert into public.deals(lead_id,unit_id,responsible_user_id,status,payment_type,currency,base_price_minor,discount_minor,final_price_minor,deal_price_per_m2_minor,down_payment_minor,installment_months,first_payment_date,installment_interval_months,deal_date,created_at,updated_at)
- values(p_lead_id,p_unit_id,p_actor_id,'RESERVED',case when v_total=0 then 'FULL' else 'INSTALLMENT' end,'USD',v_total,0,v_total,p_price_per_m2_minor,0,case when v_total=0 then null else p_installment_months end,case when v_total=0 then null else p_first_payment_date::text end,case when v_total=0 then null else 1 end,current_date::text,v_now,v_now)
+ values(p_lead_id,p_unit_id,p_actor_id,'RESERVED',case when v_total=0 then 'FULL' else 'INSTALLMENT' end,'USD',v_total,0,v_total,p_price_per_m2_minor,0,case when v_total=0 then null else p_installment_months end,case when v_total=0 then null else p_first_payment_date::text end,1,current_date::text,v_now,v_now)
  returning id into v_deal;
  v_case:=public.create_resettlement_draft(p_project_id,p_original_home_area_x100,p_compensated_area_x100,p_paid_area_x100,p_price_per_m2_minor,p_actor_id,jsonb_build_array(jsonb_build_object('unit_id',p_unit_id,'deal_id',v_deal)));
  update public.resettlement_cases set payable_total_minor=v_total where id=v_case;
