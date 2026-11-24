@@ -26,6 +26,21 @@ begin
  if not found or a.id<>(select max(id) from public.resettlement_allocation_approvals where case_id=p_case_id) then raise exception 'LATEST_APPROVAL_REQUIRED'; end if;
  select count(*),coalesce(sum(allocated_minor),0) into v_count,v_total from public.resettlement_allocation_lines where approval_id=a.id;
  if v_count<>(select count(*) from public.resettlement_case_units where case_id=p_case_id) or v_total<>c.payable_total_minor then raise exception 'ALLOCATION_INTEGRITY_FAILED'; end if;
+ if exists (
+   select 1 from public.resettlement_allocation_lines al
+   where al.approval_id=a.id
+     and not exists (
+       select 1 from public.resettlement_case_units cu
+       where cu.case_id=p_case_id and cu.deal_id=al.deal_id
+     )
+ ) or exists (
+   select 1 from public.resettlement_case_units cu
+   where cu.case_id=p_case_id
+     and not exists (
+       select 1 from public.resettlement_allocation_lines al
+       where al.approval_id=a.id and al.deal_id=cu.deal_id
+     )
+ ) then raise exception 'ALLOCATION_LINK_MISMATCH'; end if;
  if exists(select 1 from public.resettlement_case_units cu join public.deals de on de.id=cu.deal_id join public.resettlement_allocation_lines al on al.deal_id=de.id and al.approval_id=a.id where cu.case_id=p_case_id and (de.currency<>'USD' or de.final_price_minor<>al.allocated_minor)) then raise exception 'CONTRACT_AMENDMENTS_REQUIRED'; end if;
  select de.* into d from public.deals de join public.resettlement_case_units cu on cu.deal_id=de.id and cu.unit_id=de.unit_id where cu.case_id=p_case_id and de.id=p_deal_id for update of de;
  if not found or d.status<>'RESERVED' then raise exception 'DEAL_NOT_RESERVED'; end if;
