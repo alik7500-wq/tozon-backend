@@ -53,53 +53,6 @@ router.post('/installment-preview', (req, res) => {
   return res.json({ data: { payable_total_minor: totalMinor, currency: 'USD', schedule, persisted: false } });
 });
 
-// Intake preflight: verify that a resident's apartment and buyer can be linked safely.
-// This endpoint never writes data or claims a completed booking.
-router.post('/intake-readiness', async (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
-    return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
-  }
-  const b = req.body ?? {};
-  if (!positiveInt(b.project_id) || !positiveInt(b.unit_id) || !positiveInt(b.lead_id) ||
-      !nonnegativeInt(b.original_home_area_x100) || !nonnegativeInt(b.compensated_area_x100) ||
-      !nonnegativeInt(b.paid_area_x100) || !nonnegativeInt(b.price_per_m2_minor) ||
-      !positiveInt(b.installment_months) || b.installment_months > 120) {
-    return res.status(400).json({ message: 'INVALID_INTAKE_INPUT' });
-  }
-  try {
-    const db = getServiceDB();
-    const [unitResult, leadResult, linksResult, dealsResult] = await Promise.all([
-      db.from('units').select('id,status,area_m2_x100,floors(sections(buildings(projects(id,currency))))').eq('id', b.unit_id).maybeSingle(),
-      db.from('leads').select('id').eq('id', b.lead_id).maybeSingle(),
-      db.from('resettlement_case_units').select('case_id').eq('unit_id', b.unit_id).limit(1),
-      db.from('deals').select('id,status').eq('unit_id', b.unit_id).in('status', ['SIGNED','RESERVED']).limit(1)
-    ]);
-    if ([unitResult, leadResult, linksResult, dealsResult].some(result => result.error)) {
-      throw new Error('INTAKE_READ_FAILURE');
-    }
-    const unit = unitResult.data;
-    const blockers = [];
-    if (!unit) blockers.push('UNIT_NOT_FOUND');
-    if (!leadResult.data) blockers.push('LEAD_NOT_FOUND');
-    if (unit && Number(unit.floors?.sections?.buildings?.projects?.id) !== b.project_id) blockers.push('PROJECT_MISMATCH');
-    if (unit && unit.status !== 'AVAILABLE') blockers.push('UNIT_UNAVAILABLE');
-    if (unit && unit.floors?.sections?.buildings?.projects?.currency !== 'USD') blockers.push('CURRENCY_MISMATCH');
-    if (linksResult.data?.length) blockers.push('ALREADY_LINKED');
-    if (dealsResult.data?.length) blockers.push('EXISTING_DEAL');
-    if (unit && Number(unit.area_m2_x100) !== b.compensated_area_x100 + b.paid_area_x100) blockers.push('AREA_MISMATCH');
-    if (b.compensated_area_x100 < b.original_home_area_x100) blockers.push('COMPENSATION_BELOW_ORIGINAL_AREA');
-    const payableMinor = Math.round(b.paid_area_x100 * b.price_per_m2_minor / 100);
-    if (!Number.isSafeInteger(payableMinor)) blockers.push('INVALID_AMOUNT');
-    return res.json({ data: { ready: blockers.length === 0, blockers,
-      payable_total_minor: Number.isSafeInteger(payableMinor) ? payableMinor : null,
-      persisted: false } });
-  } catch (error) {
-    console.error('Resettlement intake readiness failed:', error?.code ?? error?.name ?? 'UNKNOWN');
-    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
-  }
-});
-
 router.post('/', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
