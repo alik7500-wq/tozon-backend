@@ -229,7 +229,14 @@ router.get('/:id/signing-readiness', async (req, res) => {
     const blockers = [];
     if (cases[0].status !== 'APPROVED') blockers.push('CASE_NOT_APPROVED');
     if (!latest) blockers.push('ALLOCATION_NOT_APPROVED');
+    const linkedIds = new Set(links.map(x => Number(x.deal_id)));
+    const allocationIds = new Set(allocations.map(x => Number(x.deal_id)));
     if (allocations.length !== links.length ||
+        linkedIds.size !== links.length ||
+        allocationIds.size !== allocations.length ||
+        [...linkedIds].some(dealId => !allocationIds.has(dealId)) ||
+        [...allocationIds].some(dealId => !linkedIds.has(dealId)) ||
+        allocations.some(a => !Number.isSafeInteger(Number(a.allocated_minor)) || Number(a.allocated_minor) < 0) ||
         allocations.reduce((sum, a) => sum + Number(a.allocated_minor), 0) !== Number(cases[0].payable_total_minor))
       blockers.push('ALLOCATION_INTEGRITY_FAILED');
     if (deals.some(d => d.blockers.length)) blockers.push('DEAL_RECONCILIATION_REQUIRED');
