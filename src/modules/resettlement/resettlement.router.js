@@ -53,6 +53,48 @@ router.post('/installment-preview', (req, res) => {
   return res.json({ data: { payable_total_minor: totalMinor, currency: 'USD', schedule, persisted: false } });
 });
 
+// One action for the operator; the database performs all writes atomically.
+router.post('/intake', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+    return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
+  }
+  const b = req.body ?? {};
+  const ids = ['project_id', 'unit_id', 'lead_id'];
+  const areas = ['original_home_area_x100', 'compensated_area_x100', 'paid_area_x100', 'price_per_m2_minor'];
+  if (!ids.every(k => positiveInt(b[k])) || !areas.every(k => nonnegativeInt(b[k])) ||
+      !positiveInt(b.installment_months) || b.installment_months > 120 ||
+      typeof b.first_payment_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.first_payment_date) ||
+      typeof b.idempotency_key !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(b.idempotency_key)) {
+    return res.status(400).json({ message: 'INVALID_INTAKE_INPUT' });
+  }
+  try {
+    const { data, error } = await getServiceDB().rpc('create_resettlement_intake_atomic', {
+      p_project_id: b.project_id, p_unit_id: b.unit_id, p_lead_id: b.lead_id,
+      p_actor_id: Number(req.user.id),
+      p_original_home_area_x100: b.original_home_area_x100,
+      p_compensated_area_x100: b.compensated_area_x100,
+      p_paid_area_x100: b.paid_area_x100,
+      p_price_per_m2_minor: b.price_per_m2_minor,
+      p_installment_months: b.installment_months,
+      p_first_payment_date: b.first_payment_date,
+      p_idempotency_key: b.idempotency_key
+    });
+    if (error) {
+      const known = ['INVALID_ACTOR', 'INVALID_INTAKE', 'INVALID_TOTAL', 'IDEMPOTENCY_CONFLICT',
+        'UNIT_UNAVAILABLE', 'AREA_MISMATCH', 'PROJECT_CURRENCY_MISMATCH', 'LEAD_NOT_FOUND',
+        'ALREADY_ALLOCATED', 'UNIT_CHANGED'];
+      if (known.includes(error.message)) return res.status(409).json({ message: error.message });
+      throw error;
+    }
+    return res.status(data?.replayed ? 200 : 201).json({ data });
+  } catch (error) {
+    console.error('Resettlement intake failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
 router.post('/', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
