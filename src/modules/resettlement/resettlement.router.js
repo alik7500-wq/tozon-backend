@@ -21,6 +21,38 @@ const read = async (table, columns, filter, value) => {
 const positiveInt = value => Number.isSafeInteger(value) && value > 0;
 const nonnegativeInt = value => Number.isSafeInteger(value) && value >= 0;
 
+// Server-side installment preview. Read-only: never creates deals, receipts or inventory changes.
+router.post('/installment-preview', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+    return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
+  }
+  const b = req.body ?? {};
+  const { paid_area_x100: area, price_per_m2_minor: price, installment_months: months, first_payment_date: first } = b;
+  if (!nonnegativeInt(area) || !nonnegativeInt(price) || !positiveInt(months) || months > 120 ||
+      area > 100000000 || price > 100000000 ||
+      typeof first !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(first)) {
+    return res.status(400).json({ message: 'INVALID_INSTALLMENT_INPUT' });
+  }
+  const [year, month, day] = first.split('-').map(Number);
+  const initial = new Date(Date.UTC(year, month - 1, day));
+  if (initial.getUTCFullYear() !== year || initial.getUTCMonth() !== month - 1 ||
+      initial.getUTCDate() !== day || year < 2000 || year > 2100) {
+    return res.status(400).json({ message: 'INVALID_FIRST_PAYMENT_DATE' });
+  }
+  const totalMinor = Math.round(area * price / 100);
+  if (!Number.isSafeInteger(totalMinor)) return res.status(400).json({ message: 'INVALID_INSTALLMENT_AMOUNT' });
+  const eachMinor = Math.floor(totalMinor / months);
+  const schedule = Array.from({ length: months }, (_, index) => {
+    const base = new Date(Date.UTC(year, month - 1 + index, 1));
+    const last = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0)).getUTCDate();
+    base.setUTCDate(Math.min(day, last));
+    return { due_date: base.toISOString().slice(0, 10),
+      amount_minor: index === months - 1 ? totalMinor - eachMinor * (months - 1) : eachMinor };
+  });
+  return res.json({ data: { payable_total_minor: totalMinor, currency: 'USD', schedule, persisted: false } });
+});
+
 router.post('/', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
