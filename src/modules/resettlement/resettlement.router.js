@@ -151,6 +151,26 @@ router.post('/:id/allocation-preview', async (req, res) => {
   }
 });
 
+router.get('/:id/signings', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!/^[1-9][0-9]*$/.test(req.params.id) || !Number.isSafeInteger(Number(req.params.id))) {
+    return res.status(400).json({ message: 'INVALID_CASE_ID' });
+  }
+  try {
+    const id = Number(req.params.id);
+    const cases = await read('resettlement_cases', 'id', 'id', id);
+    if (!cases.length) return res.status(404).json({ message: 'RESETTLEMENT_NOT_FOUND' });
+    const { data, error } = await getServiceDB().from('resettlement_deal_signings')
+      .select('id,deal_id,approval_id,signed_document_ref,signed_by,signed_at')
+      .eq('case_id', id).order('signed_at', { ascending: false }).limit(100);
+    if (error) throw error;
+    return res.json({ data: data ?? [] });
+  } catch (error) {
+    console.error('Resettlement signing history failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
 router.post('/:id/sign-deal', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
