@@ -2,34 +2,43 @@
 -- Migration 061: Unify fn_assign_lead_atomic overload & harden EXECUTE grants
 -- Description:
 --   Additive/corrective follow-up to 052 & 060. Does NOT rewrite 060 history.
---   Why: 052 created a 6-arg fn_assign_lead_atomic(..., p_is_manual DEFAULT FALSE),
---   and 060 created a 7-arg overload (..., p_expected_version INT DEFAULT NULL).
---   Having both overloads with DEFAULT on the 7th parameter causes PostgreSQL
---   "function is not unique" errors for 6-arg callers (old app version).
---   Fix:
---   1. Drop ONLY the legacy 6-arg overload AFTER ensuring the 7-arg overload
---      (with p_expected_version INT DEFAULT NULL) exists, so both 6-arg (old app)
---      and 7-arg (new app) calls resolve unambiguously to one hardened function.
---   2. Explicitly revoke EXECUTE on ALL overloads of public.fn_assign_lead_atomic
---      from PUBLIC, anon, authenticated and grant strictly to service_role, postgres.
---   3. Secure BIGSERIAL sequences created in 060.
+--   1. Verifies the EXACT 7-arg signature, parameter types, DEFAULT count (>= 3),
+--      SECURITY DEFINER, and fixed search_path BEFORE dropping the legacy 6-arg overload.
+--      Aborts and rolls back the entire transaction on mismatch (no CASCADE).
+--   2. Explicitly revokes EXECUTE on ALL overloads of public.fn_assign_lead_atomic
+--      from PUBLIC, anon, authenticated and grants strictly to service_role, postgres.
+--   3. Secures BIGSERIAL sequences created in 060.
 -- =============================================================================
 
 BEGIN;
 
--- 1. Drop the ambiguous legacy 6-arg overload if the 7-arg overload is present
+-- 1. Verify exact 7-arg hardened overload with defaults before dropping legacy 6-arg overload
 DO $$
+DECLARE
+    v_ok BOOLEAN := FALSE;
 BEGIN
-    IF EXISTS (
+    SELECT EXISTS (
         SELECT 1
         FROM pg_proc p
         JOIN pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = 'public'
           AND p.proname = 'fn_assign_lead_atomic'
           AND p.pronargs = 7
-    ) THEN
-        DROP FUNCTION IF EXISTS public.fn_assign_lead_atomic(BIGINT, BIGINT, BIGINT, TEXT, INT, BOOLEAN);
+          AND p.pronargdefaults >= 3
+          AND p.prosecdef = TRUE
+          AND 'search_path=public, pg_temp' = ANY(COALESCE(p.proconfig, ARRAY[]::text[]))
+          AND (
+              SELECT array_agg(t::regtype::text ORDER BY ord)
+              FROM unnest(p.proargtypes) WITH ORDINALITY AS u(t, ord)
+          ) = ARRAY['bigint', 'bigint', 'bigint', 'text', 'integer', 'boolean', 'integer']
+    ) INTO v_ok;
+
+    IF NOT v_ok THEN
+        RAISE EXCEPTION 'INCOMPATIBLE_FN_ASSIGN_LEAD_ATOMIC_SIGNATURE: hardened 7-arg overload with DEFAULTs and search_path not found; aborting without dropping legacy 6-arg overload.';
     END IF;
+
+    -- Drop ONLY the exact legacy 6-arg signature without CASCADE
+    DROP FUNCTION IF EXISTS public.fn_assign_lead_atomic(BIGINT, BIGINT, BIGINT, TEXT, INT, BOOLEAN);
 END $$;
 
 -- 2. Revoke EXECUTE from PUBLIC, anon, authenticated on ALL remaining overloads

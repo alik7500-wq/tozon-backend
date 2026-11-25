@@ -1,35 +1,51 @@
 -- =============================================================================
--- Safe Application Rollback for 060/061 (DATA-PRESERVING)
+-- Safe Application Rollback for 060/061 (DATA-PRESERVING & DEAL-AUTHORITATIVE)
 -- Description:
 --   Restores compatibility for the previous application version WITHOUT dropping
 --   any tables, columns, contacts, communications, outbox events, or leads.
---   Use this for staging/production application rollback.
---   NEVER run rollback_060_crm_sales_completion_foundation.sql on preserved data.
+--   Authoritative sale status comes strictly from public.deals:
+--   - At least one SIGNED deal -> leads.status = 'WON' (even if another deal is CANCELLED)
+--   - Legacy WON without any SIGNED deal -> NEVER promoted/kept as confirmed sale;
+--     aligned to 'NEGOTIATION' (unless LOST) while preserving history and deals.
+--   - RESERVED / DRAFT deals (without SIGNED) -> 'NEGOTIATION' (never WON).
+--   Idempotent: safe to run multiple times.
 -- =============================================================================
 
 BEGIN;
 
--- 1. Ensure legacy `status` column stays aligned with canonical `stage`
---    so the previous app version renders all leads created after 060 cleanly.
-UPDATE public.leads
+UPDATE public.leads l
 SET status = CASE
-    WHEN stage IN ('MEETING_SCHEDULED', 'SHOWING_DONE', 'RESERVED', 'CONTRACT_PREP') THEN 'NEGOTIATION'
-    WHEN stage = 'SIGNED' THEN 'WON'
-    WHEN stage = 'LOST' THEN 'LOST'
-    WHEN stage = 'IN_PROGRESS' THEN 'IN_PROGRESS'
+    WHEN EXISTS (
+        SELECT 1 FROM public.deals d
+        WHERE d.lead_id = l.id AND d.status = 'SIGNED'
+    ) THEN 'WON'
+    WHEN l.stage = 'LOST' OR l.status = 'LOST' THEN 'LOST'
+    WHEN EXISTS (
+        SELECT 1 FROM public.deals d
+        WHERE d.lead_id = l.id AND d.status IN ('RESERVED', 'DRAFT')
+    ) THEN 'NEGOTIATION'
+    WHEN l.stage IN ('MEETING_SCHEDULED', 'SHOWING_DONE', 'RESERVED', 'CONTRACT_PREP', 'NEGOTIATION', 'SIGNED')
+         OR l.status = 'WON' THEN 'NEGOTIATION'
+    WHEN l.stage = 'IN_PROGRESS' OR l.status = 'IN_PROGRESS' THEN 'IN_PROGRESS'
     ELSE 'NEW'
 END
-WHERE stage IS NOT NULL
-  AND status IS DISTINCT FROM CASE
-    WHEN stage IN ('MEETING_SCHEDULED', 'SHOWING_DONE', 'RESERVED', 'CONTRACT_PREP') THEN 'NEGOTIATION'
-    WHEN stage = 'SIGNED' THEN 'WON'
-    WHEN stage = 'LOST' THEN 'LOST'
-    WHEN stage = 'IN_PROGRESS' THEN 'IN_PROGRESS'
+WHERE l.status IS DISTINCT FROM CASE
+    WHEN EXISTS (
+        SELECT 1 FROM public.deals d
+        WHERE d.lead_id = l.id AND d.status = 'SIGNED'
+    ) THEN 'WON'
+    WHEN l.stage = 'LOST' OR l.status = 'LOST' THEN 'LOST'
+    WHEN EXISTS (
+        SELECT 1 FROM public.deals d
+        WHERE d.lead_id = l.id AND d.status IN ('RESERVED', 'DRAFT')
+    ) THEN 'NEGOTIATION'
+    WHEN l.stage IN ('MEETING_SCHEDULED', 'SHOWING_DONE', 'RESERVED', 'CONTRACT_PREP', 'NEGOTIATION', 'SIGNED')
+         OR l.status = 'WON' THEN 'NEGOTIATION'
+    WHEN l.stage = 'IN_PROGRESS' OR l.status = 'IN_PROGRESS' THEN 'IN_PROGRESS'
     ELSE 'NEW'
-  END;
+END;
 
--- 2. Re-assert strict EXECUTE privileges on all fn_assign_lead_atomic overloads
---    while keeping the 6-argument signature functional for the previous app version.
+-- Re-assert strict EXECUTE privileges on all fn_assign_lead_atomic overloads
 DO $$
 DECLARE
     fn_sig TEXT;

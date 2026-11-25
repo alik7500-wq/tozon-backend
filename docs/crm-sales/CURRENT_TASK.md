@@ -1,7 +1,7 @@
 # CURRENT_TASK.md
 
-- **ID задачи:** `R02` — Безопасная миграция и откат
-- **Статус:** `DONE` (на изолированной PGlite БД; применение на staging/production не выполнялось)
+- **ID задачи:** `R02.1` — Исправление совместимого отката (после R02)
+- **Статус:** `DONE` (на изолированной PGlite БД; проверка именованного RPC через Supabase/PostgREST вынесена в staging-приёмку)
 - **Ветка (`tozon-backend`):** `feat/crm-sales-completion`
 - **Что сделано:**
   - Создана новая миграция `061_harden_fn_assign_lead_atomic_and_app_rollback.sql` (не переписывает историю `060`), устраняющая конфликт перегрузки 6-аргументной (из `052`) и 7-аргументной (`DEFAULT NULL` из `060`) `fn_assign_lead_atomic` и отзывающая `EXECUTE` у `PUBLIC`, `anon`, `authenticated` со всех перегрузок + защита `BIGSERIAL` sequence.
