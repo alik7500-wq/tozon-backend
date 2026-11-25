@@ -9,6 +9,7 @@ import { AlternativeUnitsService } from '../inventory/alternativeUnits.service.j
 import { protect, protectOptional } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
+import { CANONICAL_STAGES, LOST_REASONS, buildLeadAccessScope } from './leadDomain.js';
 
 const router = express.Router();
 
@@ -173,6 +174,41 @@ router.use((req, res, next) => {
   next();
 });
 
+// GET /api/leads/stages - Canonical stages and lost reasons (F-01)
+router.get('/stages', (req, res) => {
+  res.status(200).json({
+    status: 'success',
+    data: {
+      stages: CANONICAL_STAGES,
+      lostReasons: LOST_REASONS
+    }
+  });
+});
+
+// GET /api/leads/updates - Cursor-based incremental updates with RBAC (N-01)
+router.get('/updates', async (req, res, next) => {
+  try {
+    const scope = buildLeadAccessScope(req.user, {
+      projectId: parseOptionalBigInt(req.query.projectId),
+      managerId: req.query.managerId
+    });
+    const all = await LeadsRepository.findAll(scope.effectiveFilters);
+    const since = req.query.since ? new Date(req.query.since).getTime() : 0;
+    const updated = Number.isFinite(since) && since > 0
+      ? all.filter((l) => new Date(l.updated_at || l.created_at).getTime() > since)
+      : all.slice(0, 50);
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        leads: updated,
+        cursor: new Date().toISOString(),
+        scope: { role: scope.role, restrictedToSelf: scope.restrictedToSelf }
+      }
+    });
+  } catch (error) { next(error); }
+});
+
 // GET /api/leads/performance - Manager Performance & Sales KPI analytics
 router.get('/performance', async (req, res, next) => {
   try {
@@ -243,30 +279,79 @@ router.get('/winback/opportunities', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-// GET /api/leads - Lead listing with RBAC, quick filters, and SLA indicators
+// GET /api/leads - Lead listing with RBAC, unified filters, total & cursor (F-03)
 router.get('/', async (req, res, next) => {
   try {
-    const filters = {
+    const requested = {
       search: req.query.search,
-      status: req.query.status,
+      status: req.query.status || req.query.stage,
       quickFilter: req.query.quickFilter,
+      source: req.query.source,
+      accountId: req.query.accountId,
+      createdFrom: req.query.createdFrom,
+      createdTo: req.query.createdTo,
+      taskState: req.query.taskState,
+      unread: req.query.unread,
+      archive: req.query.archive,
+      lostReason: req.query.lostReason,
       unassigned: req.query.unassigned === 'true',
       projectId: parseOptionalBigInt(req.query.projectId),
-      responsibleUserId: parseOptionalBigInt(req.query.responsibleUserId)
+      managerId: req.query.managerId
     };
 
-    // RBAC: SALES_MANAGER is strictly restricted to viewing only their own assigned leads
-    if (req.user?.role === 'SALES_MANAGER') {
-      filters.responsibleUserId = req.user.id;
+    const scope = buildLeadAccessScope(req.user, requested);
+    const filters = scope.effectiveFilters;
+
+    if (scope.restrictedToSelf) {
       filters.unassigned = false;
-      // Cannot inspect unassigned pool
       if (req.query.unassigned === 'true' || filters.quickFilter === 'UNASSIGNED') {
-        return res.status(200).json({ status: 'success', data: { leads: [] } });
+        return res.status(200).json({
+          status: 'success',
+          data: {
+            leads: [],
+            total: 0,
+            nextCursor: null,
+            appliedFilters: filters,
+            scope: { role: scope.role, restrictedToSelf: true },
+            generatedAt: new Date().toISOString()
+          }
+        });
       }
     }
 
-    const leads = await LeadsRepository.findAll(filters);
-    res.status(200).json({ status: 'success', data: { leads } });
+    let leads = await LeadsRepository.findAll(filters);
+    if (filters.source) {
+      leads = leads.filter((l) => String(l.source_code || l.source || '').toUpperCase() === String(filters.source).toUpperCase());
+    }
+    if (filters.createdFrom) {
+      const fromMs = new Date(filters.createdFrom).getTime();
+      if (Number.isFinite(fromMs)) leads = leads.filter((l) => new Date(l.created_at).getTime() >= fromMs);
+    }
+    if (filters.createdTo) {
+      const toMs = new Date(filters.createdTo).getTime();
+      if (Number.isFinite(toMs)) leads = leads.filter((l) => new Date(l.created_at).getTime() < toMs);
+    }
+    if (filters.unread === 'true') {
+      leads = leads.filter((l) => Number(l.unread_count || 0) > 0);
+    }
+
+    const total = leads.length;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 500);
+    const offset = Math.max(Number(req.query.cursor) || 0, 0);
+    const paged = leads.slice(offset, offset + limit);
+    const nextCursor = offset + paged.length < total ? String(offset + paged.length) : null;
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        leads: paged,
+        total,
+        nextCursor,
+        appliedFilters: filters,
+        scope: { role: scope.role, restrictedToSelf: scope.restrictedToSelf },
+        generatedAt: new Date().toISOString()
+      }
+    });
   } catch (error) { next(error); }
 });
 
@@ -313,7 +398,7 @@ router.post('/', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-// PATCH /api/leads/:id/assign - Manual manager assignment & pool management (Stage 4)
+// PATCH /api/leads/:id/assign - Manual manager assignment & pool management (CAS 409)
 router.patch('/:id/assign', async (req, res, next) => {
   try {
     // Only ADMIN and DIRECTOR can reassign leads
@@ -322,15 +407,60 @@ router.patch('/:id/assign', async (req, res, next) => {
     }
 
     const cleanId = parseRequiredBigInt(req.params.id, 'id');
-    const { responsible_user_id, reason } = req.body;
+    const { responsible_user_id, reason, version } = req.body;
 
     const lead = await LeadsRepository.assignManager(
       cleanId,
       responsible_user_id,
       reason,
-      req.user.id
+      req.user.id,
+      true,
+      version
     );
 
+    res.status(200).json({ status: 'success', data: { lead } });
+  } catch (error) {
+    if (error?.statusCode === 409 && error.current) {
+      return res.status(409).json({ status: 'error', code: 'VERSION_CONFLICT', message: error.message, data: { current: error.current } });
+    }
+    next(error);
+  }
+});
+
+// POST /api/leads/:id/communications - Record call, meeting, showing or message outcome (F-12)
+router.post('/:id/communications', async (req, res, next) => {
+  try {
+    if (req.user?.role === 'FINANCE_MANAGER') {
+      return next(new AppError('Доступ запрещен', 403));
+    }
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+    if (req.user?.role === 'SALES_MANAGER' && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к лидам других менеджеров', 403));
+    }
+
+    const lead = await LeadsRepository.recordFirstContact(cleanId, req.user.id, req.body);
+    if (req.body?.outcome) {
+      await TasksService.onFirstContactOutcome(lead, req.body.outcome, req.body, req.user.id);
+    }
+    res.status(200).json({ status: 'success', data: { lead } });
+  } catch (error) { next(error); }
+});
+
+// POST /api/leads/:id/pause - Set explicit next-action pause with reason (F-13)
+router.post('/:id/pause', async (req, res, next) => {
+  try {
+    if (req.user?.role === 'FINANCE_MANAGER') {
+      return next(new AppError('Доступ запрещен', 403));
+    }
+    const cleanId = parseRequiredBigInt(req.params.id, 'id');
+    const existing = await LeadsRepository.findById(cleanId);
+    if (!existing) return next(new AppError('Лид не найден', 404));
+    if (req.user?.role === 'SALES_MANAGER' && Number(existing.responsible_user_id) !== Number(req.user.id)) {
+      return next(new AppError('У вас нет доступа к лидам других менеджеров', 403));
+    }
+    const lead = await LeadsRepository.setPause(cleanId, req.user.id, req.body);
     res.status(200).json({ status: 'success', data: { lead } });
   } catch (error) { next(error); }
 });
@@ -462,18 +592,31 @@ router.patch('/:id/status', async (req, res, next) => {
       return next(new AppError('У вас нет доступа к изменению статуса лидов других менеджеров или общего пула', 403));
     }
 
+    const nextStage = req.body.stage || req.body.status;
     const lead = await LeadsRepository.updateStatus(
       cleanId,
-      req.body.status,
-      req.body.lost_reason,
-      req.body.comment,
-      parseOptionalBigInt(req.user?.id)
+      nextStage,
+      req.body.lost_reason || req.body.lost_reason_code,
+      req.body.comment || req.body.lost_reason_comment,
+      parseOptionalBigInt(req.user?.id),
+      {
+        expectedVersion: req.body.version,
+        meetingAt: req.body.meeting_at,
+        showingProjectId: req.body.showing_project_id,
+        showingAt: req.body.showing_at,
+        showingOutcome: req.body.showing_outcome
+      }
     );
 
-    // Auto-generate task on status change
-    await TasksService.onLeadStatusChanged(lead, req.body.status, parseOptionalBigInt(req.user.id) || 1);
+    // Auto-generate task on status change (non-LOST)
+    await TasksService.onLeadStatusChanged(lead, nextStage, parseOptionalBigInt(req.user.id) || 1);
     res.status(200).json({ status: 'success', data: { lead } });
-  } catch (error) { next(error); }
+  } catch (error) {
+    if (error?.statusCode === 409 && error.current) {
+      return res.status(409).json({ status: 'error', code: 'VERSION_CONFLICT', message: error.message, data: { current: error.current } });
+    }
+    next(error);
+  }
 });
 
 // POST /api/leads/:id/notes - Add note

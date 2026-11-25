@@ -8,6 +8,13 @@ import { InventoryRepository } from '../inventory/inventory.repository.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { evaluateLeadSla } from './leadSla.service.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
+import {
+  resolveCanonicalStage,
+  mapStageToLegacyStatus,
+  validateStageTransition,
+  classifyCommunicationEffect,
+  COMMUNICATION_EVENT_TYPES
+} from './leadDomain.js';
 
 const getHistoryDB = () => {
   try {
@@ -246,46 +253,80 @@ export class LeadsRepository {
     return this.findById(id);
   }
 
-  static async updateStatus(id, status, lostReason = null, comment = null, changedByUserId = null) {
+  static async updateStatus(id, status, lostReason = null, comment = null, changedByUserId = null, options = {}) {
     const cleanId = parseRequiredBigInt(id, 'id');
     const db = getDB();
     const now = new Date().toISOString();
 
-    const { data: currentLead } = await db.from('leads').select('status, first_contact_at').eq('id', cleanId).maybeSingle();
-    const fromStatus = currentLead?.status || null;
+    const { data: currentLead } = await db
+      .from('leads')
+      .select('id, status, stage, version, deals(id, status)')
+      .eq('id', cleanId)
+      .maybeSingle();
+
+    if (!currentLead) throw new AppError('Лид не найден', 404);
+
+    if (options.expectedVersion !== undefined && options.expectedVersion !== null && Number(currentLead.version || 1) !== Number(options.expectedVersion)) {
+      const latest = await this.findById(cleanId);
+      const err = new AppError('Карточка лида была изменена другим пользователем. Данные обновлены.', 409);
+      err.current = latest;
+      throw err;
+    }
+
+    const { stage: currentStage } = resolveCanonicalStage(currentLead, currentLead.deals || []);
+    const targetStage = status;
+
+    const validation = validateStageTransition({
+      currentStage,
+      targetStage,
+      reasonCode: lostReason,
+      reasonComment: comment,
+      meetingAt: options.meetingAt,
+      showingProjectId: options.showingProjectId,
+      showingAt: options.showingAt,
+      showingOutcome: options.showingOutcome
+    });
+
+    if (!validation.ok) {
+      throw new AppError(validation.message, 400);
+    }
+
+    const legacyStatus = mapStageToLegacyStatus(targetStage);
+    const nextVersion = Number(currentLead.version || 1) + 1;
 
     const updatePayload = {
-      status,
-      lost_reason: lostReason || null,
+      status: legacyStatus,
+      stage: targetStage,
+      version: nextVersion,
+      lost_reason: targetStage === 'LOST' ? (lostReason || null) : null,
+      lost_reason_code: targetStage === 'LOST' ? (lostReason || null) : null,
+      lost_reason_comment: targetStage === 'LOST' ? (comment || null) : null,
       updated_at: now
     };
 
-    // If advancing beyond NEW for the first time without recorded contact, mark first contact now
-    if (fromStatus === 'NEW' && status !== 'NEW' && !currentLead?.first_contact_at) {
-      updatePayload.first_contact_at = now;
-      updatePayload.first_contact_by_user_id = changedByUserId || null;
-      updatePayload.first_contact_outcome = 'STAGE_ADVANCED';
-    }
-
+    // Moving stage NEVER fabricates first_contact_at or first_response_at (F-12, A16).
     const { error } = await db.from('leads').update(updatePayload).eq('id', cleanId);
     if (error) throw error;
 
-    if (fromStatus && fromStatus !== status) {
+    if (currentStage !== targetStage) {
       try {
         const historyDb = getHistoryDB();
-        const { error: insertErr } = await historyDb.from('lead_status_history').insert([{
+        await historyDb.from('lead_stage_history').insert([{
           lead_id: cleanId,
-          from_status: fromStatus,
-          to_status: status,
-          changed_by_user_id: changedByUserId || null,
-          lost_reason: lostReason || null,
-          comment: comment || null,
+          from_stage: currentStage,
+          to_stage: targetStage,
+          actor_user_id: changedByUserId || null,
+          reason: comment || lostReason || null,
+          lead_version: nextVersion,
           created_at: now
         }]);
-        if (insertErr) throw insertErr;
       } catch (histErr) {
-        console.error('[LeadsRepository] Status history recording failed:', histErr?.message || histErr);
+        console.error('[LeadsRepository] Stage history recording failed:', histErr?.message || histErr);
       }
+    }
+
+    if (targetStage === 'LOST') {
+      await TasksService.cancelOpenSalesTasks(cleanId, comment || lostReason || 'Отказ по лиду', changedByUserId);
     }
 
     return this.findById(cleanId);
@@ -296,7 +337,7 @@ export class LeadsRepository {
    * Validates target user is an active sales representative (is_sales_rep = true).
    * Concurrency-guarded to prevent parallel overwrites of the same lead.
    */
-  static async assignManager(leadId, targetUserId, reason = null, actorUserId = null, isManual = true) {
+  static async assignManager(leadId, targetUserId, reason = null, actorUserId = null, isManual = true, expectedVersion = null) {
     const cleanId = parseRequiredBigInt(leadId, 'leadId');
     const lockKey = String(cleanId);
     if (activeLeadAssignmentLocks.has(lockKey)) {
@@ -307,7 +348,7 @@ export class LeadsRepository {
     try {
       const cleanTargetId = targetUserId !== null && targetUserId !== undefined ? parseRequiredBigInt(targetUserId, 'targetUserId') : null;
 
-      // Cross-instance safety: attempt PostgreSQL atomic RPC if migration 052 has been applied
+      // Cross-instance safety: attempt PostgreSQL atomic RPC (migration 052 / 060)
       try {
         const secureDb = getSecureDB();
         const { data: rpcResult, error: rpcErr } = await secureDb.rpc('fn_assign_lead_atomic', {
@@ -316,7 +357,8 @@ export class LeadsRepository {
           p_actor_user_id: actorUserId ? Number(actorUserId) : null,
           p_reason: reason || null,
           p_max_capacity: 25,
-          p_is_manual: isManual !== false
+          p_is_manual: isManual !== false,
+          p_expected_version: expectedVersion !== undefined && expectedVersion !== null ? Number(expectedVersion) : null
         });
 
         if (!rpcErr && rpcResult && rpcResult.success) {
@@ -331,6 +373,12 @@ export class LeadsRepository {
           }
           return updatedLead;
         } else if (!rpcErr && rpcResult && !rpcResult.success) {
+          if (rpcResult.error_code === 'VERSION_CONFLICT') {
+            const latest = await this.findById(cleanId);
+            const conflictErr = new AppError(rpcResult.message || 'Конфликт версии при назначении лида', 409);
+            conflictErr.current = latest;
+            throw conflictErr;
+          }
           throw new AppError(rpcResult.message || 'Ошибка назначения лида', 422);
         }
       } catch (atomicErr) {
@@ -420,51 +468,120 @@ export class LeadsRepository {
   }
 
   /**
-   * Records first contact outcome, resolving 15-minute SLA.
+   * Records communication / first contact outcome without overwriting earlier timestamps (F-12, A17, A18).
    */
   static async recordFirstContact(leadId, actorUserId, details = {}) {
     const cleanId = parseRequiredBigInt(leadId, 'leadId');
     const db = getDB();
-    const now = new Date().toISOString();
+    const now = details.occurred_at ? new Date(details.occurred_at).toISOString() : new Date().toISOString();
 
     const currentLead = await this.findById(cleanId);
     if (!currentLead) throw new AppError('Лид не найден', 404);
 
-    const outcome = details.outcome || 'REACHED'; // REACHED, NO_ANSWER, CALLBACK_REQUESTED, INVALID_NUMBER
+    const outcome = String(details.outcome || 'REACHED').toUpperCase();
     const comment = details.comment ? String(details.comment).trim() : '';
 
+    const eventTypeMap = {
+      REACHED: COMMUNICATION_EVENT_TYPES.CONNECTED_CALL,
+      CONNECTED_CALL: COMMUNICATION_EVENT_TYPES.CONNECTED_CALL,
+      OUTBOUND_MESSAGE: COMMUNICATION_EVENT_TYPES.OUTBOUND_MESSAGE,
+      NO_ANSWER: COMMUNICATION_EVENT_TYPES.NO_ANSWER,
+      BUSY: COMMUNICATION_EVENT_TYPES.BUSY,
+      CALLBACK_REQUESTED: COMMUNICATION_EVENT_TYPES.CONNECTED_CALL,
+      INVALID_NUMBER: COMMUNICATION_EVENT_TYPES.ATTEMPT
+    };
+    const eventType = details.event_type || eventTypeMap[outcome] || COMMUNICATION_EVENT_TYPES.ATTEMPT;
+    const effect = classifyCommunicationEffect(eventType);
+
     const updatePayload = {
-      first_contact_at: now,
-      first_contact_by_user_id: actorUserId || null,
-      first_contact_outcome: outcome,
-      updated_at: now
+      updated_at: new Date().toISOString()
     };
 
-    // If currently NEW and reached, auto-advance to IN_PROGRESS unless specified
-    if (currentLead.status === 'NEW') {
-      if (details.status) {
-        updatePayload.status = details.status;
-      } else if (outcome === 'REACHED') {
-        updatePayload.status = 'IN_PROGRESS';
+    // Never overwrite earlier timestamps (A17)
+    if (effect.countsAsHumanAction && !currentLead.first_human_action_at) {
+      updatePayload.first_human_action_at = now;
+    }
+    if (effect.countsAsFirstResponse && !currentLead.first_response_at) {
+      updatePayload.first_response_at = now;
+      if (!currentLead.first_contact_at) {
+        updatePayload.first_contact_at = now;
+        updatePayload.first_contact_by_user_id = actorUserId || null;
+        updatePayload.first_contact_outcome = outcome;
       }
+    }
+    if (effect.countsAsConfirmedContact && !currentLead.first_contact_confirmed_at) {
+      updatePayload.first_contact_confirmed_at = now;
+    }
+
+    // Only confirmed contact advances NEW -> IN_PROGRESS automatically (A18)
+    if (currentLead.status === 'NEW' && effect.countsAsConfirmedContact) {
+      updatePayload.status = 'IN_PROGRESS';
+      updatePayload.stage = 'IN_PROGRESS';
     }
 
     const { error: updateErr } = await db.from('leads').update(updatePayload).eq('id', cleanId);
     if (updateErr) throw updateErr;
 
-    // Add note to lead notes
+    // Record immutable communication event
+    try {
+      const historyDb = getHistoryDB();
+      await historyDb.from('lead_communications').insert([{
+        lead_id: cleanId,
+        contact_id: currentLead.contact_id || null,
+        actor_user_id: actorUserId || null,
+        channel: details.channel || 'CALL',
+        direction: details.direction || 'OUTBOUND',
+        event_type: eventType,
+        is_manual: details.is_manual !== false,
+        occurred_at: now,
+        project_id: details.project_id || currentLead.interested_project_id || null,
+        unit_id: details.unit_id || null,
+        outcome,
+        notes: comment || null,
+        idempotency_key: details.idempotency_key || null
+      }]);
+    } catch (commErr) {
+      console.warn('[LeadsRepository] lead_communications insert skipped:', commErr?.message || commErr);
+    }
+
     const outcomeLabels = {
       REACHED: 'Успешный контакт',
+      CONNECTED_CALL: 'Состоявшийся разговор',
+      OUTBOUND_MESSAGE: 'Исходящее сообщение',
       NO_ANSWER: 'Не отвечает / Сброс',
+      BUSY: 'Занято',
       CALLBACK_REQUESTED: 'Просьба перезвонить',
       INVALID_NUMBER: 'Неверный номер / Ошибка'
     };
-    const noteText = `Первый контакт [${outcomeLabels[outcome] || outcome}]${comment ? `: ${comment}` : ''}`;
+    const manualTag = details.is_manual !== false ? ' (введено вручную)' : '';
+    const noteText = `Контакт${manualTag} [${outcomeLabels[outcome] || outcome}]${comment ? `: ${comment}` : ''}`;
     await this.addNote(cleanId, actorUserId || 1, noteText);
 
-    // Complete open call tasks
-    await TasksService.onFirstContactRecorded(cleanId);
+    if (effect.countsAsConfirmedContact) {
+      await TasksService.onFirstContactRecorded(cleanId);
+    }
 
+    return this.findById(cleanId);
+  }
+
+  static async setPause(leadId, actorUserId, { pause_until, pause_reason }) {
+    const cleanId = parseRequiredBigInt(leadId, 'leadId');
+    if (!pause_until || !pause_reason || !String(pause_reason).trim()) {
+      throw new AppError('Для постановки на паузу укажите дату пересмотра и причину', 400);
+    }
+    const db = getDB();
+    const now = new Date().toISOString();
+    const { error } = await db
+      .from('leads')
+      .update({
+        pause_until: new Date(pause_until).toISOString(),
+        pause_reason: String(pause_reason).trim(),
+        pause_set_by: actorUserId || null,
+        updated_at: now
+      })
+      .eq('id', cleanId);
+    if (error) throw error;
+    await this.addNote(cleanId, actorUserId || 1, `Пауза до ${pause_until}: ${String(pause_reason).trim()}`);
     return this.findById(cleanId);
   }
 

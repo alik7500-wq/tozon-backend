@@ -26,7 +26,8 @@ export class TasksService {
       setTimeout(() => inFlightTaskLocks.delete(lockKey), 5000);
 
       const deadline = calculateSalesSlaDeadline(new Date(), 15);
-      const dueDate = deadline ? deadline.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+      const dueAt = (deadline || new Date(Date.now() + 15 * 60000)).toISOString();
+      const dueDate = dueAt.split('T')[0];
 
       return await TasksRepository.create({
         lead_id: lead.id,
@@ -39,6 +40,11 @@ export class TasksService {
         client_name: lead.full_name,
         phone: lead.phone,
         due_date: dueDate,
+        due_at: dueAt,
+        due_date_only: false,
+        timezone: 'Asia/Dushanbe',
+        rule_key: 'LEAD_CREATED_15M',
+        idempotency_key: `lead_created_${lead.id}`,
         status: 'OPEN',
       });
     } catch (err) {
@@ -68,7 +74,8 @@ export class TasksService {
         setTimeout(() => inFlightTaskLocks.delete(lockKey), 5000);
 
         const deadline = calculateSalesSlaDeadline(new Date(), 15);
-        const dueDate = deadline ? deadline.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+        const dueAt = (deadline || new Date(Date.now() + 15 * 60000)).toISOString();
+        const dueDate = dueAt.split('T')[0];
 
         return await TasksRepository.create({
           lead_id: lead.id,
@@ -81,6 +88,11 @@ export class TasksService {
           client_name: lead.full_name,
           phone: lead.phone,
           due_date: dueDate,
+          due_at: dueAt,
+          due_date_only: false,
+          timezone: 'Asia/Dushanbe',
+          rule_key: 'LEAD_ASSIGNED_15M',
+          idempotency_key: `lead_assigned_${lead.id}_${managerId}`,
           status: 'OPEN',
         });
       }
@@ -201,6 +213,16 @@ export class TasksService {
       await TasksRepository.completeFirstContactTasks(leadId);
     } catch (err) {
       console.error('Error completing first contact task:', err);
+    }
+  }
+
+  static async cancelOpenSalesTasks(leadId, reason = 'Отказ по лиду', actorUserId = null) {
+    try {
+      if (typeof TasksRepository.cancelOpenTasksForLead === 'function') {
+        await TasksRepository.cancelOpenTasksForLead(leadId, reason, actorUserId);
+      }
+    } catch (err) {
+      console.error('Error cancelling open sales tasks:', err);
     }
   }
 

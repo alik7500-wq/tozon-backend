@@ -62,15 +62,24 @@ export class TasksRepository {
       );
     }
 
-    return tasks.map((t) => ({
-      ...t,
-      client_name: t.client_name || t.leads?.full_name || 'Клиент',
-      phone: t.phone || t.leads?.phone || '',
-      contract_number: t.deals?.contract_number || null,
-      assigned_user_name: t.users?.name || 'Ответственный менеджер',
-      isOverdue: t.status === 'OPEN' && t.due_date < today,
-      isToday: t.status === 'OPEN' && t.due_date === today,
-    }));
+    const nowDate = new Date();
+    return tasks.map((t) => {
+      const dueAtMs = t.due_at ? new Date(t.due_at).getTime() : null;
+      const isOverdue = t.status === 'OPEN' && (
+        dueAtMs !== null && Number.isFinite(dueAtMs)
+          ? dueAtMs < nowDate.getTime()
+          : Boolean(t.due_date && t.due_date < today)
+      );
+      return {
+        ...t,
+        client_name: t.client_name || t.leads?.full_name || 'Клиент',
+        phone: t.phone || t.leads?.phone || '',
+        contract_number: t.deals?.contract_number || null,
+        assigned_user_name: t.users?.name || 'Ответственный менеджер',
+        isOverdue,
+        isToday: t.status === 'OPEN' && t.due_date === today,
+      };
+    });
   }
 
   static async findById(id) {
@@ -106,7 +115,12 @@ export class TasksRepository {
       phone: taskData.phone || null,
       project_name: taskData.project_name || null,
       unit_number: taskData.unit_number ? String(taskData.unit_number) : null,
-      due_date: taskData.due_date || now.split('T')[0],
+      due_date: taskData.due_date || (taskData.due_at ? String(taskData.due_at).split('T')[0] : now.split('T')[0]),
+      due_at: taskData.due_at || null,
+      due_date_only: Boolean(taskData.due_date_only ?? !taskData.due_at),
+      timezone: taskData.timezone || 'Asia/Dushanbe',
+      rule_key: taskData.rule_key || null,
+      event_ref: taskData.event_ref || null,
       priority: taskData.priority || 'NORMAL',
       status: taskData.status || 'OPEN',
       idempotency_key: taskData.idempotency_key || null,

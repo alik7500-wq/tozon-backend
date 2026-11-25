@@ -2,6 +2,17 @@ import express from 'express';
 import { protect, restrictTo } from '../../middleware/auth.middleware.js';
 import { SalesAutomationDetector } from './salesAutomationDetector.js';
 import { isWithinSalesAutomationWindow, getBusinessDateTime } from '../../utils/businessTime.js';
+import { getServiceDB, getDB } from '../../db/connection.js';
+
+const getSafeDB = () => {
+  try { return getServiceDB(); } catch { return getDB(); }
+};
+
+const ALLOWED_RULE_EVENTS = [
+  'LEAD_CREATED', 'LEAD_ASSIGNED', 'NO_ANSWER', 'CALLBACK_REQUESTED',
+  'MEETING_SCHEDULED', 'SHOWING_DONE', 'TASK_OVERDUE', 'LEAD_LOST', 'DEAL_RESERVED', 'DEAL_SIGNED'
+];
+const ALLOWED_RULE_ACTIONS = ['CREATE_TASK', 'NOTIFY_SUPERVISOR', 'NOTIFY_MANAGER'];
 
 const router = express.Router();
 
@@ -248,6 +259,100 @@ router.post('/run-detector', async (req, res) => {
       }
     });
   }
+});
+
+// F-19: Controlled CRM Automation Rules (save separated from activation, preview without side effects)
+router.get('/crm-rules', protect, restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+  try {
+    const db = getSafeDB();
+    const { data: rules } = await db.from('crm_automation_rules').select('*').order('id', { ascending: false });
+    const { data: executions } = await db.from('crm_automation_executions').select('*').order('created_at', { ascending: false }).limit(50);
+    res.json({
+      status: 'success',
+      data: {
+        rules: rules || [],
+        executions: executions || [],
+        allowedEvents: ALLOWED_RULE_EVENTS,
+        allowedActions: ALLOWED_RULE_ACTIONS
+      }
+    });
+  } catch (err) { next(err); }
+});
+
+router.post('/crm-rules', protect, restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+  try {
+    const { name, project_id, source_code, event_type, conditions_json, action_type, action_params_json } = req.body || {};
+    if (!name || !ALLOWED_RULE_EVENTS.includes(event_type) || !ALLOWED_RULE_ACTIONS.includes(action_type)) {
+      return res.status(400).json({ status: 'error', code: 'VALIDATION_ERROR', message: 'Недопустимые параметры шаблона правила' });
+    }
+    const db = getSafeDB();
+    const { data, error } = await db
+      .from('crm_automation_rules')
+      .insert([{
+        name: String(name).trim(),
+        project_id: project_id || null,
+        source_code: source_code || null,
+        event_type,
+        conditions_json: conditions_json || {},
+        action_type,
+        action_params_json: action_params_json || {},
+        is_enabled: false, // Always saved disabled; activation requires explicit toggle (F-19)
+        version: 1,
+        created_by: req.user.id,
+        updated_by: req.user.id
+      }])
+      .select()
+      .single();
+    if (error) throw error;
+    res.status(201).json({ status: 'success', data: { rule: data } });
+  } catch (err) { next(err); }
+});
+
+router.post('/crm-rules/:id/preview', protect, restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+  try {
+    const db = getSafeDB();
+    const { data: rule } = await db.from('crm_automation_rules').select('*').eq('id', req.params.id).maybeSingle();
+    if (!rule) return res.status(404).json({ status: 'error', message: 'Правило не найдено' });
+
+    let query = db.from('leads').select('id, stage, status, interested_project_id').is('archived_at', null).limit(100);
+    if (rule.project_id) query = query.eq('interested_project_id', rule.project_id);
+    const { data: leads } = await query;
+
+    // Preview has zero side effects (A47)
+    res.json({
+      status: 'success',
+      data: {
+        ruleId: rule.id,
+        version: rule.version,
+        dryRun: true,
+        estimatedAffectedCount: (leads || []).length,
+        sampleLeadIds: (leads || []).slice(0, 10).map((l) => l.id)
+      }
+    });
+  } catch (err) { next(err); }
+});
+
+router.patch('/crm-rules/:id/toggle', protect, restrictTo('ADMIN', 'DIRECTOR'), async (req, res, next) => {
+  try {
+    const db = getSafeDB();
+    const { data: existing } = await db.from('crm_automation_rules').select('*').eq('id', req.params.id).maybeSingle();
+    if (!existing) return res.status(404).json({ status: 'error', message: 'Правило не найдено' });
+
+    const nextEnabled = typeof req.body?.is_enabled === 'boolean' ? req.body.is_enabled : !existing.is_enabled;
+    const { data, error } = await db
+      .from('crm_automation_rules')
+      .update({
+        is_enabled: nextEnabled,
+        version: Number(existing.version || 1) + 1,
+        updated_by: req.user.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', existing.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ status: 'success', data: { rule: data } });
+  } catch (err) { next(err); }
 });
 
 export { router as automationRouter };
