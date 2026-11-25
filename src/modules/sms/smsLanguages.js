@@ -8,7 +8,7 @@ export const TAJIK_SMS_TEMPLATES = Object.freeze({
   DEBTOR_REMINDER: 'Муҳтарам {{client_name}}! Лутфан қарзи муҳлатгузаштаи {{overdue_amount}} {{currency}}-ро тибқи шартномаи №{{contract_number}} пардохт намоед. TOZON-PLAZA.',
   PAYMENT_RECEIVED: 'Муҳтарам {{client_name}}! Пардохти {{payment_amount}} {{payment_currency}} тибқи шартномаи №{{contract_number}} қабул шуд. Ҳамагӣ пардохтшуда: {{total_paid}} {{contract_currency}}. Бақия: {{remaining_balance}} {{contract_currency}}. Ташаккур! TOZON-PLAZA.',
   BIRTHDAY: 'Муҳтарам {{client_name}}! Шуморо бо рӯзи таваллуд табрик мегӯем! Бароятон саломатӣ ва хушбахтӣ орзумандем. TOZON-PLAZA.',
-  CONTRACT_CREATED: 'Муҳтарам {{client_name}}! Шуморо бо бастани шартномаи №{{contract_number}} барои хонаи №{{apartment}} табрик мегӯем. TOZON-PLAZA.',
+  CONTRACT_CREATED: 'Муҳтарам {{client_name}}! Шуморо бо имзои шартнома барои хонаи №{{apartment}} дар TOZON PLAZA табрик мегӯем! Ин қадами муҳим ба сӯи хонаи нави Шумост. Бигзор хонаи наватон макони хушбахтии оилавӣ, роҳат ва файзу баракат гардад. Барои бовариатон ташаккур! Шартномаи №{{contract_number}}. Бо эҳтиром, дастаи TOZON-PLAZA.',
   CONTRACT_CHANGED: 'Салом, {{client_name}}! Маълумоти шартномаи №{{contract_number}} барои хонаи №{{apartment}} ({{apartment_area}} м²), маблағи {{contract_total}} {{currency}} тағйир ёфт. Барои маълумоти бештар бо мо тамос гиред. TOZON-PLAZA.',
   CONTRACT_PAID: 'Салом, {{client_name}}! Шартномаи №{{contract_number}} пурра пардохт шудааст. Ташаккур! TOZON-PLAZA.',
   CONTRACT_TERMINATED: 'Салом, {{client_name}}! Шартномаи №{{contract_number}} қатъ карда шуд. TOZON-PLAZA.',
