@@ -21,6 +21,80 @@ const read = async (table, columns, filter, value) => {
 const positiveInt = value => Number.isSafeInteger(value) && value > 0;
 const nonnegativeInt = value => Number.isSafeInteger(value) && value >= 0;
 
+// Server-side installment preview. Read-only: never creates deals, receipts or inventory changes.
+router.post('/installment-preview', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+    return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
+  }
+  const b = req.body ?? {};
+  const { paid_area_x100: area, price_per_m2_minor: price, installment_months: months, first_payment_date: first } = b;
+  if (!nonnegativeInt(area) || !nonnegativeInt(price) || !positiveInt(months) || months > 120 ||
+      area > 100000000 || price > 100000000 ||
+      typeof first !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(first)) {
+    return res.status(400).json({ message: 'INVALID_INSTALLMENT_INPUT' });
+  }
+  const [year, month, day] = first.split('-').map(Number);
+  const initial = new Date(Date.UTC(year, month - 1, day));
+  if (initial.getUTCFullYear() !== year || initial.getUTCMonth() !== month - 1 ||
+      initial.getUTCDate() !== day || year < 2000 || year > 2100) {
+    return res.status(400).json({ message: 'INVALID_FIRST_PAYMENT_DATE' });
+  }
+  const totalMinor = Math.round(area * price / 100);
+  if (!Number.isSafeInteger(totalMinor)) return res.status(400).json({ message: 'INVALID_INSTALLMENT_AMOUNT' });
+  const eachMinor = Math.floor(totalMinor / months);
+  const schedule = Array.from({ length: months }, (_, index) => {
+    const base = new Date(Date.UTC(year, month - 1 + index, 1));
+    const last = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0)).getUTCDate();
+    base.setUTCDate(Math.min(day, last));
+    return { due_date: base.toISOString().slice(0, 10),
+      amount_minor: index === months - 1 ? totalMinor - eachMinor * (months - 1) : eachMinor };
+  });
+  return res.json({ data: { payable_total_minor: totalMinor, currency: 'USD', schedule, persisted: false } });
+});
+
+// One action for the operator; the database performs all writes atomically.
+router.post('/intake', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+    return res.status(403).json({ message: 'RESETTLEMENT_WRITE_DENIED' });
+  }
+  const b = req.body ?? {};
+  const ids = ['project_id', 'unit_id', 'lead_id'];
+  const areas = ['original_home_area_x100', 'compensated_area_x100', 'paid_area_x100', 'price_per_m2_minor'];
+  if (!ids.every(k => positiveInt(b[k])) || !areas.every(k => nonnegativeInt(b[k])) ||
+      !positiveInt(b.installment_months) || b.installment_months > 120 ||
+      typeof b.first_payment_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.first_payment_date) ||
+      typeof b.idempotency_key !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(b.idempotency_key)) {
+    return res.status(400).json({ message: 'INVALID_INTAKE_INPUT' });
+  }
+  try {
+    const { data, error } = await getServiceDB().rpc('create_resettlement_intake_atomic', {
+      p_project_id: b.project_id, p_unit_id: b.unit_id, p_lead_id: b.lead_id,
+      p_actor_id: Number(req.user.id),
+      p_original_home_area_x100: b.original_home_area_x100,
+      p_compensated_area_x100: b.compensated_area_x100,
+      p_paid_area_x100: b.paid_area_x100,
+      p_price_per_m2_minor: b.price_per_m2_minor,
+      p_installment_months: b.installment_months,
+      p_first_payment_date: b.first_payment_date,
+      p_idempotency_key: b.idempotency_key
+    });
+    if (error) {
+      const known = ['INVALID_ACTOR', 'INVALID_INTAKE', 'INVALID_TOTAL', 'IDEMPOTENCY_CONFLICT',
+        'UNIT_UNAVAILABLE', 'AREA_MISMATCH', 'PROJECT_CURRENCY_MISMATCH', 'LEAD_NOT_FOUND',
+        'ALREADY_ALLOCATED', 'UNIT_CHANGED'];
+      if (known.includes(error.message)) return res.status(409).json({ message: error.message });
+      throw error;
+    }
+    return res.status(data?.replayed ? 200 : 201).json({ data });
+  } catch (error) {
+    console.error('Resettlement intake failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
 router.post('/', async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
