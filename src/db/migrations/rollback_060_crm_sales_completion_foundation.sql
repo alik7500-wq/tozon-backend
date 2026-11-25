@@ -1,5 +1,17 @@
--- Rollback 060: CRM Sales Completion V1.0 Foundation
+-- =============================================================================
+-- DESTRUCTIVE TEST-ONLY CLEANUP for Migration 060
+-- WARNING: Drops tables and columns added by 060 (destroys new data).
+-- NEVER use for production/staging recovery. Use app_rollback_060_061_preserve_data.sql instead.
+-- Requires explicit session flag: SET LOCAL tozon.allow_destructive_test_cleanup = 'YES_TEST_ONLY';
+-- =============================================================================
 BEGIN;
+
+DO $$
+BEGIN
+    IF current_setting('tozon.allow_destructive_test_cleanup', true) IS DISTINCT FROM 'YES_TEST_ONLY' THEN
+        RAISE EXCEPTION 'DESTRUCTIVE_ROLLBACK_BLOCKED: rollback_060 is strictly for disposable test databases. Set tozon.allow_destructive_test_cleanup=YES_TEST_ONLY or use app_rollback_060_061_preserve_data.sql.';
+    END IF;
+END $$;
 
 DROP TABLE IF EXISTS public.call_ai_analyses CASCADE;
 DROP TABLE IF EXISTS public.crm_automation_executions CASCADE;

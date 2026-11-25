@@ -134,8 +134,9 @@ describe('Migration 060 CRM Sales Completion Foundation (PGlite)', () => {
     `);
     expect(grants.rows).toHaveLength(0);
 
-    // 6. Clean rollback (A51)
-    await db.exec(sqlRollback);
+    // 6. Clean destructive rollback ONLY on disposable test DB with explicit guard flag (A51)
+    await db.exec(`BEGIN; SET LOCAL tozon.allow_destructive_test_cleanup = 'YES_TEST_ONLY'; COMMIT;`);
+    await db.exec(`SET tozon.allow_destructive_test_cleanup = 'YES_TEST_ONLY';\n${sqlRollback}`);
     const remaining = await db.query(`
       SELECT to_regclass('public.contacts') AS c, to_regclass('public.crm_event_outbox') AS o
     `);
