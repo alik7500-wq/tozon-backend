@@ -48,14 +48,16 @@ describe('DDS export formula rows and separate cash desk ledgers', () => {
   it('calculates each ending balance on its own row, including the first desk', async () => {
     const book = await build(fixture());
     const summary = book.getWorksheet('Свод по кассам');
-    expect(summary.getCell('G9').formula).toBe('B9+C9-D9');
-    expect(summary.getCell('G10').formula).toBe('B10+C10-D10');
-    expect(summary.getCell('M9').formula).toBe('H9+I9-J9');
-    expect(summary.getCell('G11').formula).toBe('SUM(G9:G10)');
+    expect(summary.getRow(8).cellCount).toBe(13);
+    expect(summary.getRow(8).values.filter(value => value.startsWith('Внутр.'))).toEqual([]);
+    expect(summary.getCell('E9').formula).toBe('B9+C9-D9');
+    expect(summary.getCell('E10').formula).toBe('B10+C10-D10');
+    expect(summary.getCell('I9').formula).toBe('F9+G9-H9');
+    expect(summary.getCell('E11').formula).toBe('SUM(E9:E10)');
     const audit = book.getWorksheet('Сверка');
     expect(audit.getCell('C2').formula).toBe("SUM('Приходы ПКО'!K2:K3)");
     expect(audit.getCell('C3').formula).toBe("SUM('Расходы РКО'!K2:K2)");
-    expect(audit.getCell('D4').formula).toBe("'Свод по кассам'!G11");
+    expect(audit.getCell('D4').formula).toBe("'Свод по кассам'!E11");
     expect(audit.getCell('C8').formula).toBe('SUMIF(\'Приходы ПКО\'!J2:J3,"TJS",\'Приходы ПКО\'!L2:L3)');
     expect(book.exportXml).toContain('fullCalcOnLoad="1"');
   });
@@ -93,9 +95,9 @@ it('exports non-cash barter loss separately from money and preserves the asset w
  const data=fixture();data.cashDesksSummary[0].nonCashAdjustmentUsd=-15;
  data.cashDesksSummary.push({name:'Результат бартера',isAnalytical:true,balanceUsd:-15,balanceTjs:-150,resultDetails:[{asset:'Genesis',date:'2026-10-28',costTjs:1000,proceedsTjs:850,sellingCostTjs:0,resultTjs:-150,resultUsd:-15}]});
  const book=await build(data);const sheet=book.getWorksheet('Свод по кассам');
- expect(sheet.getCell('P11').formula).toBe('SUM(P9:P10)');
- expect(book.getWorksheet('Сверка').getCell('C4').formula).toContain("'Свод по кассам'!P11");
- expect(sheet.getCell('G9').result).toBe(80);expect(sheet.getCell('G9').formula).toContain('+P9');
+ expect(sheet.getCell('L11').formula).toBe('SUM(L9:L10)');
+ expect(book.getWorksheet('Сверка').getCell('C4').formula).toContain("'Свод по кассам'!L11");
+ expect(sheet.getCell('E9').result).toBe(80);expect(sheet.getCell('E9').formula).toContain('+L9');
  expect(book.getWorksheet('Результат бартера').getCell('F3').value).toBe(-150);
  expect(sheet.getCell('A11').value).not.toBe('Результат бартера');
 });

@@ -87,17 +87,15 @@ export class CashflowExcelService {
       'Остаток на начало USD',
       'Приход USD',
       'Расход USD',
-      'Внутр. приход USD',
-      'Внутр. расход USD',
       'Остаток на конец USD',
       'Остаток на начало TJS',
       'Приход TJS',
       'Расход TJS',
-      'Внутр. приход TJS',
-      'Внутр. расход TJS',
       'Остаток на конец TJS',
       'Кол-во ПКО',
-      'Кол-во РКО'
+      'Кол-во РКО',
+      'Неденежная корректировка USD',
+      'Неденежная корректировка TJS'
     ]);
 
     s1HeaderRow.font = { bold: true, color: { argb: 'FFFFFF' }, size: 11 };
@@ -107,10 +105,6 @@ export class CashflowExcelService {
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandBlue } };
     });
 
-    sheet1.getCell('P8').value='Неденежная корректировка USD';
-    sheet1.getCell('Q8').value='Неденежная корректировка TJS';
-    sheet1.getColumn(16).width=26;
-    sheet1.getColumn(17).width=26;
 
     // Populate cash desks summary rows
     const desksSummary = (cashflowData.cashDesksSummary || []).filter(d=>!d.isAnalytical);
@@ -137,21 +131,6 @@ export class CashflowExcelService {
       const pkoCount = deskIncomes.length;
       const rkoCount = deskExpenses.length;
 
-      // Internal transfers for this desk
-      const internalIncomeUsd = deskIncomes
-        .filter(t => t.category === 'Внутренние перемещения между кассами' || t.operationType === 'INTERNAL_CASH_TRANSFER')
-        .reduce((sum, t) => sum + (t.currency === 'USD' ? t.amount : 0), 0);
-      const internalExpenseUsd = deskExpenses
-        .filter(t => t.category === 'Внутренние перемещения между кассами' || t.operationType === 'INTERNAL_CASH_TRANSFER')
-        .reduce((sum, t) => sum + (t.currency === 'USD' ? t.amount : 0), 0);
-
-      const internalIncomeTjs = deskIncomes
-        .filter(t => t.category === 'Внутренние перемещения между кассами' || t.operationType === 'INTERNAL_CASH_TRANSFER')
-        .reduce((sum, t) => sum + (t.currency === 'TJS' ? t.amount : 0), 0);
-      const internalExpenseTjs = deskExpenses
-        .filter(t => t.category === 'Внутренние перемещения между кассами' || t.operationType === 'INTERNAL_CASH_TRANSFER')
-        .reduce((sum, t) => sum + (t.currency === 'TJS' ? t.amount : 0), 0);
-
       // Start balances (or 0 if start of period)
       const startUsd = 0;
       const startTjs = 0;
@@ -162,15 +141,11 @@ export class CashflowExcelService {
         startUsd,
         desk.totalIncomeUsd || 0,
         desk.totalExpenseUsd || 0,
-        internalIncomeUsd,
-        internalExpenseUsd,
-        { formula: desk.nonCashAdjustmentUsd ? `B${rowIndex}+C${rowIndex}-D${rowIndex}+P${rowIndex}` : `B${rowIndex}+C${rowIndex}-D${rowIndex}`, result: Number((startUsd + (desk.totalIncomeUsd || 0) - (desk.totalExpenseUsd || 0) + (desk.nonCashAdjustmentUsd || 0)).toFixed(2)) },
+        { formula: desk.nonCashAdjustmentUsd ? `B${rowIndex}+C${rowIndex}-D${rowIndex}+L${rowIndex}` : `B${rowIndex}+C${rowIndex}-D${rowIndex}`, result: Number((startUsd + (desk.totalIncomeUsd || 0) - (desk.totalExpenseUsd || 0) + (desk.nonCashAdjustmentUsd || 0)).toFixed(2)) },
         startTjs,
         desk.totalIncomeTjs || 0,
         desk.totalExpenseTjs || 0,
-        internalIncomeTjs,
-        internalExpenseTjs,
-        { formula: desk.nonCashAdjustmentTjs ? `H${rowIndex}+I${rowIndex}-J${rowIndex}+Q${rowIndex}` : `H${rowIndex}+I${rowIndex}-J${rowIndex}`, result: Number((startTjs + (desk.totalIncomeTjs || 0) - (desk.totalExpenseTjs || 0) + (desk.nonCashAdjustmentTjs || 0)).toFixed(2)) },
+        { formula: desk.nonCashAdjustmentTjs ? `F${rowIndex}+G${rowIndex}-H${rowIndex}+M${rowIndex}` : `F${rowIndex}+G${rowIndex}-H${rowIndex}`, result: Number((startTjs + (desk.totalIncomeTjs || 0) - (desk.totalExpenseTjs || 0) + (desk.nonCashAdjustmentTjs || 0)).toFixed(2)) },
         pkoCount,
         rkoCount,
         desk.nonCashAdjustmentUsd || 0,
@@ -181,11 +156,11 @@ export class CashflowExcelService {
       row.alignment = { vertical: 'middle' };
 
       // Number formatting
-      [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].forEach(colIdx => {
+      [2, 3, 4, 5, 6, 7, 8, 9, 12, 13].forEach(colIdx => {
         const cell = row.getCell(colIdx);
         cell.numFmt = '#,##0.00;[Red]-#,##0.00;0.00';
       });
-      [14, 15].forEach(colIdx => {
+      [10, 11].forEach(colIdx => {
         const cell = row.getCell(colIdx);
         cell.numFmt = '#,##0';
       });
@@ -193,7 +168,6 @@ export class CashflowExcelService {
 
     // Grand Total Row Sheet 1
     if (desksSummary.length > 0) {
-      const grandRowIndex = sheet1.rowCount + 1;
       const grandRow = sheet1.addRow([
         'ИТОГО ПО ВСЕМ КАССАМ',
         { formula: `SUM(B${startRowS1}:B${endRowS1})` },
@@ -207,20 +181,16 @@ export class CashflowExcelService {
         { formula: `SUM(J${startRowS1}:J${endRowS1})` },
         { formula: `SUM(K${startRowS1}:K${endRowS1})` },
         { formula: `SUM(L${startRowS1}:L${endRowS1})` },
-        { formula: `SUM(M${startRowS1}:M${endRowS1})` },
-        { formula: `SUM(N${startRowS1}:N${endRowS1})` },
-        { formula: `SUM(O${startRowS1}:O${endRowS1})` },
-        { formula: `SUM(P${startRowS1}:P${endRowS1})` },
-        { formula: `SUM(Q${startRowS1}:Q${endRowS1})` }
+        { formula: `SUM(M${startRowS1}:M${endRowS1})` }
       ]);
 
       grandRow.font = { bold: true, size: 11, color: { argb: '0F172A' } };
       grandRow.height = 26;
       grandRow.eachCell((cell, colIdx) => {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E2E8F0' } };
-        if (colIdx >= 2 && colIdx <= 13) {
+        if ((colIdx >= 2 && colIdx <= 9) || colIdx >= 12) {
           cell.numFmt = '#,##0.00;[Red]-#,##0.00;0.00';
-        } else if (colIdx >= 14) {
+        } else if (colIdx >= 10) {
           cell.numFmt = '#,##0';
         }
       });
@@ -284,6 +254,8 @@ export class CashflowExcelService {
       col.width = 20;
     });
     sheet1.getColumn(1).width = 38;
+    sheet1.getColumn(12).width = 26;
+    sheet1.getColumn(13).width = 26;
 
     // -------------------------------------------------------------
     // SHEET 2: «Приходы ПКО»
@@ -523,20 +495,20 @@ export class CashflowExcelService {
       {
         id: 3,
         name: 'Начальный остаток USD + Приход USD − Расход USD + Неденежная корректировка = Конечный остаток USD',
-        calcFormula: desksSummary.length > 0 ? `'Свод по кассам'!B${endRowS1 + 1}+'Свод по кассам'!C${endRowS1 + 1}-'Свод по кассам'!D${endRowS1 + 1}+'Свод по кассам'!P${endRowS1 + 1}` : '0',
-        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!G${endRowS1 + 1}` : '0'
+        calcFormula: desksSummary.length > 0 ? `'Свод по кассам'!B${endRowS1 + 1}+'Свод по кассам'!C${endRowS1 + 1}-'Свод по кассам'!D${endRowS1 + 1}+'Свод по кассам'!L${endRowS1 + 1}` : '0',
+        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!E${endRowS1 + 1}` : '0'
       },
       {
         id: 4,
         name: 'Количество ПКО в детализации совпадает со сводом',
         calcFormula: incomeTransactions.length ? `${incomeTransactions.length}` : '0',
-        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!N${endRowS1 + 1}` : '0'
+        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!J${endRowS1 + 1}` : '0'
       },
       {
         id: 5,
         name: 'Количество РКО в детализации совпадает со сводом',
         calcFormula: expenseTransactions.length ? `${expenseTransactions.length}` : '0',
-        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!O${endRowS1 + 1}` : '0'
+        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!K${endRowS1 + 1}` : '0'
       },
       {
         id: 6,
@@ -548,19 +520,19 @@ export class CashflowExcelService {
         id: 7,
         name: 'Сумма приходов TJS по детализации = приходу TJS в своде',
         calcFormula: incomeTransactions.length > 0 ? `SUMIF('Приходы ПКО'!J${startRowS2}:J${endRowS2},"TJS",'Приходы ПКО'!L${startRowS2}:L${endRowS2})` : '0',
-        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!I${endRowS1 + 1}` : '0'
+        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!G${endRowS1 + 1}` : '0'
       },
       {
         id: 8,
         name: 'Сумма расходов TJS по детализации = расходу TJS в своде',
         calcFormula: expenseTransactions.length > 0 ? `SUMIF('Расходы РКО'!J${startRowS3}:J${endRowS3},"TJS",'Расходы РКО'!L${startRowS3}:L${endRowS3})` : '0',
-        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!J${endRowS1 + 1}` : '0'
+        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!H${endRowS1 + 1}` : '0'
       },
       {
         id: 9,
         name: 'Начальный остаток TJS + Приход TJS − Расход TJS + Неденежная корректировка = Конечный остаток TJS',
-        calcFormula: desksSummary.length > 0 ? `'Свод по кассам'!H${endRowS1 + 1}+'Свод по кассам'!I${endRowS1 + 1}-'Свод по кассам'!J${endRowS1 + 1}+'Свод по кассам'!Q${endRowS1 + 1}` : '0',
-        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!M${endRowS1 + 1}` : '0'
+        calcFormula: desksSummary.length > 0 ? `'Свод по кассам'!F${endRowS1 + 1}+'Свод по кассам'!G${endRowS1 + 1}-'Свод по кассам'!H${endRowS1 + 1}+'Свод по кассам'!M${endRowS1 + 1}` : '0',
+        ctrlFormula: desksSummary.length > 0 ? `'Свод по кассам'!I${endRowS1 + 1}` : '0'
       }
     ];
 
