@@ -50,6 +50,9 @@ services:
       - path: /index.html
         name: Cache-Control
         value: no-store
+      - path: /login
+        name: Cache-Control
+        value: no-store
       - path: /crm-version.json
         name: Cache-Control
         value: no-store
