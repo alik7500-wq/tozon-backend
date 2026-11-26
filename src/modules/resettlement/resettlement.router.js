@@ -40,7 +40,7 @@ router.post('/installment-preview', (req, res) => {
       initial.getUTCDate() !== day || year < 2000 || year > 2100) {
     return res.status(400).json({ message: 'INVALID_FIRST_PAYMENT_DATE' });
   }
-  const totalMinor = Math.round(area * price / 100);
+  const totalMinor = Number((BigInt(area) * BigInt(price) + 50n) / 100n);
   if (!Number.isSafeInteger(totalMinor)) return res.status(400).json({ message: 'INVALID_INSTALLMENT_AMOUNT' });
   const eachMinor = Math.floor(totalMinor / months);
   const schedule = Array.from({ length: months }, (_, index) => {
