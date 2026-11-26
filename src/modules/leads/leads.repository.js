@@ -239,12 +239,40 @@ export class LeadsRepository {
     return this.findById(lead.id);
   }
 
+  static _prepareLeadEditData(data) {
+    const payload = {};
+    if (data.full_name !== undefined) payload.full_name = data.full_name;
+    if (data.phone !== undefined) payload.phone = data.phone;
+    if (data.secondary_phone !== undefined) payload.secondary_phone = data.secondary_phone || null;
+    if (data.source !== undefined) payload.source = data.source || 'DIRECT';
+    if (data.source_code !== undefined) payload.source_code = data.source_code || null;
+    if (data.interested_project_id !== undefined) payload.interested_project_id = parseOptionalBigInt(data.interested_project_id);
+    if (data.budget_min_minor !== undefined) payload.budget_min_minor = data.budget_min_minor || null;
+    if (data.budget_max_minor !== undefined) payload.budget_max_minor = data.budget_max_minor || null;
+    if (data.notes !== undefined) payload.notes = data.notes || null;
+    if (data.passport_series !== undefined) payload.passport_series = data.passport_series || null;
+    if (data.passport_number !== undefined) payload.passport_number = data.passport_number || null;
+    if (data.passport_issued_by !== undefined) payload.passport_issued_by = data.passport_issued_by || null;
+    if (data.passport_issue_date !== undefined) payload.passport_issue_date = data.passport_issue_date || null;
+    if (data.birth_date !== undefined) payload.birth_date = data.birth_date || null;
+    if (data.registration_address !== undefined) payload.registration_address = data.registration_address || null;
+    if (data.inn !== undefined) payload.inn = data.inn || null;
+    if (data.utm_data !== undefined) payload.utm_data = data.utm_data || null;
+    return payload;
+  }
+
   static async update(id, data) {
+    if (data && (data.status !== undefined || data.stage !== undefined)) {
+      throw new AppError('Прямое изменение этапа/статуса лида запрещено. Используйте PATCH /api/leads/:id/status', 400);
+    }
     // Phone changes revoke private buyer-portal access in the same transaction.
     // Route authorization runs before this server-only write; never fall back to anon.
     const db = getServiceDB();
     const now = new Date().toISOString();
-    const prepared = this._prepareLeadData(data);
+    const prepared = this._prepareLeadEditData(data || {});
+    if (Object.keys(prepared).length === 0) {
+      return this.findById(id);
+    }
     prepared.updated_at = now;
 
     const { error } = await db.from('leads').update(prepared).eq('id', id);

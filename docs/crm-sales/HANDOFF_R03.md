@@ -1,19 +1,17 @@
-# HANDOFF_R03.md — Атомарная смена этапа лида
+# HANDOFF_R03.md — Атомарная смена этапа лида (обновлено по R03.1)
 
-- **Задача:** `R03`
-- **Статус:** `DONE` (PGlite + unit/fail-closed; проверка двумя независимыми соединениями PostgreSQL — `NOT_RUN` без staging БД)
+- **Задача:** `R03` + `R03.1`
+- **Статус:** `DONE` (PGlite + unit/HTTP; доставка задач из outbox — в `R08`; 2 независимых процесса PostgreSQL — `NOT_RUN`)
 - **Репозиторий / Ветка:** `alik7500-wq/tozon-backend` (`server/`), ветка `feat/crm-sales-completion`
 
-## Изменения
-- `server/src/db/migrations/062_atomic_lead_stage_transition.sql` — следующая миграция: `lead_stage_history.idempotency_key` + `request_fingerprint`, функция `public.fn_update_lead_stage_atomic(...)` (`SECURITY DEFINER`, `SET search_path = public, pg_temp`, `EXECUTE` только для `service_role, postgres`).
-- `server/src/modules/leads/leads.repository.js` — `updateStatus` и `assignManager` строго через атомарные RPC без обхода через обычный `UPDATE` при ошибке RPC (fail-closed `503`, `409` с `current`).
-- `server/src/modules/leads/leads.router.js` — передача `Idempotency-Key` и защита от повторных побочных эффектов при `replayed: true`.
-- `server/src/modules/leads/__tests__/062_atomic_stage_transition.test.js` — PGlite-тесты: конкурентные переходы, переход одновременно с назначением, идемпотентный replay + конфликт, откат при сбое триггером истории/outbox, запрещённые переходы и `anon` `EXECUTE`.
-- `server/src/modules/leads/__tests__/leadsRepositoryFailClosed.test.js` — unit-тест fail-closed `503` и `403` для чужого лида.
-
-## Проверки
-- `npm.cmd --prefix server test -- src/modules/leads/__tests__/062_atomic_stage_transition.test.js src/modules/leads/__tests__/leadsRepositoryFailClosed.test.js src/modules/leads/__tests__/leadDomain.test.js` → **PASS** (3 файла, 12/12 тестов).
+## Изменения (R03 + R03.1)
+- `server/src/db/migrations/062_atomic_lead_stage_transition.sql` — базовая атомарная RPC `fn_update_lead_stage_atomic`.
+- `server/src/db/migrations/063_harden_stage_transition_and_task_cancel.sql` — следующая миграция: канонический `jsonb_build_object(...)` fingerprint (включая `meeting_at`, `showing_*`, `actor_user_id`, `expected_version`) и отмена строго продажных задач при `LOST` (сохраняются `deal_id IS NOT NULL` и финансовые/договорные задачи).
+- `server/src/modules/leads/leads.repository.js` — whitelist `_prepareLeadEditData` в `update()`, отказ `400` при попытке передать `status`/`stage`, fail-closed `503` при ошибке RPC в `updateStatus` и `assignManager`.
+- `server/src/modules/leads/leads.router.js` — единый `handleLeadProfileUpdate` для `PUT/PATCH /:id` (без обхода `status`/`stage` и без повторной записи `responsible_user_id`), различие `IDEMPOTENCY_CONFLICT` vs `VERSION_CONFLICT`, отказ от дублирующего прямого `TasksService.onLeadStatusChanged` в `PATCH /:id/status`.
+- `server/src/modules/leads/__tests__/062_atomic_stage_transition.test.js` и `leadsRepositoryFailClosed.test.js`.
 
 ## Оставшиеся ограничения
-- Проверка двумя независимыми соединениями/процессами PostgreSQL: **NOT_RUN** (в данной среде использован однопроцессный PGlite; подлежит обязательной проверке на staging PostgreSQL).
+- Запись события в `crm_event_outbox` при переходе этапа доказана в PGlite, но **фоновый обработчик доставки задач из outbox реализуется в `R08`** (сейчас доставка эффекта не завершена и не считается проверенной).
+- Проверка двумя независимыми соединениями/процессами PostgreSQL: **NOT_RUN** (требуется staging PostgreSQL).
 - Остаются задачи `R04`–`R09`.

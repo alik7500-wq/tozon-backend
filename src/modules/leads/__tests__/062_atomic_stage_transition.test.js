@@ -97,6 +97,7 @@ async function createDbWith062() {
   await db.exec(readFileSync('src/db/migrations/060_crm_sales_completion_foundation.sql', 'utf8'));
   await db.exec(readFileSync('src/db/migrations/061_harden_fn_assign_lead_atomic_and_app_rollback.sql', 'utf8'));
   await db.exec(readFileSync('src/db/migrations/062_atomic_lead_stage_transition.sql', 'utf8'));
+  await db.exec(readFileSync('src/db/migrations/063_harden_stage_transition_and_task_cancel.sql', 'utf8'));
   return db;
 }
 
@@ -215,5 +216,61 @@ describe('R03: Atomic Lead Stage Transition (fn_update_lead_stage_atomic + fail-
       db.query(`SELECT public.fn_update_lead_stage_atomic(10, 'IN_PROGRESS', NULL, NULL, 1, 1, NULL)`)
     ).rejects.toThrow(/permission denied/i);
     await db.exec('RESET ROLE;');
+  }, 30000);
+
+  it('R03.1: cancels only open sales tasks on LOST while preserving financial and deal-linked tasks', async () => {
+    const db = await createDbWith062();
+
+    await db.query(`
+      INSERT INTO public.tasks (id, lead_id, deal_id, type, title, status, rule_key)
+      VALUES
+        (201, 10, NULL, 'CALL', 'Первичный звонок', 'OPEN', 'LEAD_CREATED_15M'),
+        (202, 10, 1, 'PAYMENT_CONTROL', 'Контроль оплаты по договору', 'OPEN', NULL),
+        (203, 10, NULL, 'PAYMENT_REMINDER', 'Финансовое напоминание', 'OPEN', 'FINANCE_CONTROL')
+    `);
+
+    const res = await db.query(`SELECT public.fn_update_lead_stage_atomic(10, 'LOST', 'PRICE', 'Дорого', 1, 1, 'lost-1') AS res`);
+    expect(res.rows[0].res.success).toBe(true);
+
+    const tasks = await db.query(`SELECT id, status, cancel_reason FROM public.tasks WHERE lead_id = 10 ORDER BY id`);
+    const byId = Object.fromEntries(tasks.rows.map((t) => [Number(t.id), t]));
+    expect(byId[201].status).toBe('CANCELLED');
+    expect(byId[202].status).toBe('OPEN'); // deal-linked preserved
+    expect(byId[203].status).toBe('OPEN'); // financial task preserved
+  }, 30000);
+
+  it('R03.1: detects IDEMPOTENCY_CONFLICT when meeting_at or showing details change for the same idempotency_key', async () => {
+    const db = await createDbWith062();
+
+    const m1 = await db.query(
+      `SELECT public.fn_update_lead_stage_atomic(10, 'MEETING_SCHEDULED', NULL, NULL, 2, 1, 'meet-key-1', '2026-12-01T10:00:00Z'::timestamptz) AS res`
+    );
+    expect(m1.rows[0].res.success).toBe(true);
+    expect(m1.rows[0].res.replayed).toBe(false);
+
+    // Exact repeat with same meeting_at and expected_version=1 -> REPLAYED
+    const mReplay = await db.query(
+      `SELECT public.fn_update_lead_stage_atomic(10, 'MEETING_SCHEDULED', NULL, NULL, 2, 1, 'meet-key-1', '2026-12-01T10:00:00Z'::timestamptz) AS res`
+    );
+    expect(mReplay.rows[0].res.replayed).toBe(true);
+
+    // Changed meeting_at with same idempotency_key -> 409 IDEMPOTENCY_CONFLICT
+    const mConflict = await db.query(
+      `SELECT public.fn_update_lead_stage_atomic(10, 'MEETING_SCHEDULED', NULL, NULL, 2, 1, 'meet-key-1', '2026-12-02T10:00:00Z'::timestamptz) AS res`
+    );
+    expect(mConflict.rows[0].res.success).toBe(false);
+    expect(mConflict.rows[0].res.error_code).toBe('IDEMPOTENCY_CONFLICT');
+    expect(mConflict.rows[0].res.status_code).toBe(409);
+
+    // Showing details fingerprint check
+    const s1 = await db.query(
+      `SELECT public.fn_update_lead_stage_atomic(10, 'SHOWING_DONE', NULL, NULL, 2, 2, 'show-key-1', NULL, 5, '2026-12-03T12:00:00Z'::timestamptz, 'Понравилась') AS res`
+    );
+    expect(s1.rows[0].res.success).toBe(true);
+
+    const sConflict = await db.query(
+      `SELECT public.fn_update_lead_stage_atomic(10, 'SHOWING_DONE', NULL, NULL, 2, 2, 'show-key-1', NULL, 5, '2026-12-03T12:00:00Z'::timestamptz, 'Отказ') AS res`
+    );
+    expect(sConflict.rows[0].res.error_code).toBe('IDEMPOTENCY_CONFLICT');
   }, 30000);
 });

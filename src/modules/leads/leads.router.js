@@ -506,8 +506,8 @@ router.get('/:id/alternative-units', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-// PUT /api/leads/:id - Update lead details
-router.put('/:id', async (req, res, next) => {
+// Shared profile update handler for PUT/PATCH /api/leads/:id (no direct stage/status/owner bypass)
+async function handleLeadProfileUpdate(req, res, next) {
   try {
     if (req.user?.role === 'FINANCE_MANAGER') {
       return next(new AppError('Доступ к редактированию лидов запрещен для данной роли', 403));
@@ -521,16 +521,31 @@ router.put('/:id', async (req, res, next) => {
       return next(new AppError('У вас нет доступа к редактированию лидов других менеджеров или общего пула', 403));
     }
 
+    if (req.body.status !== undefined || req.body.stage !== undefined) {
+      return next(new AppError('Прямое изменение статуса/этапа через PUT/PATCH запрещено. Используйте PATCH /api/leads/:id/status', 400));
+    }
+
     if (req.body.responsible_user_id !== undefined && !['ADMIN', 'DIRECTOR'].includes(req.user.role)) {
       return next(new AppError('Переназначение ответственного менеджера разрешено только руководителю или администратору', 403));
     }
 
-    // If reassigning manager, use assignManager for full audit and validation
+    // If reassigning manager, use atomic assignManager ONLY (never re-write responsible_user_id via update)
+    let assignedLead = null;
     if (req.body.responsible_user_id !== undefined && req.body.responsible_user_id !== existing.responsible_user_id) {
-      await LeadsRepository.assignManager(cleanId, req.body.responsible_user_id, req.body.reassignment_reason, req.user.id);
+      assignedLead = await LeadsRepository.assignManager(
+        cleanId,
+        req.body.responsible_user_id,
+        req.body.reassignment_reason,
+        req.user.id,
+        true,
+        req.body.version
+      );
     }
 
     const updatePayload = { ...req.body };
+    delete updatePayload.responsible_user_id;
+    delete updatePayload.reassignment_reason;
+    delete updatePayload.version;
     delete updatePayload.first_contact_at;
     delete updatePayload.first_contact_outcome;
     delete updatePayload.first_contact_by_user_id;
@@ -538,46 +553,22 @@ router.put('/:id', async (req, res, next) => {
     delete updatePayload.idempotency_key;
 
     const lead = await LeadsRepository.update(cleanId, updatePayload);
-    res.status(200).json({ status: 'success', data: { lead } });
-  } catch (error) { next(error); }
-});
-
-// PATCH /api/leads/:id - Partial update
-router.patch('/:id', async (req, res, next) => {
-  try {
-    if (req.user?.role === 'FINANCE_MANAGER') {
-      return next(new AppError('Доступ к редактированию лидов запрещен для данной роли', 403));
+    res.status(200).json({ status: 'success', data: { lead: lead || assignedLead } });
+  } catch (error) {
+    if (error?.statusCode === 409 && error.current) {
+      return res.status(409).json({ status: 'error', code: error.code || 'VERSION_CONFLICT', message: error.message, data: { current: error.current } });
     }
+    next(error);
+  }
+}
 
-    const cleanId = parseRequiredBigInt(req.params.id, 'id');
-    const existing = await LeadsRepository.findById(cleanId);
-    if (!existing) return next(new AppError('Лид не найден', 404));
+// PUT /api/leads/:id - Update lead profile details
+router.put('/:id', handleLeadProfileUpdate);
 
-    if (req.user?.role === 'SALES_MANAGER' && Number(existing.responsible_user_id) !== Number(req.user.id)) {
-      return next(new AppError('У вас нет доступа к редактированию лидов других менеджеров или общего пула', 403));
-    }
+// PATCH /api/leads/:id - Partial profile update
+router.patch('/:id', handleLeadProfileUpdate);
 
-    if (req.body.responsible_user_id !== undefined && !['ADMIN', 'DIRECTOR'].includes(req.user.role)) {
-      return next(new AppError('Переназначение ответственного менеджера разрешено только руководителю или администратору', 403));
-    }
-
-    if (req.body.responsible_user_id !== undefined && req.body.responsible_user_id !== existing.responsible_user_id) {
-      await LeadsRepository.assignManager(cleanId, req.body.responsible_user_id, req.body.reassignment_reason, req.user.id);
-    }
-
-    const updatePayload = { ...req.body };
-    delete updatePayload.first_contact_at;
-    delete updatePayload.first_contact_outcome;
-    delete updatePayload.first_contact_by_user_id;
-    delete updatePayload.assigned_at;
-    delete updatePayload.idempotency_key;
-
-    const lead = await LeadsRepository.update(cleanId, updatePayload);
-    res.status(200).json({ status: 'success', data: { lead } });
-  } catch (error) { next(error); }
-});
-
-// PATCH /api/leads/:id/status - Status change
+// PATCH /api/leads/:id/status - Atomic stage transition (effects dispatched via durable outbox)
 router.patch('/:id/status', async (req, res, next) => {
   try {
     if (req.user?.role === 'FINANCE_MANAGER') {
@@ -610,14 +601,15 @@ router.patch('/:id/status', async (req, res, next) => {
       }
     );
 
-    // Auto-generate task on status change (non-LOST), skipped on idempotent replay
-    if (!lead?._replayed) {
-      await TasksService.onLeadStatusChanged(lead, nextStage, parseOptionalBigInt(req.user.id) || 1);
-    }
     res.status(200).json({ status: 'success', data: { lead } });
   } catch (error) {
     if (error?.statusCode === 409 && error.current) {
-      return res.status(409).json({ status: 'error', code: 'VERSION_CONFLICT', message: error.message, data: { current: error.current } });
+      return res.status(409).json({
+        status: 'error',
+        code: error.code || 'VERSION_CONFLICT',
+        message: error.message,
+        data: { current: error.current }
+      });
     }
     next(error);
   }

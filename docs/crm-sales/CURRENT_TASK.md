@@ -1,12 +1,12 @@
 # CURRENT_TASK.md
 
-- **ID задачи:** `R03` — Атомарная смена этапа лида
-- **Статус:** `DONE` (на изолированной PGlite БД + unit/fail-closed; проверка двумя независимыми соединениями/процессами на live PostgreSQL — `NOT_RUN`, вынесена в staging-приёмку)
+- **ID задачи:** `R03.1` — Закрытие оставшихся обходов атомарной смены этапа
+- **Статус:** `DONE` (PGlite + unit/HTTP; фоновая доставка задач из `crm_event_outbox` реализуется в `R08`, проверка двумя независимыми процессами PostgreSQL — `NOT_RUN` без staging)
 - **Ветка (`tozon-backend`):** `feat/crm-sales-completion`
 - **Что сделано:**
-  - Создана миграция `062_atomic_lead_stage_transition.sql`: атомарная функция `public.fn_update_lead_stage_atomic(...)` с `FOR UPDATE`, CAS-проверкой `p_expected_version`, `pg_advisory_xact_lock` по `p_idempotency_key`, проверкой реальных сделок (`deals`), записью `lead_stage_history` + `crm_event_outbox` + отменой задач при `LOST` в одной транзакции, без создания фиктивного `first_contact_at` и без затирания `responsible_user_id`.
-  - В `LeadsRepository.updateStatus` и `LeadsRepository.assignManager` убран небезопасный обход через обычный `UPDATE` при ошибке RPC (fail-closed `503`).
-  - В `leads.router.js` (`PATCH /:id/status`) добавлена передача `Idempotency-Key` и пропуск повторного `TasksService.onLeadStatusChanged` при `replayed: true`.
+  - Создана миграция `063_harden_stage_transition_and_task_cancel.sql`: канонический `jsonb_build_object(...)` fingerprint (включая `meeting_at`, `showing_*`, `actor_user_id`, `expected_version`), и при `LOST` отменяются строго открытые продажные задачи (`deal_id IS NULL`, исключая финансовые/договорные).
+  - В `LeadsRepository.update` и `PUT/PATCH /api/leads/:id` закрыт обход изменения `status`/`stage` (явный `400`) и повторная запись `responsible_user_id` после `assignManager`.
+  - В `leads.router.js` сохранено различие `409 IDEMPOTENCY_CONFLICT` vs `VERSION_CONFLICT`, убран дублирующий прямой вызов `TasksService.onLeadStatusChanged` (единственный путь — `crm_event_outbox`, worker в `R08`).
 
 ## Следующая задача
 - `R04` — Фильтры, счётчики и пагинация (в ветках `feat/crm-sales-completion` и `a00`).
