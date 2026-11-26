@@ -229,6 +229,7 @@ describe('R09.2 GAP-01: Transactional Project-Scoped Lead Distribution & Pool Wo
     await db.exec(readFileSync('src/db/migrations/071_r09_2_gap01_transactional_distribution.sql', 'utf8'));
     await db.exec(readFileSync('src/db/migrations/072_r09_2_gap01_1_cross_project_capacity_and_pool_backoff.sql', 'utf8'));
     await db.exec(readFileSync('src/db/migrations/073_r09_2_gap01_2_pool_lock_order_and_manual_project_access.sql', 'utf8'));
+    await db.exec(readFileSync('src/db/migrations/074_r09_2_gap01_3_unified_lock_order_pool_batch.sql', 'utf8'));
     state.db = db;
   }, 30000);
 
@@ -476,5 +477,29 @@ describe('R09.2 GAP-01: Transactional Project-Scoped Lead Distribution & Pool Wo
     expect(okAllP2).toMatchObject({ success: true, status: 'ASSIGNED', to_user_id: 7 });
     const okAllNull = (await state.db.query(`SELECT public.fn_assign_lead_atomic(803, 7, 1, 'Manual all-proj NULL', 25, true, 1) AS res`)).rows[0].res;
     expect(okAllNull).toMatchObject({ success: true, status: 'ASSIGNED', to_user_id: 7 });
+  });
+
+  it('processes a multi-project pool batch and updates global diagnostics row id=1 cleanly', async () => {
+    process.env.LEAD_POOL_WORKER_ENABLED = 'true';
+    await state.db.exec(`
+      UPDATE public.lead_distribution_settings SET pool_worker_enabled = TRUE, max_open_leads_per_rep = 10 WHERE id = 1;
+      INSERT INTO public.lead_distribution_settings (id, project_id, enabled, algorithm, max_open_leads_per_rep, working_hours_only, work_start_hour, work_end_hour)
+      VALUES
+        (2, 1, TRUE, 'LEAST_LOADED', 10, FALSE, 8, 20),
+        (3, 2, TRUE, 'LEAST_LOADED', 10, FALSE, 8, 20);
+      INSERT INTO public.leads (id, full_name, status, stage, interested_project_id) VALUES
+        (901, 'Multi P1', 'NEW', 'NEW', 1),
+        (902, 'Multi P2', 'NEW', 'NEW', 2),
+        (903, 'Multi Global', 'NEW', 'NEW', NULL);
+      INSERT INTO public.users (id, name, email, role, is_active, is_sales_rep, all_projects_access)
+      VALUES (9, 'Shared Mgr', 'm9@t.tj', 'SALES_MANAGER', 1, TRUE, TRUE);
+    `);
+
+    const batchRes = await LeadPoolWorkerService.runOnce({ batchSize: 25, now: WORKING_HOUR_ISO });
+    expect(batchRes).toMatchObject({ skipped: false, scanned: 3, assigned: 3, errors: 0 });
+    const diagRow = (await state.db.query(`SELECT last_pool_run_at, last_pool_success_at, last_pool_error FROM public.lead_distribution_settings WHERE id = 1`)).rows[0];
+    expect(diagRow.last_pool_run_at).not.toBeNull();
+    expect(diagRow.last_pool_success_at).not.toBeNull();
+    expect(diagRow.last_pool_error).toBeNull();
   });
 });

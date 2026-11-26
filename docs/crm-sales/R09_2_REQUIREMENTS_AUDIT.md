@@ -140,10 +140,10 @@
 
 ## 5. Реестр обнаруженных пробелов и дефектов (задачи для исполнителей)
 
-### `GAP-01` (`P0`) — **CLOSED в PGlite** (2-процессная проверка на реальной PostgreSQL остаётся `NOT_RUN`) — Транзакционное проектное автораспределение, порядок блокировок пула и проектный доступ при ручном назначении
-- **Реализация:** Миграции `071`, `072` и `073_r09_2_gap01_2_pool_lock_order_and_manual_project_access.sql` (`fn_select_and_assign_lead_atomic`, `fn_run_lead_pool_batch` с upfront `SKIP LOCKED`, `fn_assign_lead_atomic` с проверкой `user_project_access`/`all_projects_access`), `roundRobin.service.js`, `leadPoolWorker.service.js`, `leads.repository.js`, `leads.router.js`.
-- **Доказательство:** `071_r09_2_gap01_distribution.test.js` (8/8 `PASS` в PGlite), `sales_launch_phase3_6_concurrency.test.js` (23/23 `PASS`), `persistent_distribution_settings.test.js` (12/12 `PASS`).
-- **Остаток на реальной PostgreSQL (`NOT_RUN`):** `TEST_DATABASE_URL="..." node server/src/scripts/verify-gap01-two-process-pg.mjs` (двухпроцессная проверка блокировок и отсутствия deadlock на реальной PostgreSQL).
+### `GAP-01` (`P0`) — **CLOSED в PGlite** (2-процессная проверка на реальной PostgreSQL остаётся `NOT_RUN`) — Транзакционное проектное автораспределение, единый порядок блокировок многопроектного пула и проектный доступ при ручном назначении
+- **Реализация:** Миграции `071`, `072`, `073` и `074_r09_2_gap01_3_unified_lock_order_pool_batch.sql` (порядок блокировок во всех путях: `leads` → `lead_distribution_settings ORDER BY id ASC` → `users ORDER BY id ASC`), `roundRobin.service.js`, `leadPoolWorker.service.js`, `leads.repository.js`, `leads.router.js`.
+- **Доказательство:** `071_r09_2_gap01_distribution.test.js` (9/9 `PASS` в PGlite), `sales_launch_phase3_6_concurrency.test.js` (23/23 `PASS`), `persistent_distribution_settings.test.js` (12/12 `PASS`).
+- **Остаток на реальной PostgreSQL (`NOT_RUN`):** `TEST_DATABASE_URL="..." node server/src/scripts/verify-gap01-two-process-pg.mjs` (6 двухпроцессных сценариев, включая многопроектную партию пула и финальное обновление `id = 1`).
 
 ### `GAP-02` (`P2`) — Отсутствует фоновый обработчик очереди ИИ-анализа звонков (`F-20` / `A49`)
 - **Последствие:** Записи в `call_ai_analyses` со статусом `QUEUED` никогда не переходят в `PROCESSING`/`READY`/`FAILED`; загрузка аудио из Moizvonki и вызов OpenAI не выполняются даже при наличии `OPENAI_API_KEY`.
