@@ -15,6 +15,10 @@ import {
   classifyCommunicationEffect,
   COMMUNICATION_EVENT_TYPES
 } from './leadDomain.js';
+import {
+  validateAndNormalizeLeadQuery,
+  encodeLeadCursor
+} from './leadFilterValidator.js';
 
 const getHistoryDB = () => {
   try {
@@ -35,6 +39,49 @@ const getSecureDB = () => {
 const activeLeadAssignmentLocks = new Set();
 
 export class LeadsRepository {
+  static async queryUnified(query = {}, user = {}) {
+    const { dbFilters, dbScope, filterHash, scope } = validateAndNormalizeLeadQuery(query, user);
+
+    if (scope.restrictedToSelf && dbFilters.quick_filter === 'UNASSIGNED') {
+      return {
+        leads: [],
+        total: 0,
+        nextCursor: null,
+        stats: { total: 0, new: 0, unassigned: 0, awaiting_contact: 0, overdue: 0, in_progress: 0, closed: 0, no_task: 0, unread: 0 },
+        stageCounts: { NEW: 0, IN_PROGRESS: 0, NEGOTIATION: 0, MEETING_SCHEDULED: 0, SHOWING_DONE: 0, RESERVED: 0, CONTRACT_PREP: 0, SIGNED: 0, LOST: 0 },
+        appliedFilters: dbFilters,
+        scope: { role: scope.role, restrictedToSelf: true },
+        generatedAt: new Date().toISOString()
+      };
+    }
+
+    const secureDb = getSecureDB();
+    const { data, error } = await secureDb.rpc('fn_query_leads_unified', {
+      p_filters: dbFilters,
+      p_scope: dbScope
+    });
+
+    if (error || !data) {
+      throw new AppError('Сервис фильтрации лидов временно недоступен', 503);
+    }
+
+    const leads = Array.isArray(data.leads) ? data.leads : [];
+    const total = Number(data.total || 0);
+    const hasMore = dbFilters.limit > 0 && leads.length === dbFilters.limit;
+    const nextCursor = hasMore ? encodeLeadCursor(leads[leads.length - 1], filterHash) : null;
+
+    return {
+      leads,
+      total,
+      nextCursor,
+      stats: data.stats || {},
+      stageCounts: data.stage_counts || {},
+      appliedFilters: dbFilters,
+      scope: { role: scope.role, restrictedToSelf: scope.restrictedToSelf },
+      generatedAt: new Date().toISOString()
+    };
+  }
+
   static async findAll(filters = {}) {
     const db = getDB();
     let query = db

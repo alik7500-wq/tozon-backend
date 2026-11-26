@@ -240,11 +240,59 @@ router.get('/sla-control', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-// GET /api/leads/stats - Summary KPI statistics for 7 clickable metric cards
+// GET /api/leads/stats - Summary KPI statistics using unified filters & RBAC (R04)
 router.get('/stats', async (req, res, next) => {
   try {
-    const stats = await LeadsRepository.getPoolStats(req.user);
-    res.status(200).json({ status: 'success', data: { stats } });
+    const result = await LeadsRepository.queryUnified({ ...req.query, limit: '0' }, req.user);
+    res.status(200).json({
+      status: 'success',
+      data: {
+        stats: result.stats,
+        stageCounts: result.stageCounts,
+        total: result.total,
+        appliedFilters: result.appliedFilters,
+        scope: result.scope,
+        generatedAt: result.generatedAt
+      }
+    });
+  } catch (error) { next(error); }
+});
+
+// GET /api/leads/export - Export leads using the exact same unified filter & RBAC scope (R04)
+router.get('/export', async (req, res, next) => {
+  try {
+    const allRows = [];
+    let cursor = null;
+    let guard = 0;
+    let meta = null;
+
+    do {
+      const page = await LeadsRepository.queryUnified({ ...req.query, limit: '500', ...(cursor ? { cursor } : {}) }, req.user);
+      if (!meta) meta = page;
+      allRows.push(...page.leads);
+      cursor = page.nextCursor;
+      guard += 1;
+    } while (cursor && guard < 20);
+
+    const escapeCsv = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+    const header = ['ID', 'ФИО', 'Телефон', 'Этап', 'Источник', 'Проект', 'Менеджер', 'Создан'];
+    const lines = [
+      header.map(escapeCsv).join(';'),
+      ...allRows.map((l) => [
+        l.id_str || l.id,
+        l.full_name,
+        l.phone || '',
+        l.stage,
+        l.source_code || l.source || '',
+        l.interested_project_name || '',
+        l.responsible_user_name || '',
+        l.created_at || ''
+      ].map(escapeCsv).join(';'))
+    ];
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="leads-export.csv"');
+    res.status(200).send('\uFEFF' + lines.join('\r\n'));
   } catch (error) { next(error); }
 });
 
@@ -279,79 +327,11 @@ router.get('/winback/opportunities', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-// GET /api/leads - Lead listing with RBAC, unified filters, total & cursor (F-03)
+// GET /api/leads - Unified DB-side filtering, total, stageCounts, and keyset cursor (R04)
 router.get('/', async (req, res, next) => {
   try {
-    const requested = {
-      search: req.query.search,
-      status: req.query.status || req.query.stage,
-      quickFilter: req.query.quickFilter,
-      source: req.query.source,
-      accountId: req.query.accountId,
-      createdFrom: req.query.createdFrom,
-      createdTo: req.query.createdTo,
-      taskState: req.query.taskState,
-      unread: req.query.unread,
-      archive: req.query.archive,
-      lostReason: req.query.lostReason,
-      unassigned: req.query.unassigned === 'true',
-      projectId: parseOptionalBigInt(req.query.projectId),
-      managerId: req.query.managerId
-    };
-
-    const scope = buildLeadAccessScope(req.user, requested);
-    const filters = scope.effectiveFilters;
-
-    if (scope.restrictedToSelf) {
-      filters.unassigned = false;
-      if (req.query.unassigned === 'true' || filters.quickFilter === 'UNASSIGNED') {
-        return res.status(200).json({
-          status: 'success',
-          data: {
-            leads: [],
-            total: 0,
-            nextCursor: null,
-            appliedFilters: filters,
-            scope: { role: scope.role, restrictedToSelf: true },
-            generatedAt: new Date().toISOString()
-          }
-        });
-      }
-    }
-
-    let leads = await LeadsRepository.findAll(filters);
-    if (filters.source) {
-      leads = leads.filter((l) => String(l.source_code || l.source || '').toUpperCase() === String(filters.source).toUpperCase());
-    }
-    if (filters.createdFrom) {
-      const fromMs = new Date(filters.createdFrom).getTime();
-      if (Number.isFinite(fromMs)) leads = leads.filter((l) => new Date(l.created_at).getTime() >= fromMs);
-    }
-    if (filters.createdTo) {
-      const toMs = new Date(filters.createdTo).getTime();
-      if (Number.isFinite(toMs)) leads = leads.filter((l) => new Date(l.created_at).getTime() < toMs);
-    }
-    if (filters.unread === 'true') {
-      leads = leads.filter((l) => Number(l.unread_count || 0) > 0);
-    }
-
-    const total = leads.length;
-    const limit = Math.min(Math.max(Number(req.query.limit) || 200, 1), 500);
-    const offset = Math.max(Number(req.query.cursor) || 0, 0);
-    const paged = leads.slice(offset, offset + limit);
-    const nextCursor = offset + paged.length < total ? String(offset + paged.length) : null;
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        leads: paged,
-        total,
-        nextCursor,
-        appliedFilters: filters,
-        scope: { role: scope.role, restrictedToSelf: scope.restrictedToSelf },
-        generatedAt: new Date().toISOString()
-      }
-    });
+    const result = await LeadsRepository.queryUnified(req.query, req.user);
+    res.status(200).json({ status: 'success', data: result });
   } catch (error) { next(error); }
 });
 
