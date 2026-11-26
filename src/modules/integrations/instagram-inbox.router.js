@@ -6,6 +6,7 @@ import { getInstagramInboxCredentials, getTozonInstagramConnectionStatus } from 
 import { createInstagramInboxClient, InboxError } from './instagram-inbox.client.js';
 import { liveInboxEnabled } from './instagram-live.repository.js';
 import { createInstagramLiveInbox } from './instagram-live.service.js';
+import { executeIdempotentInstagramSend, reconcileInstagramSend } from './instagram-send.service.js';
 import { getServiceDB, getDB } from '../../db/connection.js';
 
 const router = Router();
@@ -183,8 +184,23 @@ router.get('/inbox/conversations/page', readLimit,
     }
     return client.conversations(req.query.after);
   }));
-router.post('/send/:account/:contact', sendLimit, handle(async (client, req) => {
-  const data = await client.send(req.params.contact, req.body?.text, req.body?.idempotency_key);
-  return { data, deliveryStatus: data?.acceptedButUnsaved ? 'unknown' : 'confirmed' };
+router.post('/send/:account/:contact', sendLimit, handle(async (client, req, credentials) => {
+  return executeIdempotentInstagramSend({
+    actorUserId: req.user.id,
+    accountId: credentials.accountId,
+    contactId: req.params.contact,
+    text: req.body?.text,
+    idempotencyKey: req.body?.idempotency_key,
+    client
+  });
+}, { isWrite: true }));
+router.post('/send/:account/:contact/reconcile', readLimit, handle(async (client, req, credentials) => {
+  return reconcileInstagramSend({
+    actorUserId: req.user.id,
+    accountId: credentials.accountId,
+    contactId: req.params.contact,
+    idempotencyKey: req.body?.idempotency_key,
+    client
+  });
 }, { isWrite: true }));
 export default router;

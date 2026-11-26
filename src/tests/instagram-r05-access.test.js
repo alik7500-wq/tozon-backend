@@ -53,6 +53,37 @@ function createPgliteAdapter() {
           const res = await state.db.query(`SELECT * FROM public.${table} ${whereSql}`, params);
           return { data: res.rows, error: null };
         },
+        update(patch) {
+          return {
+            eq(col, val) {
+              filters.push({ col, val });
+              return {
+                select() {
+                  return {
+                    async single() {
+                      const sets = [];
+                      const params = [];
+                      Object.entries(patch).forEach(([k, v], idx) => {
+                        sets.push(`${k} = $${idx + 1}`);
+                        params.push(k === 'response_payload' && v !== null ? JSON.stringify(v) : v);
+                      });
+                      const clauses = [];
+                      filters.forEach((f, idx) => {
+                        clauses.push(`${f.col} = $${params.length + idx + 1}`);
+                        params.push(f.val);
+                      });
+                      const res = await state.db.query(
+                        `UPDATE public.${table} SET ${sets.join(', ')} WHERE ${clauses.join(' AND ')} RETURNING *`,
+                        params
+                      );
+                      return { data: res.rows[0] || null, error: null };
+                    }
+                  };
+                }
+              };
+            }
+          };
+        },
         async single() {
           const { data, error } = await builder._exec();
           if (error) return { data: null, error };
@@ -67,6 +98,24 @@ function createPgliteAdapter() {
         then(resolve, reject) { return builder._exec().then(resolve, reject); }
       };
       return builder;
+    },
+    async rpc(fnName, paramsObj) {
+      if (fnName === 'fn_instagram_send_claim') {
+        const res = await state.db.query(
+          `SELECT public.fn_instagram_send_claim($1, $2, $3, $4, $5, $6, $7) AS res`,
+          [
+            paramsObj.p_actor_user_id,
+            paramsObj.p_account_id,
+            paramsObj.p_contact_id,
+            paramsObj.p_idempotency_key,
+            paramsObj.p_request_hash,
+            paramsObj.p_normalized_text,
+            paramsObj.p_lease_seconds
+          ]
+        );
+        return { data: res.rows[0]?.res || null, error: null };
+      }
+      return { data: null, error: null };
     }
   };
 }
@@ -171,6 +220,7 @@ describe('R05: SALES_MANAGER access to Instagram Inbox through real protect + se
       );
     `);
     await db.exec(readFileSync('src/db/migrations/066_user_project_access.sql', 'utf8'));
+    await db.exec(readFileSync('src/db/migrations/067_instagram_send_idempotency.sql', 'utf8'));
     state.db = db;
   }, 30000);
 
@@ -225,7 +275,7 @@ describe('R05: SALES_MANAGER access to Instagram Inbox through real protect + se
     expect(msgRes.status).toBe(200);
     expect(msgRes.body.data[0].message_id).toBe('msg_42');
 
-    const sendRes = await request(app).post('/api/integrations/instagram/send/11111/42').set('Authorization', `Bearer ${token}`).send({ text: 'Hi' });
+    const sendRes = await request(app).post('/api/integrations/instagram/send/11111/42').set('Authorization', `Bearer ${token}`).send({ text: 'Hi', idempotency_key: 'ig_r05_send_1' });
     expect(sendRes.status).toBe(200);
   });
 

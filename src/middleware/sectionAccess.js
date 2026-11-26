@@ -57,7 +57,7 @@ export const authorizeSectionRequest = async req => {
     /^\/api\/integrations\/instagram\/inbox\/conversations(?:\/page)?$/.test(path) ||
     /^\/api\/integrations\/instagram\/inbox\/conversations\/\d+\/\d+\/messages$/.test(path)
   );
-  const instagramInboxSend = req.method === 'POST' && /^\/api\/integrations\/instagram\/send\/\d+\/\d+$/.test(path);
+  const instagramInboxSend = req.method === 'POST' && /^\/api\/integrations\/instagram\/send\/\d+\/\d+(?:\/reconcile)?$/.test(path);
   if (instagramInboxRead || instagramInboxSend) {
     if (!['ADMIN', 'DIRECTOR', 'SALES_MANAGER'].includes(user.role) || !hasSection(user, 'leads.view', instagramInboxSend)) {
       throw new AppError('Нет доступа к перепискам Instagram', 403);
