@@ -1,29 +1,15 @@
-# HANDOFF_R06.md — Контракт идемпотентной отправки Instagram, сверка и матрица приёмки
+# HANDOFF_R06.md — R06 & R06.1: Идемпотентная отправка Instagram, interceptor и жизненный цикл попытки
 
-## Контракт отправки и сверки
-1. **`POST /api/integrations/instagram/send/:account/:contact`**
-   - Body: `{ text: string, idempotency_key: string }` (`^[A-Za-z0-9_:-]{8,128}$`).
-   - `409 IDEMPOTENCY_CONFLICT` при повторном использовании `idempotency_key` с другим `account_id`, `contact_id` или `text.trim()`.
-   - `409 SEND_IN_PROGRESS` при параллельном запросе с тем же ключом, пока активен `lease_expires_at`.
-   - Возвращает `deliveryStatus: 'confirmed' | 'unknown'`; при `unknown` внешний запрос к Meta повторно не выполняется.
-2. **`POST /api/integrations/instagram/send/:account/:contact/reconcile`**
-   - Body: `{ idempotency_key: string }`.
-   - Проверяет те же права R05 (`protect` + `sectionAccess` + `leads.manage` + проектный/лидовый scope).
-   - Восстанавливает локальную историю при `external_message_id` без повторного `send`; при отсутствии достоверного `external_message_id` сохраняет `deliveryStatus: 'unknown'` и `nextAction`.
+## Дополнения R06.1
+- **Interceptor (`client/src/api/client.js`):** больше не подставляет фиктивный `normalized.response` при отсутствии HTTP-ответа (таймаут `ECONNABORTED`, потеря сети `ERR_NETWORK`); выставляет `hasHttpResponse`, `isTimeout`, `isNetworkError`, `status`, `code`.
+- **Lifecycle (`InstagramReplyComposer.jsx`):**
+  - `draftText` отделён от `operation` (`idempotencyKey`, `sentText`, `state`).
+  - `SEND_IN_PROGRESS`, таймаут, потеря соединения, `SENT_NOT_SAVED`, `INSTAGRAM_SEND_UNCONFIRMED` и `5xx` -> `unknown` (требуют сверки).
+  - Подтверждённый `FAILED` -> явная кнопка «Начать новую попытку» с новым `idempotency_key` (старый ключ для изменённого текста не переиспользуется).
+  - При `unknown` сброс требует подтверждения предупреждения о возможной доставке; поздний ответ/сверка старой операции не очищают новый редактируемый черновик и не влияют на другой диалог.
+- **Сервер (`instagram-send.service.js`):** сбой записи состояния после вызова поставщика возвращает `deliveryStatus: 'unknown'` (не `503` безопасного повтора).
 
-## Матрица приёмки R06
-| Проверка | Реализация / тест | Среда | Статус |
-|---|---|---|---|
-| Двойной клик в UI | `InstagramReplyComposer.test.jsx` | UI mocks (Vitest jsdom) | `PASS` |
-| Два одновременных HTTP-запроса с одним ключом (1 `send`, второй `409 SEND_IN_PROGRESS`) | `instagram-r06-send-idempotency.test.js` | PGlite + Supertest (мок Meta) | `PASS` |
-| Повтор после успешной отправки (без нового `send`) | `instagram-r06-send-idempotency.test.js` | PGlite + Supertest | `PASS` |
-| Прежний ключ с изменённым текстом/получателем -> `409 IDEMPOTENCY_CONFLICT` | `instagram-r06-send-idempotency.test.js` | PGlite + Supertest | `PASS` |
-| Meta приняла, запись истории не сохранилась -> восстановление при сверке без второго `send` | `instagram-r06-send-idempotency.test.js` | PGlite + Supertest | `PASS` |
-| Meta приняла / ответ потерян / таймаут / падение процесса (истёкший lease) -> `unknown`, без повтора `send` | `instagram-r06-send-idempotency.test.js` | PGlite + Supertest | `PASS` |
-| `unknown` сохраняется при редактировании текста и переключении/перезагрузке; статус «Принято поставщиком» | `InstagramReplyComposer.test.jsx` | UI mocks (Vitest jsdom) | `PASS` |
-| Отзыв доступа перед повтором или сверкой -> `403` | `instagram-r06-send-idempotency.test.js` | PGlite + Supertest | `PASS` |
-| Два независимых backend-процесса на реальном PostgreSQL | — | Staging PostgreSQL | `NOT_RUN` |
-| Живая отправка и сверка с Meta Graph API | — | Live Meta API | `NOT_RUN` |
-
-## Обязательно передано в R07
-- Первая страница списка диалогов не является полной проверкой сохранения доступа к выбранному диалогу; очистку кэша/черновиков проверять отдельно.
+## Тесты R06 + R06.1
+- Backend (`PGlite` + `Supertest`): 4 файла, 29/29 тестов `PASS` (`instagram-r06-send-idempotency.test.js`, `instagram-r05-access.test.js`, `instagram-inbox-router.test.js`, `instagram-inbox.test.js`).
+- Frontend (реальный Axios interceptor + `Vitest jsdom`): 6 файлов, 32/32 теста `PASS` (включая `InstagramInterceptorR061.test.jsx` 5/5).
+- Два независимых процесса PostgreSQL и живая Meta API: `NOT_RUN`.

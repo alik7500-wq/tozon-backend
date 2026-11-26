@@ -168,20 +168,28 @@ export async function executeIdempotentInstagramSend({
     const status = error instanceof InboxError ? error.status : 503;
 
     if (EXPLICIT_FAILURE_CODES.has(code)) {
-      await updateSendOperation(op.id, {
-        status: 'FAILED',
-        error_code: code,
-        error_status: status
-      });
+      try {
+        await updateSendOperation(op.id, {
+          status: 'FAILED',
+          error_code: code,
+          error_status: status
+        });
+      } catch {
+        // Storage failure after provider call still must not look like a clean retryable error
+      }
       throw error instanceof InboxError ? error : new InboxError(code, status);
     }
 
     // Timeout / lost response / 5xx: result is UNKNOWN, never auto-retry
-    await updateSendOperation(op.id, {
-      status: 'UNKNOWN',
-      error_code: code,
-      error_status: status
-    });
+    try {
+      await updateSendOperation(op.id, {
+        status: 'UNKNOWN',
+        error_code: code,
+        error_status: status
+      });
+    } catch {
+      // Even if storage update fails after possible send, return unknown (NEVER safe retry)
+    }
     return {
       data: {
         acceptedButUnsaved: false,
@@ -223,12 +231,21 @@ export async function executeIdempotentInstagramSend({
     acceptedButUnsaved: !saved
   };
 
-  await updateSendOperation(op.id, {
-    status: 'CONFIRMED',
-    external_message_id: externalMessageId ? String(externalMessageId) : null,
-    saved_to_history: saved,
-    response_payload: responsePayload
-  });
+  try {
+    await updateSendOperation(op.id, {
+      status: 'CONFIRMED',
+      external_message_id: externalMessageId ? String(externalMessageId) : null,
+      saved_to_history: saved,
+      response_payload: responsePayload
+    });
+  } catch {
+    // Provider already accepted: if storage fails, return unknown (acceptedButUnsaved) instead of 503 retryable error
+    return {
+      data: { ...responsePayload, saved: false, acceptedButUnsaved: true },
+      deliveryStatus: 'unknown',
+      idempotencyKey
+    };
+  }
 
   return {
     data: responsePayload,
