@@ -1,18 +1,20 @@
 # CURRENT_TASK.md
 
-- **ID задачи:** `R07.1` — Согласованность автообновления больших списков и защита догрузки колонок
-- **Статус:** `DONE` (12 тестовых файлов / 51 тест client + `vite build` + 4 файла / 29 тестов server R05/R06 пройдены; живые `N-02` и Meta/staging — `NOT_RUN`)
+- **ID задачи:** `R08` — Реальный обработчик `crm_event_outbox` и восстановление после сбоев
+- **Статус:** `DONE` (PGlite worker + triggers + atomic claim/ack + lease recovery + quarantine + cutoff tests `17/17 PASS`; проверка двумя независимыми процессами на реальном PostgreSQL — `NOT_RUN` из-за отсутствия среды)
 - **Ветки:**
   - `tozon-backend`: `feat/crm-sales-completion`
-  - `tozon-crm`: `a00`
+  - `tozon-crm`: `a00` (без изменений в `R08`)
 - **Что сделано:**
-  - `LeadsPage.jsx`:
-    - Устранён непроверенный «хвост» >500 лидов списка и >100 карточек колонки: фоновое обновление постранично (ограниченными порциями `<=500` / `<=100` по keyset-курсору) обновляет весь загруженный диапазон, удаляя архивированные, ушедшие из фильтра или отозванные записи и не дублируя карточки при переносе между колонками.
-    - `handleLoadMoreColumn` защищён поколением контекста (`leadsContextRef`, `columnRequestRef`, `boardGenerationRef`) от смены фильтра/проекта и одновременного фонового `refresh`.
-    - Введён единый `flattenBoardColumns`: плоский `leads` всегда выводится из окончательно объединённых `boardColumns`.
-  - `InstagramInboxPage.jsx` и `InstagramReplyComposer.jsx`:
-    - При `401`/`403` очищаются UI, `historyCache`, `drafts` (`Map`) и `sessionStorage` (`tozon:draft:ig:...`).
-    - Поздние ответы `submit`/`reconcile` после размонтирования/отзыва/смены пользователя не восстанавливают удалённые данные.
+  - Миграция `068_outbox_worker_lease_and_controls.sql`:
+    - Расширена `public.crm_event_outbox` (`lease_token`, `lease_expires_at`, `locked_by`, `quarantined_at`, `quarantine_reason`, `error_kind`, `replayed_by`, `replayed_at`).
+    - Создана таблица настроек `public.crm_outbox_settings` (`is_enabled = FALSE` по умолчанию, `cutoff_at = NOW()`).
+    - Добавлен уникальный индекс `uq_tasks_event_ref_rule` на `public.tasks(event_ref, rule_key)`.
+    - Добавлены атомарные RPC `fn_claim_outbox_batch` (`FOR UPDATE SKIP LOCKED`, восстановление зависших `PROCESSING`) и `fn_complete_outbox_event` (проверка `lease_token`, backoff, автокарантин при исчерпании попыток).
+    - Добавлены атомарные триггеры `trg_leads_enqueue_outbox`, `trg_lead_assignment_enqueue_outbox` и `trg_lead_comm_enqueue_outbox`.
+  - В `leads.repository.js` старые прямые вызовы уведомлений/задач отключены при `OUTBOX_WORKER_ENABLED=true`.
+  - Создан `OutboxWorkerService` (`server/src/modules/outbox/outboxWorker.service.js`), защищённый API `outbox.router.js` (`/api/outbox/*`) и CLI runner `server/src/scripts/run-outbox-worker.js` (production cron не включён).
+  - Добавлены тесты `068_outbox_worker.test.js` (5/5 `PASS`).
 
 ## Следующая задача
-- `R08` — Очередь следующих доработок (в ветках `feat/crm-sales-completion` и `a00`).
+- `R09` — Финальная стабилизация (включая транзакционную замену проектных прав `UsersRepository.setProjectAccess`).

@@ -303,10 +303,12 @@ export class LeadsRepository {
     const { data: lead, error } = await db.from('leads').insert([prepared]).select().single();
     if (error) throw error;
 
-    // Trigger internal notification for new lead (notifies admin and responsible manager)
-    NotificationsService.notifyLeadCreated(lead).catch(err => {
-      console.warn('Failed to dispatch LEAD_CREATED notification:', err);
-    });
+    if (process.env.OUTBOX_WORKER_ENABLED !== 'true') {
+      // Legacy direct notification fallback when outbox worker is disabled
+      NotificationsService.notifyLeadCreated(lead).catch(err => {
+        console.warn('Failed to dispatch LEAD_CREATED notification:', err);
+      });
+    }
 
     return this.findById(lead.id);
   }
@@ -427,7 +429,7 @@ export class LeadsRepository {
 
       if (rpcResult.success) {
         const updatedLead = await this.findById(cleanId);
-        if (cleanTargetId) {
+        if (cleanTargetId && process.env.OUTBOX_WORKER_ENABLED !== 'true') {
           TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
             console.warn('Failed to generate call task on lead assigned:', err);
           });
@@ -506,8 +508,8 @@ export class LeadsRepository {
 
       const updatedLead = await this.findById(cleanId);
 
-      // If assigned to a manager, trigger call task and in-app notification
-      if (cleanTargetId) {
+      // If assigned to a manager, trigger call task and in-app notification (legacy fallback when worker disabled)
+      if (cleanTargetId && process.env.OUTBOX_WORKER_ENABLED !== 'true') {
         TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
           console.warn('Failed to generate call task on lead assigned:', err);
         });
