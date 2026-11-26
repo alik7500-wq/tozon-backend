@@ -1,5 +1,7 @@
 # Stage 27 — Live release notification and draft preservation
 
+Follow-up: [Stage 28](COMPANY_PROJECTS_STAGE_28.md) closes the exact `/login` cache-policy gap below and records the 2026-11-26 test Plaza isolation/readiness audit.
+
 ## Result
 
 On 2026-11-21, the existing isolated test frontend commit `c93886586a3a445e99c6e7fd70f17339182ed78b` was rebuilt without a source change. Deploy `dep-dc0n18p7lnhs7395sst0` reached `live`. The public build changed from `dae973f3191edf691858ea6a1042d025` to `2e210d935487ff0545aa908dfa8592ef`.
