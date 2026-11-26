@@ -192,6 +192,23 @@ async function insertExpenseWithIdempotency(db, payload) {
   return await executeInsert();
 }
 
+// A standalone order can be voided without changing another cash document.
+const isPairedCashOrder = row => Boolean(
+  row.transfer_id || row.conversion_id || row.conversion_expense_id ||
+  ['CONVERSION', 'INTERNAL_CASH_TRANSFER', 'PAYMENT_ON_BEHALF'].includes(row.operation_type) ||
+  ['Конвертация валюты', 'Внутренние перемещения между кассами'].includes(row.category) ||
+  /^(?:(?:ПКО|РКО)[-–])?(?:ПЕРЕМ|КОНВ|ОБМЕН)[-–]/i.test(row.reference || '') ||
+  /^(?:автоконвертация|внутреннее перемещение|обмен)/i.test(
+    (row.description || row.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim())
+);
+const canVoidCashOrder = row => !isVoidedPko(row) && !isPairedCashOrder(row);
+
+function assertStandaloneCashOrder(row) {
+  if (isPairedCashOrder(row)) {
+    throw new AppError('Этот ордер связан с перемещением или конвертацией. Отдельно аннулировать его нельзя.', 409);
+  }
+}
+
 export class FinanceRepository {
   static calculateItemUsdAmount(item, fallbackRate = 9.27) {
     if (!item || !item.amount) return 0;
@@ -359,6 +376,7 @@ export class FinanceRepository {
           clientPhone: p.deals?.leads?.phone || '',
           clientInn: p.deals?.leads?.inn || '',
           status: p.status || 'ACTIVE',
+          canVoid: canVoidCashOrder(p),
           voidReason: p.void_reason || null,
           voidedAt: p.voided_at || null,
           transferId: p.transfer_id || null,
@@ -1090,34 +1108,21 @@ export class FinanceRepository {
    */
   static async deleteIncome(id, userRole, userAccess = null) {
     if (userRole !== 'ADMIN' || (userAccess && !userAccess.isAdmin)) {
-      throw new Error('Удаление приходных кассовых ордеров запрещено для вашей роли');
+      throw new AppError('Аннулирование ПКО доступно только администратору', 403);
     }
-    const db = getDB();
-    const now = new Date().toISOString();
+    const db = getServiceDB();
+    const { data: payment, error } = await db.from('payments').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    if (!payment) throw new AppError('ПКО не найден', 404);
+    if (isVoidedPko(payment)) return { success: true };
+    assertStandaloneCashOrder(payment);
 
-    const { data: payment, error: getErr } = await db.from('payments').select('*').eq('id', id).maybeSingle();
-    if (getErr || !payment) {
-      await db.from('payments').delete().eq('id', id);
-      return { success: true };
-    }
-
-    const targetDealId = payment?.deal_id;
-    let updatesToApply = [];
-
-    const rpcCallRes = await db.rpc('void_income_payment_atomic', {
+    const { error: rpcError } = await db.rpc('void_income_payment_atomic', {
       p_payment_id: id,
       p_user_id: parseOptionalBigInt(userAccess?.userId || null),
-      p_void_reason: 'Annulled via CRM'
+      p_void_reason: 'Аннулирован администратором в CRM'
     });
-    const { data: rpcRes, error: rpcErr } = rpcCallRes || {};
-
-    if (rpcErr) {
-      throw new Error(`PKO_TRANSACTION_FAILED: ${rpcErr.message}`);
-    }
-
-    // Delete paired conversion expense
-    await this.deletePairedConversion('INCOME', payment);
-
+    if (rpcError) throw rpcError;
     return { success: true };
   }
 
@@ -1161,7 +1166,7 @@ export class FinanceRepository {
     const {expenses: allExpenses}=excludeReclassifiedTransfers([],expensesData || [],barterResults || []);
     
     let normalizedList = allExpenses
-      .filter(e => filters.include_voided ? true : (e.status !== 'VOIDED' && e.status !== 'CANCELLED' && e.status !== 'REVERSED' && !e.voided_at))
+      .filter(e => [true, '1', 'true'].includes(filters.include_voided) || !isVoidedPko(e))
       .map(e => {
         const cur = (e.currency || 'USD').toUpperCase();
         const amount = (e.amount_minor || 0) / 100;
@@ -1191,6 +1196,7 @@ export class FinanceRepository {
           amount_usd: e.amount_usd ? Number(e.amount_usd) : null,
           conversion_expense_id: e.conversion_expense_id || null,
           status: e.status || 'ACTIVE',
+          canVoid: canVoidCashOrder(e),
           voidReason: e.void_reason || null,
           voidedAt: e.voided_at || null,
           transferId: e.transfer_id || null,
@@ -1222,6 +1228,7 @@ export class FinanceRepository {
     let conversionDifferenceUsd = 0;
 
     normalizedList.forEach(item => {
+      if (isVoidedPko(item)) return;
       const eYear = item.date ? new Date(item.date).getFullYear() : null;
       if (!isAllYears && eYear !== currentYear) return;
 
@@ -1279,6 +1286,7 @@ export class FinanceRepository {
     const categoryCurrencies = {};
 
     const categoryBaseItems = filteredList.filter(item => {
+      if (isVoidedPko(item)) return false;
       const isInternalTransfer = item.category === 'Конвертация валюты' || 
         item.operationType === 'CONVERSION' || 
         (item.recipient && item.recipient.includes('Касса') && item.recipient.includes('Автоконвертация')) ||
@@ -1791,21 +1799,27 @@ export class FinanceRepository {
    */
   static async deleteExpense(id, userRole, userAccess = null) {
     if (userRole !== 'ADMIN' || (userAccess && !userAccess.isAdmin)) {
-      throw new Error('Удаление расходных кассовых ордеров запрещено для вашей роли');
+      throw new AppError('Аннулирование РКО доступно только администратору', 403);
     }
-    const db = getDB();
-    const { data: originalRecord } = await db.from('expenses').select('*').eq('id', id).maybeSingle();
-    const { error } = await (originalRecord?.settlement_party_id?getServiceDB():db).from('expenses').delete().eq('id', id);
-    if (error) {
-      console.error('Error deleting expense in DB:', error);
-      throw error;
-    }
+    const db = getServiceDB();
+    const { data: expense, error } = await db.from('expenses').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    if (!expense) throw new AppError('РКО не найден', 404);
+    if (isVoidedPko(expense)) return { success: true };
+    assertStandaloneCashOrder(expense);
 
-    // Delete paired conversion income
-    if (originalRecord) {
-      await this.deletePairedConversion('EXPENSE', originalRecord);
-    }
-
+    const actor = parseOptionalBigInt(userAccess?.userId || null);
+    const { data: updated, error: updateError } = await db.from('expenses').update({
+      status: 'VOIDED',
+      voided_at: new Date().toISOString(),
+      voided_by: actor,
+      void_reason: 'Аннулирован администратором в CRM',
+      ...(expense.settlement_party_id ? { settlement_updated_by: actor } : {})
+    }).eq('id', id).is('voided_at', null)
+      .or('status.is.null,status.not.in.(VOIDED,CANCELLED,REVERSED)')
+      .select('id').maybeSingle();
+    if (updateError) throw updateError;
+    if (!updated) throw new AppError('РКО уже аннулирован или изменён. Обновите журнал.', 409);
     return { success: true };
   }
 
@@ -1904,57 +1918,6 @@ export class FinanceRepository {
       }
     } catch (err) {
       console.warn('syncPairedConversion warning:', err.message);
-    }
-  }
-
-  /**
-   * Синхронное удаление парной операции конвертации
-   */
-  static async deletePairedConversion(type, record) {
-    try {
-      const db = getDB();
-      if (!record) return;
-
-      const isExp = type === 'EXPENSE';
-      const ref = record.reference || '';
-      const desc = (isExp ? record.description : record.comment) || '';
-      const isConv = (record.category === 'Конвертация валюты') ||
-                     (record.operation_type === 'CONVERSION') ||
-                     Boolean(record.conversion_id) ||
-                     ref.includes('КОНВ') || ref.includes('ОБМЕН') ||
-                     desc.toLowerCase().includes('обмен') || desc.toLowerCase().includes('конвертаци');
-
-      if (!isConv) return;
-
-      const refSuffix = ref.replace(/^(ПКО-|ОБМЕН-|КОНВ-)/, '');
-
-      if (isExp) {
-        let paired = [];
-        if (record.conversion_id) {
-          const { data } = await db.from('payments').select('id').eq('conversion_id', record.conversion_id);
-          paired = data || [];
-        } else if (refSuffix) {
-          const { data } = await db.from('payments').select('id').in('reference', [`ПКО-${refSuffix}`, `КОНВ-${refSuffix}`, `ОБМЕН-${refSuffix}`]);
-          paired = data || [];
-        }
-        for (const p of paired) {
-          await db.from('payments').delete().eq('id', p.id);
-        }
-      } else {
-        let paired = [];
-        if (record.conversion_id) {
-          const { data } = await db.from('expenses').select('id').eq('conversion_id', record.conversion_id);
-          paired = data || [];
-        } else if (refSuffix) {
-          const { data } = await db.from('expenses').select('id').in('reference', [`РКО-${refSuffix}`, `КОНВ-${refSuffix}`, `ОБМЕН-${refSuffix}`]);
-          paired = data || [];
-        }
-        for (const e of paired) {
-          await db.from('expenses').delete().eq('id', e.id);
-        }
-      }
-    } catch (err) {
-      console.warn('deletePairedConversion error:', err.message);
     }
   }
 
@@ -2484,6 +2447,7 @@ export class FinanceRepository {
           document_number: p.document_number || null,
         comment: (p.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim(),
         status: p.status || 'ACTIVE',
+        canVoid: canVoidCashOrder(p),
         voidReason: p.void_reason || null,
         voidedAt: p.voided_at || null,
         transferId: p.transfer_id || null,
@@ -2559,6 +2523,7 @@ export class FinanceRepository {
         comment: cleanDesc,
         description: cleanDesc,
         status: e.status || 'ACTIVE',
+        canVoid: canVoidCashOrder(e),
         voidReason: e.void_reason || null,
         voidedAt: e.voided_at || null,
         transferId: e.transfer_id || null,
