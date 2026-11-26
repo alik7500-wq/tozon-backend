@@ -59,8 +59,20 @@ def blocks(parent,node):
      if r.text.endswith('года') or r.text.endswith('{contract_year}'):r.text+=' '
   else:blocks(parent,e)
 
+def format_contract(d,lang):
+ # Correct source heading numbering without changing contractual clauses.
+ closing='8. ҚИСМИ ХОТИМАЁБӢ' if lang=='TJ' else '8. ЗАКЛЮЧИТЕЛЬНЫЕ ПОЛОЖЕНИЯ'
+ requisites='8. СУРОҒА ВА МАЪЛУМОТҲОИ ТАРАФҲО' if lang=='TJ' else '8. АДРЕСА И РЕКВИЗИТЫ СТОРОН'
+ for p in d.paragraphs:
+  if p.text==closing:p.paragraph_format.space_before=Pt(8)
+  if p.text==requisites:
+   for run in p.runs:
+    if run.text.startswith('8.'):
+     run.text='9.'+run.text[2:];break
+
 for lang in ['RU','TJ']:
  d=base();blocks(d,html.fromstring((root/f'plaza-contract-{lang}.html').read_text().replace('{project_city}','{project_address}')))
+ format_contract(d,lang)
  d.core_properties.subject='TOZON_PLAZA_APARTMENT_USD_V1'
  d.save(out/f'CONTRACT-{lang}.docx')
  d=base();tj=lang=='TJ'

@@ -8,6 +8,15 @@ import {compileTemplate,renderTemplate} from '../document-settings/template.engi
 const data={deal:{id:1,status:'SIGNED',currency:'USD',payment_type:'INSTALLMENT',final_price_minor:3600000,deal_price_per_m2_minor:60025,down_payment_minor:1080000,contract_number:'TEST-001',deal_date:'2026-11-12'},client:{full_name:'Тестовый покупатель',phone:'+992000000000',passport_number:'TEST0001',passport_issued_by:'Тестовый орган',passport_issue_date:'2020-02-14',registration_address:'Тестовый адрес покупателя',inn:'000000000'},unit:{project_id:3,unit_kind:'APARTMENT',project_name:'ЖК TOZON PLAZA',project_address:'г. Худжанд',building_name:'Блок Б',section_name:'1',floor_number:3,unit_number:7,area_m2_x100:6000,rooms:2},signer:{company_name:'ООО «ТОЗОН»',director_name:'Директор из снимка',director_authority:'Доверенность из снимка'},company:{company_inn:'630019325',company_registration:'6310011648',company_address:'Адрес компании для проверки',company_account:'Тестовый счёт',director_name:'Чужой текущий директор'},financial:true,total_paid_minor:500000,schedules:[{due_date:'2026-12-12',amount_minor:1260000,paid_amount_minor:0,status:'PENDING'},{due_date:'2027-01-12',amount_minor:1260000,paid_amount_minor:0,status:'PENDING'}]};
 const load=(kind,lang)=>readFileSync(new URL(`../../../resources/company-project-templates/plaza/${kind}-${lang}.docx`,import.meta.url));
 describe('source-derived Plaza apartment templates',()=>{
+ for(const lang of ['RU','TJ'])it(`keeps closing and requisites headings distinct in ${lang}`,()=>{
+  const xml=new PizZip(load('CONTRACT',lang)).file('word/document.xml').asText();
+  const paragraphs=xml.match(/<w:p[ >][\s\S]*?<\/w:p>/g)||[];
+  const closing=lang==='TJ'?'8. ҚИСМИ ХОТИМАЁБӢ':'8. ЗАКЛЮЧИТЕЛЬНЫЕ ПОЛОЖЕНИЯ';
+  const requisites=lang==='TJ'?'9. СУРОҒА ВА МАЪЛУМОТҲОИ ТАРАФҲО':'9. АДРЕСА И РЕКВИЗИТЫ СТОРОН';
+  expect(paragraphs.filter(p=>p.includes(closing))).toHaveLength(1);
+  expect(paragraphs.find(p=>p.includes(closing))).toMatch(/w:before="160"/);
+  expect(xml).toContain(requisites);expect(xml).not.toContain(requisites.replace('9.','8.'));
+ });
  for(const lang of ['RU','TJ'])for(const kind of ['CONTRACT','SCHEDULE'])it(`renders ${kind} ${lang} with frozen signer and exact amounts`,()=>{
   const buffer=load(kind,lang);compileTemplate(buffer);
   const result=renderTemplate(buffer,documentContext(data,lang)),text=new PizZip(result).file('word/document.xml').asText();
