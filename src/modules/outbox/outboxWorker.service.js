@@ -134,8 +134,16 @@ export class OutboxWorkerService {
       return { skipped: true, reason: lead ? 'LEAD_ARCHIVED' : 'LEAD_NOT_FOUND' };
     }
 
-    // Historical import policy: suppress ONLY the historical import event itself, NOT future live events on the contact/lead
-    const isHistoricalEvent = event.event_type === 'LEAD_IMPORTED' || payload.is_historical_import === true;
+    // Historical import policy: suppress ONLY the historical import event itself (and background pool/RR assignment of it),
+    // NOT future live events on the contact/lead
+    const isHistoricalAssignment =
+      event.event_type === 'LEAD_ASSIGNED' &&
+      lead.is_historical_import === true &&
+      ['ROUND_ROBIN', 'POOL_WORKER'].includes(payload.assignment_type);
+    const isHistoricalEvent =
+      event.event_type === 'LEAD_IMPORTED' ||
+      payload.is_historical_import === true ||
+      isHistoricalAssignment;
     if (isHistoricalEvent && !settings?.process_historical_import) {
       return { skipped: true, reason: 'HISTORICAL_IMPORT_SKIPPED' };
     }

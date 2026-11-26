@@ -1,76 +1,29 @@
 /**
- * TOZON CRM — Sales Launch Phase 3.6
- * Automated Round-Robin & Intelligent Lead Distribution Service
- * 
- * Safety & Governance Rules:
- * - Disabled by default (DistributionSettingsService.enabled = false).
- * - Requires explicit activation by DIRECTOR or ADMIN.
- * - Only active vetted sales reps (is_sales_rep = true && is_active = 1).
- * - Excludes managers marked as unavailable/on leave (excludedUserIds).
- * - Enforces max concurrent open leads per manager (maxOpenLeadsPerRep).
- * - Working hours awareness (Asia/Dushanbe): can route to pool if outside working window.
- * - Anti-reassignment safeguard: if lead is already assigned to a manager, automated routing will NEVER overwrite.
- * - Graceful fallback to common pool (responsible_user_id = null) when disabled or no reps available.
+ * TOZON CRM — Transactional Project-Scoped Lead Distribution Service (GAP-01)
+ *
+ * Source of truth for multi-process concurrency, persistent cursor, project access,
+ * working calendar, and capacity checks is PostgreSQL (`fn_select_and_assign_lead_atomic`).
  */
 
 import { SalesPlansRepository } from '../sales-plans/salesPlans.repository.js';
 import { DistributionSettingsService } from './distributionSettings.service.js';
 import { isWithinWorkingHours } from '../../utils/businessTime.js';
-import { getDB } from '../../db/connection.js';
+import { getDB, getServiceDB } from '../../db/connection.js';
+import { AppError } from '../../shared/errors/errorHandler.js';
 
-/**
- * Lightweight in-process Async Mutex to prevent race conditions during concurrent lead assignment.
- */
-class AsyncMutex {
-  constructor() {
-    this._queue = [];
-    this._locked = false;
+const getSafeDB = () => {
+  try {
+    return getServiceDB();
+  } catch {
+    return getDB();
   }
-
-  async acquire() {
-    if (!this._locked) {
-      this._locked = true;
-      return () => this.release();
-    }
-    return new Promise(resolve => {
-      this._queue.push(() => {
-        this._locked = true;
-        resolve(() => this.release());
-      });
-    });
-  }
-
-  release() {
-    if (this._queue.length > 0) {
-      const next = this._queue.shift();
-      next();
-    } else {
-      this._locked = false;
-    }
-  }
-
-  async runExclusive(fn) {
-    const release = await this.acquire();
-    try {
-      return await fn();
-    } finally {
-      release();
-    }
-  }
-}
-
-const distributionMutex = new AsyncMutex();
-const inFlightWorkloadReservations = new Map();
-let lastAssignedIndex = -1;
+};
 
 export class RoundRobinService {
-  /**
-   * Check if automated distribution is currently enabled via persistent settings or env.
-   */
   static async isEnabled() {
     const settings = await DistributionSettingsService.getSettings();
     if (settings.state === 'SETTINGS_UNAVAILABLE' || settings.isAvailable === false) {
-      return false; // Fail-safe closed: do not distribute when settings cannot be loaded
+      return false;
     }
     if (typeof settings.enabled === 'boolean') {
       return settings.enabled;
@@ -78,50 +31,26 @@ export class RoundRobinService {
     return process.env.LEADS_ROUND_ROBIN_ENABLED === 'true';
   }
 
-  /**
-   * Release reserved in-flight slot for a representative.
-   */
-  static releaseInFlight(userId) {
-    const uid = Number(userId);
-    const current = inFlightWorkloadReservations.get(uid) || 0;
-    if (current <= 1) {
-      inFlightWorkloadReservations.delete(uid);
-    } else {
-      inFlightWorkloadReservations.set(uid, current - 1);
-    }
-  }
+  // Kept as no-ops for backward compatibility with legacy callers/tests
+  static releaseInFlight() {}
+  static getInFlightWorkload() { return 0; }
+  static resetInFlight() {}
 
   /**
-   * Get in-flight count for a rep.
+   * Fetches eligible sales representatives for an optional projectId.
+   * Throws explicitly on DB error — NEVER guesses workload as 0.
    */
-  static getInFlightWorkload(userId) {
-    return inFlightWorkloadReservations.get(Number(userId)) || 0;
-  }
-
-  /**
-   * Reset in-flight reservations and cursor (used in tests).
-   */
-  static resetInFlight() {
-    inFlightWorkloadReservations.clear();
-    lastAssignedIndex = -1;
-  }
-
-  /**
-   * Fetches eligible sales representatives who are:
-   * 1. Active (`is_active = 1`)
-   * 2. Certified sales reps (`is_sales_rep = true`)
-   * 3. NOT excluded in distribution settings (not on leave/sick leave)
-   * 4. Under their concurrent open leads capacity limit (`maxOpenLeadsPerRep`), accounting for live DB count + in-flight reservations.
-   */
-  static async getEligibleReps() {
+  static async getEligibleReps({ projectId = null } = {}) {
     const settings = await DistributionSettingsService.getSettings();
+    if (settings.state === 'SETTINGS_UNAVAILABLE' || settings.isAvailable === false) {
+      throw new AppError('Настройки распределения недоступны', 503);
+    }
+
     const maxCapacity = settings.maxOpenLeadsPerRep || 25;
     const excludedIds = new Set((settings.excludedUserIds || []).map(Number));
-
     const managers = await SalesPlansRepository.getSalesManagers();
 
-    // 1. Strict qualification and exclusion check
-    const vettedManagers = managers.filter(m => {
+    const vettedManagers = managers.filter((m) => {
       const isActive = m.is_active === 1 || m.is_active === true || m.is_active === '1';
       const isRep = m.is_sales_rep === true || m.is_sales_rep === 1 || m.is_sales_rep === 'true';
       const isExcluded = excludedIds.has(Number(m.id));
@@ -130,178 +59,179 @@ export class RoundRobinService {
 
     if (vettedManagers.length === 0) return [];
 
-    // 2. Query active open lead workloads from DB
-    const db = getDB();
-    const managerIds = vettedManagers.map(m => m.id);
+    const db = getSafeDB();
+    const managerIds = vettedManagers.map((m) => Number(m.id));
 
-    try {
-      const { data: openLeads, error } = await db
-        .from('leads')
-        .select('id, responsible_user_id')
-        .in('responsible_user_id', managerIds)
-        .in('status', ['NEW', 'IN_PROGRESS', 'NEGOTIATION'])
-        .is('archived_at', null);
+    // Filter by project access (user_project_access or all_projects_access)
+    let projectScopedManagers = vettedManagers;
+    if (projectId !== null && projectId !== undefined) {
+      const { data: accessRows, error: accessErr } = await db
+        .from('user_project_access')
+        .select('user_id')
+        .eq('project_id', Number(projectId))
+        .eq('can_view', true)
+        .in('user_id', managerIds);
 
-      if (error) {
-        console.warn('[RoundRobinService] Failed to query open leads count, proceeding with base list:', error.message);
-        return vettedManagers.map(m => {
-          const inFlight = inFlightWorkloadReservations.get(Number(m.id)) || 0;
-          return { ...m, openLeadsCount: inFlight, dbOpenLeadsCount: 0, inFlightCount: inFlight, capacityLimit: maxCapacity };
-        });
+      if (accessErr) {
+        throw new AppError(`Ошибка проверки проектного доступа менеджеров: ${accessErr.message}`, 503);
       }
 
-      const counts = {};
-      (openLeads || []).forEach(l => {
-        const uid = Number(l.responsible_user_id);
-        counts[uid] = (counts[uid] || 0) + 1;
-      });
-
-      // Filter by capacity and attach workload stats (including live in-flight reservations)
-      return vettedManagers
-        .map(m => {
-          const dbCount = counts[Number(m.id)] || 0;
-          const inFlight = inFlightWorkloadReservations.get(Number(m.id)) || 0;
-          const totalWorkload = dbCount + inFlight;
-          return {
-            ...m,
-            openLeadsCount: totalWorkload,
-            dbOpenLeadsCount: dbCount,
-            inFlightCount: inFlight,
-            capacityLimit: maxCapacity
-          };
-        })
-        .filter(m => m.openLeadsCount < maxCapacity);
-    } catch {
-      return vettedManagers.map(m => {
-        const inFlight = inFlightWorkloadReservations.get(Number(m.id)) || 0;
-        return { ...m, openLeadsCount: inFlight, dbOpenLeadsCount: 0, inFlightCount: inFlight, capacityLimit: maxCapacity };
-      });
+      const allowedByProject = new Set((accessRows || []).map((r) => Number(r.user_id)));
+      projectScopedManagers = vettedManagers.filter(
+        (m) => Boolean(m.all_projects_access) || allowedByProject.has(Number(m.id))
+      );
+    } else {
+      projectScopedManagers = vettedManagers.filter((m) => Boolean(m.all_projects_access));
     }
+
+    if (projectScopedManagers.length === 0) return [];
+
+    const scopedIds = projectScopedManagers.map((m) => Number(m.id));
+    const { data: openLeads, error: leadsErr } = await db
+      .from('leads')
+      .select('id, responsible_user_id')
+      .in('responsible_user_id', scopedIds)
+      .in('status', ['NEW', 'IN_PROGRESS', 'NEGOTIATION'])
+      .is('archived_at', null);
+
+    if (leadsErr) {
+      throw new AppError(`Ошибка расчёта текущей нагрузки менеджеров: ${leadsErr.message}`, 503);
+    }
+
+    const counts = {};
+    (openLeads || []).forEach((l) => {
+      const uid = Number(l.responsible_user_id);
+      counts[uid] = (counts[uid] || 0) + 1;
+    });
+
+    return projectScopedManagers
+      .map((m) => {
+        const dbCount = counts[Number(m.id)] || 0;
+        return {
+          ...m,
+          openLeadsCount: dbCount,
+          dbOpenLeadsCount: dbCount,
+          inFlightCount: 0,
+          capacityLimit: maxCapacity
+        };
+      })
+      .filter((m) => m.openLeadsCount < maxCapacity);
   }
 
   /**
-   * Selects next rep using either LEAST_LOADED or circular ROUND_ROBIN algorithm.
+   * Executes transactional candidate selection, capacity check, persistent cursor update,
+   * lead assignment, history record, and outbox enqueue inside PostgreSQL.
    */
-  static async selectNextRep() {
-    const eligible = await this.getEligibleReps();
-    if (eligible.length === 0) return null;
+  static async assignLeadAtomic(
+    leadId,
+    { actorUserId = null, expectedVersion = null, assignmentSource = 'AUTO', now = null } = {}
+  ) {
+    const db = getSafeDB();
+    const { data, error } = await db.rpc('fn_select_and_assign_lead_atomic', {
+      p_lead_id: Number(leadId),
+      p_actor_user_id: actorUserId ? Number(actorUserId) : null,
+      p_expected_version: expectedVersion !== null && expectedVersion !== undefined ? Number(expectedVersion) : null,
+      p_assignment_source: assignmentSource,
+      p_now: (now instanceof Date ? now.toISOString() : now) || new Date().toISOString()
+    });
 
-    const settings = await DistributionSettingsService.getSettings();
-    const algorithm = settings.algorithm || 'LEAST_LOADED';
+    if (error || !data) {
+      throw new AppError(`Ошибка транзакционного распределения лида: ${error?.message || 'EMPTY_RPC_RESPONSE'}`, 503);
+    }
+    return data;
+  }
 
-    if (algorithm === 'ROUND_ROBIN') {
-      // Pure round-robin cycling
-      eligible.sort((a, b) => Number(a.id) - Number(b.id));
-      lastAssignedIndex = (lastAssignedIndex + 1) % eligible.length;
-      return eligible[lastAssignedIndex];
+  /**
+   * Legacy-compatible pre-create resolution helper.
+   * Note: for multi-process atomicity, callers should persist the lead and call `assignLeadAtomic(lead.id)`.
+   */
+  static async resolveAssignment(explicitManagerId = null, currentResponsibleId = null, { projectId = null } = {}) {
+    if (explicitManagerId !== null && explicitManagerId !== undefined) {
+      return {
+        responsible_user_id: Number(explicitManagerId),
+        assigned_at: new Date().toISOString(),
+        assignment_type: 'MANUAL',
+        reason: 'Ручное назначение руководителем'
+      };
     }
 
-    // Default: LEAST_LOADED with round-robin tie break
+    if (currentResponsibleId !== null && currentResponsibleId !== undefined && Number(currentResponsibleId) > 0) {
+      return {
+        responsible_user_id: Number(currentResponsibleId),
+        assigned_at: null,
+        assignment_type: 'EXISTING',
+        reason: 'Лид уже закреплен за ответственным менеджером; автоматическая перезапись заблокирована'
+      };
+    }
+
+    const settings = await DistributionSettingsService.getSettings({ forceFresh: true });
+    if (settings.state === 'SETTINGS_UNAVAILABLE' || settings.isAvailable === false) {
+      return {
+        responsible_user_id: null,
+        assigned_at: null,
+        assignment_type: 'POOL',
+        pool_reason: 'SETTINGS_UNAVAILABLE',
+        reason: 'Настройки распределения временно недоступны (SETTINGS_UNAVAILABLE); заявка направлена в общий пул'
+      };
+    }
+
+    if (!settings.enabled) {
+      return {
+        responsible_user_id: null,
+        assigned_at: null,
+        assignment_type: 'POOL',
+        pool_reason: 'DISTRIBUTION_DISABLED',
+        reason: 'Автоматическое распределение выключено руководителем; заявка направлена в общий пул'
+      };
+    }
+
+    if (settings.workingHoursOnly && !isWithinWorkingHours()) {
+      return {
+        responsible_user_id: null,
+        assigned_at: null,
+        assignment_type: 'POOL',
+        pool_reason: 'OUTSIDE_WORKING_HOURS',
+        reason: 'Вне рабочего времени компании; заявка направлена в общий пул'
+      };
+    }
+
+    let eligible = [];
+    try {
+      eligible = await this.getEligibleReps({ projectId });
+    } catch (err) {
+      return {
+        responsible_user_id: null,
+        assigned_at: null,
+        assignment_type: 'POOL',
+        pool_reason: 'WORKLOAD_QUERY_FAILED',
+        reason: err.message || 'Ошибка расчёта нагрузки; заявка направлена в общий пул'
+      };
+    }
+
+    if (eligible.length === 0) {
+      return {
+        responsible_user_id: null,
+        assigned_at: null,
+        assignment_type: 'POOL',
+        pool_reason: 'NO_ELIGIBLE_REPS',
+        reason: 'Нет доступных свободных менеджеров; заявка направлена в пул'
+      };
+    }
+
     eligible.sort((a, b) => {
-      if (a.openLeadsCount !== b.openLeadsCount) {
+      if ((settings.algorithm || 'LEAST_LOADED') !== 'ROUND_ROBIN' && a.openLeadsCount !== b.openLeadsCount) {
         return a.openLeadsCount - b.openLeadsCount;
       }
       return Number(a.id) - Number(b.id);
     });
 
-    const minWorkload = eligible[0].openLeadsCount;
-    const tiedCandidates = eligible.filter(e => e.openLeadsCount === minWorkload);
-
-    lastAssignedIndex = (lastAssignedIndex + 1) % tiedCandidates.length;
-    return tiedCandidates[lastAssignedIndex];
-  }
-
-  /**
-   * Evaluates distribution for an incoming lead or lead update.
-   * Safety guard: if lead already has a responsible manager, automated distribution NEVER overwrites.
-   * Concurrency guard: wrapped in AsyncMutex with atomic slot reservation to eliminate race condition duplicates.
-   */
-  static async resolveAssignment(explicitManagerId = null, currentResponsibleId = null) {
-    return await distributionMutex.runExclusive(async () => {
-      // 1. Explicit manual assignment always takes precedence
-      if (explicitManagerId !== null && explicitManagerId !== undefined) {
-        return {
-          responsible_user_id: Number(explicitManagerId),
-          assigned_at: new Date().toISOString(),
-          assignment_type: 'MANUAL',
-          reason: 'Ручное назначение руководителем'
-        };
-      }
-
-      // 2. Safeguard against overwriting existing assignment
-      if (currentResponsibleId !== null && currentResponsibleId !== undefined && Number(currentResponsibleId) > 0) {
-        return {
-          responsible_user_id: Number(currentResponsibleId),
-          assigned_at: null,
-          assignment_type: 'EXISTING',
-          reason: 'Лид уже закреплен за ответственным менеджером; автоматическая перезапись заблокирована'
-        };
-      }
-
-      // 3. Automated distribution enabled check & fail-safe guard (strictly fresh from PostgreSQL)
-      const settings = await DistributionSettingsService.getSettings({ forceFresh: true });
-      if (settings.state === 'SETTINGS_UNAVAILABLE' || settings.isAvailable === false) {
-        return {
-          responsible_user_id: null,
-          assigned_at: null,
-          assignment_type: 'POOL',
-          reason: 'Настройки распределения временно недоступны (SETTINGS_UNAVAILABLE); заявка направлена в общий пул для ручной обработки'
-        };
-      }
-
-      if (!settings.enabled) {
-        return {
-          responsible_user_id: null,
-          assigned_at: null,
-          assignment_type: 'POOL',
-          reason: 'Автоматическое распределение выключено руководителем; заявка направлена в общий пул'
-        };
-      }
-
-      // 4. Working hours check (if enabled in settings)
-      if (settings.workingHoursOnly && !isWithinWorkingHours()) {
-        return {
-          responsible_user_id: null,
-          assigned_at: null,
-          assignment_type: 'POOL',
-          reason: 'Вне рабочего времени компании (08:00–20:00 Asia/Dushanbe); заявка направлена в общий пул'
-        };
-      }
-
-      // 5. Select eligible representative with capacity check
-      const nextRep = await this.selectNextRep();
-      if (!nextRep) {
-        return {
-          responsible_user_id: null,
-          assigned_at: null,
-          assignment_type: 'POOL',
-          reason: 'Нет доступных свободных менеджеров (все превысили лимит нагрузки 25 лидов или исключены); заявка направлена в пул'
-        };
-      }
-
-      // Atomically reserve slot for rep to prevent parallel requests from oversubscribing capacity
-      const repId = Number(nextRep.id);
-      inFlightWorkloadReservations.set(repId, (inFlightWorkloadReservations.get(repId) || 0) + 1);
-
-      // Auto-release after 15 seconds in case caller fails before DB write
-      const timer = setTimeout(() => {
-        RoundRobinService.releaseInFlight(repId);
-      }, 15000);
-
-      const releaseSlot = () => {
-        clearTimeout(timer);
-        RoundRobinService.releaseInFlight(repId);
-      };
-
-      return {
-        responsible_user_id: repId,
-        assigned_at: new Date().toISOString(),
-        assignment_type: 'ROUND_ROBIN',
-        reason: `Автоматическое распределение (${settings.algorithm || 'LEAST_LOADED'}) менеджеру ${nextRep.name}`,
-        rep: nextRep,
-        releaseSlot
-      };
-    });
+    const nextRep = eligible[0];
+    return {
+      responsible_user_id: Number(nextRep.id),
+      assigned_at: new Date().toISOString(),
+      assignment_type: 'ROUND_ROBIN',
+      reason: `Автоматическое распределение (${settings.algorithm || 'LEAST_LOADED'}) менеджеру ${nextRep.name}`,
+      rep: nextRep
+    };
   }
 }
-

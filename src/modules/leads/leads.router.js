@@ -7,6 +7,7 @@ import { TasksService } from '../tasks/tasks.service.js';
 import { ManagerPerformanceService } from '../reports/managerPerformance.service.js';
 import { RoundRobinService } from './roundRobin.service.js';
 import { DistributionSettingsService } from './distributionSettings.service.js';
+import { LeadPoolWorkerService } from './leadPoolWorker.service.js';
 import { AlternativeUnitsService } from '../inventory/alternativeUnits.service.js';
 import { protect, protectOptional } from '../../middleware/auth.middleware.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
@@ -118,33 +119,35 @@ router.post('/webhook', protectOptional, async (req, res, next) => {
       });
     }
 
-    // 5. Distribution engine resolution (Round-robin if enabled; pool by default)
-    const distribution = await RoundRobinService.resolveAssignment();
+    // 5. Create lead first, then execute transactional PostgreSQL distribution (GAP-01)
+    const leadPayload = {
+      full_name,
+      phone,
+      secondary_phone: secondary_phone || null,
+      source: source || 'WEBSITE',
+      status: 'NEW',
+      interested_project_id: req.body.project_id ? Number(req.body.project_id) : null,
+      notes: notes || `Заявка с онлайн-источника (${source || 'Сайт'}).`,
+      responsible_user_id: null,
+      assigned_at: null,
+      idempotency_key: idempotencyKey || null
+    };
 
-    let lead;
-    try {
-      const leadPayload = {
-        full_name,
-        phone,
-        secondary_phone: secondary_phone || null,
-        source: source || 'WEBSITE',
-        status: 'NEW',
-        notes: notes || `Заявка с онлайн-источника (${source || 'Сайт'}).`,
-        responsible_user_id: distribution.responsible_user_id || null,
-        assigned_at: distribution.assigned_at || null,
-        idempotency_key: idempotencyKey || null
+    let lead = await LeadsRepository.create(leadPayload);
+    const assignResult = await RoundRobinService.assignLeadAtomic(lead.id, {
+      expectedVersion: lead.version,
+      assignmentSource: 'WEBHOOK'
+    });
+
+    if (assignResult?.status === 'ASSIGNED') {
+      lead = {
+        ...lead,
+        responsible_user_id: assignResult.to_user_id,
+        assigned_at: assignResult.assigned_at
       };
-
-      lead = await LeadsRepository.create(leadPayload);
-    } finally {
-      if (typeof distribution?.releaseSlot === 'function') {
-        distribution.releaseSlot();
+      if (!(await OutboxWorkerService.isOutboxWorkerActive())) {
+        await TasksService.onLeadCreated(lead, lead.responsible_user_id);
       }
-    }
-
-    // If distributed to an active manager, trigger manager call task
-    if (lead.responsible_user_id) {
-      await TasksService.onLeadCreated(lead, lead.responsible_user_id);
     }
 
     res.status(201).json({
@@ -394,8 +397,37 @@ router.get('/distribution/settings', async (req, res, next) => {
       return next(new AppError('Доступ запрещен', 403));
     }
     const settings = await DistributionSettingsService.getSettings();
-    const eligibleReps = await RoundRobinService.getEligibleReps();
+    const projectId = req.query?.project_id ? Number(req.query.project_id) : null;
+    const eligibleReps = await RoundRobinService.getEligibleReps({ projectId });
     res.status(200).json({ status: 'success', data: { settings, eligibleReps } });
+  } catch (error) { next(error); }
+});
+
+router.get('/distribution/pool-diagnostics', async (req, res, next) => {
+  try {
+    if (!['ADMIN', 'DIRECTOR'].includes(req.user?.role)) {
+      return next(new AppError('Доступ запрещен', 403));
+    }
+    const data = await LeadPoolWorkerService.getDiagnostics();
+    res.status(200).json({ status: 'success', data });
+  } catch (error) { next(error); }
+});
+
+router.post('/distribution/pool-run-once', async (req, res, next) => {
+  try {
+    if (req.user?.role !== 'ADMIN') {
+      return next(new AppError('Ручной запуск обработчика пула доступен только администратору', 403));
+    }
+    const rawIgnore = req.body?.ignore_enabled;
+    if (rawIgnore !== undefined && typeof rawIgnore !== 'boolean') {
+      return next(new AppError('Поле ignore_enabled должно быть boolean', 400));
+    }
+    const data = await LeadPoolWorkerService.runOnce({
+      batchSize: req.body?.batch_size || 25,
+      ignoreEnabled: rawIgnore === true,
+      actorUserId: req.user?.id || null
+    });
+    res.status(200).json({ status: 'success', data });
   } catch (error) { next(error); }
 });
 

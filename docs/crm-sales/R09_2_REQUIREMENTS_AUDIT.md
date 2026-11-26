@@ -16,22 +16,21 @@
 ## 1. Сводка аудита
 
 ### По требованиям F-01–F-20 и N-01–N-03 (23 пункта)
-- **IMPLEMENTED:** `13` (`F-01`, `F-02`, `F-03`, `F-04`, `F-05`, `F-06`, `F-09`, `F-10`, `F-11`, `F-12`, `F-14`, `F-15`, `N-01`, `N-03` -> уточнение: `14` пунктов `IMPLEMENTED`, `8` пунктов `PARTIAL`, `1` пункт `NOT_RUN/BLOCKED` без отдельного нагрузочного контура `N-02` — точный подсчёт:
-  - `IMPLEMENTED`: **14** (`F-01`, `F-02`, `F-03`, `F-04`, `F-05`, `F-06`, `F-09`, `F-10`, `F-11`, `F-12`, `F-14`, `F-15`, `N-01`, `N-03`)
-  - `PARTIAL`: **8** (`F-07`, `F-08`, `F-13`, `F-16`, `F-17`, `F-18`, `F-19`, `F-20`)
-  - `NOT_IMPLEMENTED`: **1** (`N-02` — стенд/методика нагрузочного замера не реализованы)
+- **IMPLEMENTED:** **15** (`F-01`, `F-02`, `F-03`, `F-04`, `F-05`, `F-06`, `F-08`, `F-09`, `F-10`, `F-11`, `F-12`, `F-14`, `F-15`, `N-01`, `N-03`)
+- **PARTIAL:** **7** (`F-07`, `F-13`, `F-16`, `F-17`, `F-18`, `F-19`, `F-20`)
+- **NOT_IMPLEMENTED:** **1** (`N-02` — стенд/методика нагрузочного замера не реализованы)
 - **Проверки (F/N):**
-  - `PASS` (в unit / PGlite / jsdom mock): **14** (`F-01`, `F-02`, `F-03`, `F-04`, `F-05`, `F-06`, `F-09`, `F-12`, `F-14`, `F-15`, `N-01`, `N-03`, частично `F-11`, `F-13`) — при этом сквозная live-проверка на реальном PostgreSQL/PostgREST для всех перечисленных остаётся `NOT_RUN`.
-  - `NOT_RUN`: **6** (`F-07`, `F-08`, `F-10`, `F-16`–`F-18`, `F-19`)
+  - `PASS` (в unit / PGlite / jsdom mock): **15** (`F-01`, `F-02`, `F-03`, `F-04`, `F-05`, `F-06`, `F-08`, `F-09`, `F-12`, `F-14`, `F-15`, `N-01`, `N-03`, частично `F-11`, `F-13`) — при этом сквозная live-проверка на реальном PostgreSQL/PostgREST для всех перечисленных остаётся `NOT_RUN`.
+  - `NOT_RUN`: **5** (`F-07`, `F-10`, `F-16`–`F-18`, `F-19`)
   - `BLOCKED`: **3** (`F-11` live Meta, `F-20` live OpenAI/аудио + отсутствует worker, `N-02` staging/нагрузка)
 
 ### По сценариям приёмки A01–A52 (52 сценария)
-- `IMPLEMENTED`: **39**
-- `PARTIAL`: **11** (`A09`, `A10`, `A12`, `A13`, `A14`, `A19`, `A39`, `A47`, `A49`, `A50`, `A51`)
+- `IMPLEMENTED`: **43**
+- `PARTIAL`: **7** (`A09`, `A19`, `A39`, `A47`, `A49`, `A50`, `A51`)
 - `NOT_IMPLEMENTED`: **2** (`A49` реальный ИИ-воркер аудио, `A52` нагрузочный раннер `N-02`)
 - **Проверки (A01–A52):**
-  - `PASS` (только unit / PGlite / jsdom mock): **25** (`A01`, `A03`, `A04`, `A05`, `A08`, `A10` PGlite 1-proc, `A11`, `A16`, `A17`, `A18`, `A23`, `A24`, `A25`, `A26`, `A27`, `A30`, `A31`, `A32`, `A33`, `A34`, `A35`, `A36`, `A37`, `A38`, `A42`, `A45`, `A46` -> итого **27** в isolated PGlite/jsdom)
-  - `NOT_RUN` (требуют staging PostgreSQL / 2-process / browser E2E): **21**
+  - `PASS` (только unit / PGlite / jsdom mock): **30** (`A01`, `A03`, `A04`, `A05`, `A08`, `A10` PGlite, `A11`, `A12`, `A13`, `A14`, `A16`, `A17`, `A18`, `A23`, `A24`, `A25`, `A26`, `A27`, `A30`, `A31`, `A32`, `A33`, `A34`, `A35`, `A36`, `A37`, `A38`, `A42`, `A45`, `A46`)
+  - `NOT_RUN` (требуют staging PostgreSQL / 2-process / browser E2E): **18**
   - `BLOCKED` (требуют внешние доступы / live Meta / OpenAI + доработку worker): **4** (`A02`, `A48`, `A49`, `A52`)
 
 ---
@@ -47,7 +46,7 @@
 | F-05 | Единый жизненный цикл входящего события (outbox, SQL-пути) | `060`, `068`, `069`, `070`, `OutboxWorkerService` | — | `068_outbox_worker.test.js` (8/8), `070` (6/6), `071` (5/5) | PGlite | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (2-proc PG) | Не проверен на 2 независимых процессах реального PostgreSQL |
 | F-06 | Источники, UTM, Google Forms/Sheets, файловый импорт, исторический импорт | `lead-intake/` (`intake.router.js`, `intake.service.js`), `060`, `070` | `LeadIntakeModal.jsx` | `intake.migration.test.js`, `LeadIntakeModal.test.jsx`, `070` | PGlite + jsdom | `IMPLEMENTED` | `PASS` (PGlite/jsdom) | Требуется staging-проверка live Google Forms/импорта большой партии |
 | F-07 | Повторы, дедупликация контактов и ручное объединение дублей | `060` (`contacts`, `uq_contacts_instagram_identity`), `intake.service.js` | `ClientsPage.jsx` | `060_crm_sales_completion_foundation.test.js` | PGlite | `PARTIAL` | `NOT_RUN` (merge UI) | Отсутствует UI поиска и предпросмотра объединения дублей контактов (`GAP-04`) |
-| F-08 | Проектные правила распределения, очередь без назначения, постоянный курсор | `roundRobin.service.js`, `distributionSettings.service.js`, `060` | `SalesControlPanel.jsx` (модалка настроек) | `SalesControlPanel.test.jsx` | jsdom + static audit | `PARTIAL` | `FAIL` (аудит кода) / `NOT_RUN` (staging) | `RoundRobinService` использует in-memory `lastAssignedIndex` и `AsyncMutex`, не фильтрует по `project_id`/`user_project_access`, угадывает нагрузку `0` при ошибке БД, нет фонового воркера пула `unassigned` (`GAP-01`) |
+| F-08 | Проектные правила распределения, очередь без назначения, постоянный курсор | `071` (`fn_select_and_assign_lead_atomic`, `fn_run_lead_pool_batch`), `roundRobin.service.js`, `leadPoolWorker.service.js`, `run-lead-pool-worker.js` | `SalesControlPanel.jsx` | `071_r09_2_gap01_distribution.test.js` (5/5) | PGlite | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (2-proc PG) | Требуется 2-процессный прогон `verify-gap01-two-process-pg.mjs` на staging PostgreSQL |
 | F-09 | Конкурентная безопасность назначения (409 CAS) и журнал | `060`/`061` (`fn_assign_lead_atomic`), `leads.router.js` | `LeadDrawer.jsx`, `LeadControlView.jsx` | `060_pre_release_isolation.test.js` | PGlite | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (2-proc PG) | Автораспределение `RoundRobinService` не использует DB-lock/DB-cursor (`GAP-01`) |
 | F-10 | Единая карточка лида (лента, переписки, задачи, объекты, «Оформить сделку») | `leads.router.js`, `leads.repository.js` | `LeadDrawer.jsx` | `vite build` | Build | `IMPLEMENTED` | `NOT_RUN` (browser E2E) | Не пройден полный браузерный E2E сценарий |
 | F-11 | Instagram: права менеджера, вложения, отправка, идемпотентность, UNKNOWN, сверка | `instagram-inbox.router.js`, `067_instagram_send_idempotency.sql` | `InstagramInboxPage.jsx`, `InstagramReplyComposer.jsx`, `InstagramAccounts.jsx` | `Instagram*.test.jsx` (jsdom), R05/R06 server tests | jsdom + unit | `IMPLEMENTED` | `PASS` (jsdom/unit); `BLOCKED` (live Meta) | Заблокирована сквозная проверка на live Meta API (нужен тестовый токен и профиль) |
@@ -79,11 +78,11 @@
 | A07 | P0 | Одинаковое имя, разные контакты | `060` (`uq_contacts_instagram_identity`) | — | — | — | `IMPLEMENTED` | `NOT_RUN` | Нужен API тест |
 | A08 | P0 | Нет номера телефона | `060` (`leads.phone NULL`) | `LeadKanbanView.jsx` | `060_crm_sales_completion_foundation.test.js` | PGlite | `IMPLEMENTED` | `PASS` (PGlite) | — |
 | A09 | P0 | Повтор импорта/возобновление партии | `intake.service.js`, `intake.files.js` | `LeadIntakeModal.jsx` | `intake.migration.test.js` | PGlite | `PARTIAL` | `PASS` (unit/PGlite); `NOT_RUN` (live) | Проверить возобновление прерванной партии на staging |
-| A10 | P0 | Два процесса принимают события одновременно | `068` (`fn_claim_outbox_batch`), `roundRobin.service.js` | — | `068_outbox_worker.test.js` | PGlite (1 процесс) | `PARTIAL` | `PASS` (PGlite 1-proc); `NOT_RUN` (2-proc) | Outbox готов к 2-proc, но `RoundRobinService` держит cursor в памяти (`GAP-01`) |
-| A11 | P0 | Ручное и автоназначение одновременно (409) | `061` (`fn_assign_lead_atomic`) | `LeadControlView.jsx` | `060_pre_release_isolation.test.js` | PGlite | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (2-proc) | — |
-| A12 | P0 | Менеджер вне проекта/уволен/исключён | `roundRobin.service.js`, `066` | — | — | Static audit | `PARTIAL` | `FAIL` | `RoundRobinService.getEligibleReps()` не фильтрует по `user_project_access` (`GAP-01`) |
-| A13 | P0 | Нет доступного менеджера/сбой настроек | `roundRobin.service.js`, `outboxWorker.service.js` | — | `071` (outbox settings error) | PGlite / audit | `PARTIAL` | `FAIL` (RoundRobin) / `PASS` (Outbox) | `RoundRobinService` при ошибке БД ставит нагрузку `0` вместо пула (`GAP-01`) |
-| A14 | P0 | Перезапуск распределителя | `roundRobin.service.js` | — | Static audit | Static audit | `PARTIAL` | `FAIL` | `lastAssignedIndex` хранится в памяти процесса (`GAP-01`) |
+| A10 | P0 | Два процесса принимают события одновременно | `068` (`fn_claim_outbox_batch`), `071` (`fn_select_and_assign_lead_atomic`) | — | `068`, `071_r09_2_gap01_distribution.test.js` | PGlite | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (2-proc PG) | Требуется прогон `verify-gap01-two-process-pg.mjs` на реальном PostgreSQL |
+| A11 | P0 | Ручное и автоназначение одновременно (409) | `061` (`fn_assign_lead_atomic`), `071` | `LeadControlView.jsx` | `060_pre_release_isolation.test.js`, `071_r09_2_gap01_distribution.test.js` | PGlite | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (2-proc) | — |
+| A12 | P0 | Менеджер вне проекта/уволен/исключён | `071` (`fn_select_and_assign_lead_atomic`), `roundRobin.service.js` | — | `071_r09_2_gap01_distribution.test.js` | PGlite | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (staging) | — |
+| A13 | P0 | Нет доступного менеджера/сбой настроек | `071`, `roundRobin.service.js`, `outboxWorker.service.js` | — | `071_r09_2_gap01_distribution.test.js`, `071_r09_1_1` | PGlite | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (staging) | — |
+| A14 | P0 | Перезапуск распределителя | `071` (`lead_distribution_settings.round_robin_cursor`) | — | `071_r09_2_gap01_distribution.test.js` | PGlite | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (staging) | — |
 | A15 | P0 | Повторное назначение/снятие, журнал, перенос задач | `061`, `070` (`RECIPIENT_STALE_REASSIGNED`) | `LeadDrawer.jsx` | `070` (гонка) | PGlite | `IMPLEMENTED` | `NOT_RUN` (полный E2E) | Проверить перенос открытых задач при смене менеджера в E2E |
 | A16 | P0 | Перемещение NEW не создаёт первый ответ | `062`, `leadDomain.js` | `LeadKanbanView.jsx` | `062_atomic_stage_transition.test.js` | PGlite | `IMPLEMENTED` | `PASS` (PGlite) | — |
 | A17 | P0 | Повторная фиксация контакта не стирает первый | `leads.repository.js` (`recordFirstContact`) | `LeadDrawer.jsx` | `leadDomain.test.js` | Unit | `IMPLEMENTED` | `PASS` (unit); `NOT_RUN` (live) | — |
@@ -141,11 +140,10 @@
 
 ## 5. Реестр обнаруженных пробелов и дефектов (задачи для исполнителей)
 
-### `GAP-01` (`P0`) — Непотокобезопасное/непроектное автораспределение в `RoundRobinService` и отсутствие воркера пула `unassigned`
-- **Последствие:** При 2 backend-процессах или перезапуске сбрасывается `lastAssignedIndex`, нарушается справедливость очереди (`A14`), менеджер без допуска к проекту может получить лид (`A12`), а при ошибке запроса открытых лидов нагрузка угадывается как `0` (`A13`) вместо безопасного помещения в пул `unassigned`.
-- **Критерий исправления:** `RoundRobinService` использует БД-курсор (`crm_distribution_settings.round_robin_cursor` по `project_id`), фильтрует кандидатов по `user_project_access` / `all_projects_access`, при ошибке БД отправляет лид в пул с `pool_reason` и имеет фоновый обработчик очереди `unassigned` с транзакционным назначением.
-- **Зависимости:** Миграции `060`, `061`, `066`.
-- **Задача для исполнителя:** Перевести `RoundRobinService` на проектный БД-курсор и `user_project_access`, убрать fallback `dbOpenLeadsCount: 0`, добавить фоновый обработчик пула `unassigned` и 2-процессный тест.
+### `GAP-01` (`P0`) — **CLOSED в PGlite** (остаётся 2-процессный тест на staging PostgreSQL) — Транзакционное проектное автораспределение и обработчик пула `unassigned`
+- **Реализация:** Миграция `071_r09_2_gap01_transactional_distribution.sql` (`fn_select_and_assign_lead_atomic`, `fn_run_lead_pool_batch`), `roundRobin.service.js`, `leadPoolWorker.service.js`, `run-lead-pool-worker.js`, `leads.router.js`, `outboxWorker.service.js`.
+- **Доказательство:** `071_r09_2_gap01_distribution.test.js` (5/5 `PASS` в PGlite), `persistent_distribution_settings.test.js` (12/12 `PASS`).
+- **Остаток на staging (`NOT_RUN`):** `node server/src/scripts/verify-gap01-two-process-pg.mjs` против реального PostgreSQL (`STAGING_DATABASE_URL`).
 
 ### `GAP-02` (`P2`) — Отсутствует фоновый обработчик очереди ИИ-анализа звонков (`F-20` / `A49`)
 - **Последствие:** Записи в `call_ai_analyses` со статусом `QUEUED` никогда не переходят в `PROCESSING`/`READY`/`FAILED`; загрузка аудио из Moizvonki и вызов OpenAI не выполняются даже при наличии `OPENAI_API_KEY`.
