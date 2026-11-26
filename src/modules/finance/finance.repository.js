@@ -201,6 +201,11 @@ const isPairedCashOrder = row => Boolean(
   /^(?:автоконвертация|внутреннее перемещение|обмен)/i.test(
     (row.description || row.comment || '').replace(/\[IDEMP:[^\]]+\]\s*/gi, '').trim())
 );
+const isAutoConvertedExpense = row => Boolean(
+  row.conversion_expense_id && row.conversion_id && !row.transfer_id &&
+  row.currency === 'TJS' && ['STANDARD', 'EXPENSE'].includes(row.operation_type || 'STANDARD') &&
+  row.category !== 'Конвертация валюты'
+);
 const canVoidCashOrder = row => !isVoidedPko(row) && !isPairedCashOrder(row);
 
 function assertStandaloneCashOrder(row) {
@@ -1196,7 +1201,8 @@ export class FinanceRepository {
           amount_usd: e.amount_usd ? Number(e.amount_usd) : null,
           conversion_expense_id: e.conversion_expense_id || null,
           status: e.status || 'ACTIVE',
-          canVoid: canVoidCashOrder(e),
+          canVoid: canVoidCashOrder(e) || (!isVoidedPko(e) && isAutoConvertedExpense(e)),
+          voidIncludesAutoConversion: isAutoConvertedExpense(e),
           voidReason: e.void_reason || null,
           voidedAt: e.voided_at || null,
           transferId: e.transfer_id || null,
@@ -1805,6 +1811,14 @@ export class FinanceRepository {
     const { data: expense, error } = await db.from('expenses').select('*').eq('id', id).maybeSingle();
     if (error) throw error;
     if (!expense) throw new AppError('РКО не найден', 404);
+    if (isAutoConvertedExpense(expense)) {
+      const { data, error: voidError } = await db.rpc('void_cash_expense_autoconversion', {
+        p_expense_id: id,
+        p_actor: parseOptionalBigInt(userAccess?.userId || null)
+      });
+      if (voidError) throw new AppError(voidError.message, voidError.code === '42501' ? 403 : 409);
+      return data;
+    }
     if (isVoidedPko(expense)) return { success: true };
     assertStandaloneCashOrder(expense);
 
@@ -2523,7 +2537,8 @@ export class FinanceRepository {
         comment: cleanDesc,
         description: cleanDesc,
         status: e.status || 'ACTIVE',
-        canVoid: canVoidCashOrder(e),
+        canVoid: canVoidCashOrder(e) || (!isVoidedPko(e) && isAutoConvertedExpense(e)),
+        voidIncludesAutoConversion: isAutoConvertedExpense(e),
         voidReason: e.void_reason || null,
         voidedAt: e.voided_at || null,
         transferId: e.transfer_id || null,
