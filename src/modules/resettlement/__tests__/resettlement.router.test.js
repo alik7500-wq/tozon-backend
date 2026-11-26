@@ -128,3 +128,29 @@ describe('resettlement allocation preview safety', () => {
     expect(rpc).not.toHaveBeenCalled();
   });
 });
+
+
+describe('resettlement installment preview', () => {
+  it.each([
+    [0, 0, [0, 0, 0]],
+    [3502, 1400800, [466933, 466933, 466934]],
+    [1, 1, [0, 0, 1]]
+  ])('splits area %s without losing cents', async (paidArea, total, amounts) => {
+    const res = await request(app).post('/api/resettlements/installment-preview').send({
+      paid_area_x100: paidArea,
+      price_per_m2_minor: paidArea === 1 ? 50 : 40000,
+      installment_months: 3,
+      first_payment_date: '2026-01-31'
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({
+      payable_total_minor: total,
+      currency: 'USD',
+      persisted: false,
+      schedule: ['2026-01-31', '2026-02-28', '2026-03-31'].map((due_date, index) => ({
+        due_date, amount_minor: amounts[index]
+      }))
+    });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+});

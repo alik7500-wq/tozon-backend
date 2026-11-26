@@ -40,7 +40,7 @@ router.post('/installment-preview', (req, res) => {
       initial.getUTCDate() !== day || year < 2000 || year > 2100) {
     return res.status(400).json({ message: 'INVALID_FIRST_PAYMENT_DATE' });
   }
-  const totalMinor = Math.round(area * price / 100);
+  const totalMinor = Number((BigInt(area) * BigInt(price) + 50n) / 100n);
   if (!Number.isSafeInteger(totalMinor)) return res.status(400).json({ message: 'INVALID_INSTALLMENT_AMOUNT' });
   const eachMinor = Math.floor(totalMinor / months);
   const schedule = Array.from({ length: months }, (_, index) => {
@@ -152,6 +152,56 @@ router.get('/', async (req, res) => {
     return res.json({ data: data ?? [], limit: pageSize });
   } catch (error) {
     console.error('Resettlement list failed:', error?.code ?? error?.name ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+});
+
+router.route('/:id/agreements').all((req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  if (req.user.role !== 'ADMIN') return res.status(403).json({ message: 'AGREEMENT_ACCESS_DENIED' });
+  if (!/^[1-9][0-9]*$/.test(req.params.id) || !positiveInt(Number(req.params.id))) {
+    return res.status(400).json({ message: 'INVALID_CASE_ID' });
+  }
+  next();
+}).get(async (req, res) => {
+  try {
+    const data = await read('resettlement_agreements',
+      'kind,agreement_number,signed_on,notary_office,basis,notes,recorded_at,recorded_by',
+      'case_id', Number(req.params.id));
+    return res.json({ data });
+  } catch (error) {
+    console.error('Resettlement agreements read failed:', error?.code ?? 'UNKNOWN');
+    return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
+  }
+}).post(async (req, res) => {
+  const { kind, agreement_number, signed_on, notary_office, basis, notes = '' } = req.body ?? {};
+  const validText = (value, maximum) => typeof value === 'string' && value.trim().length > 0 && value.trim().length <= maximum;
+  const date = typeof signed_on === 'string' && /^[1-9][0-9]{3}-[0-9]{2}-[0-9]{2}$/.test(signed_on)
+    ? new Date(signed_on + 'T00:00:00Z') : null;
+  if (!['PRIMARY', 'ADDENDUM'].includes(kind) || !validText(agreement_number, 120) ||
+      !validText(notary_office, 240) || !validText(basis, 2000) ||
+      typeof notes !== 'string' || notes.trim().length > 2000 ||
+      !date || Number.isNaN(date.valueOf()) || date.toISOString().slice(0, 10) !== signed_on) {
+    return res.status(400).json({ message: 'INVALID_AGREEMENT_INPUT' });
+  }
+  try {
+    const { data, error } = await getServiceDB().rpc('record_resettlement_agreement', {
+      p_case_id: Number(req.params.id), p_actor_id: Number(req.user.id),
+      p_kind: kind, p_number: agreement_number.trim(), p_signed_on: signed_on,
+      p_notary: notary_office.trim(), p_basis: basis.trim(), p_notes: notes.trim()
+    });
+    if (error) {
+      if (error.message === 'INVALID_ACTOR') return res.status(403).json({ message: error.message });
+      if (error.message === 'RESETTLEMENT_NOT_FOUND') return res.status(404).json({ message: error.message });
+      if (error.code === '23505') return res.status(409).json({ message: 'AGREEMENT_CONFLICT' });
+      if (['RESETTLEMENT_NOT_DRAFT', 'AGREEMENT_CONFLICT', 'PRIMARY_AGREEMENT_REQUIRED'].includes(error.message)) {
+        return res.status(409).json({ message: error.message });
+      }
+      throw error;
+    }
+    return res.json({ data });
+  } catch (error) {
+    console.error('Resettlement agreement registration failed:', error?.code ?? 'UNKNOWN');
     return res.status(503).json({ message: 'RESETTLEMENT_UNAVAILABLE' });
   }
 });
