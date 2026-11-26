@@ -1,14 +1,16 @@
-# HANDOFF_R07.md — Автообновление без потери контекста, страниц, истории и черновиков
+# HANDOFF_R07.md — R07 & R07.1: Автообновление больших списков, догрузка колонок и очистка при отзыве доступа
 
-## Матрица приёмки R07
-| Проверка | Реализация / файл | Среда | Статус |
-|---|---|---|---|
-| Сохранение нескольких загруженных страниц лидов и выход лида из фильтра после refresh | `LeadsPage.jsx` (`LeadsAutoRefreshR07.test.jsx`) | Vitest jsdom + fake timers | `PASS` |
-| Независимая догрузка и обновление колонок доски (`boardColumns`) | `LeadsPage.jsx` (`LeadsWorkspaceCompletion.test.jsx`) | Vitest jsdom | `PASS` |
-| Защита от поздних ответов `fetchLeads`/`fetchStats` при смене фильтра | `LeadsPage.jsx` (`LeadsAutoRefreshR07.test.jsx`) | Vitest jsdom + controlled promises | `PASS` |
-| Восстановление `offline -> online` и отсутствие утечки таймеров на unmount | `LeadsPage.jsx` (`LeadsAutoRefreshR07.test.jsx`) | Vitest jsdom + fake timers | `PASS` |
-| Выбранный диалог Instagram вне 1-й страницы не закрывается; новые сообщения не стирают старую историю | `InstagramInboxPage.jsx` (`InstagramAutoRefreshR07.test.jsx`) | Vitest jsdom + fake timers | `PASS` |
-| Очистка `drafts` (как `Map`) и кэша на `403`, сохранение при `409`, отбрасывание позднего ответа после logout | `InstagramInboxPage.jsx` (`InstagramAutoRefreshR07.test.jsx`) | Vitest jsdom + controlled promises | `PASS` |
-| Контекстная привязка `onSent` и сохранение черновика/состояния `unknown` | `InstagramReplyComposer.jsx` (`InstagramInterceptorR061.test.jsx`) | Real Axios interceptor + jsdom | `PASS` |
-| Регрессионные тесты R05/R06 на backend | `instagram-r05-access.test.js`, `instagram-r06-send-idempotency.test.js`, `instagram-inbox-router.test.js`, `instagram-inbox.test.js` | PGlite + Supertest | `PASS` |
-| Живые замеры производительности `N-02` и живая Meta API | — | Live staging / Meta | `NOT_RUN` |
+## Дополнения R07.1
+- **Без непроверенного хвоста (`LeadsPage.jsx`):**
+  - При загруженном списке `>500` лидов фоновое обновление постранично догружает актуальные страницы (`limit: 500`, `cursor`) до полного покрытия загруженного диапазона.
+  - При загруженной колонке `>100` карточек фоновое обновление догружает хвост колонки через `/leads?stage=...&cursor=...&limit=100`, исключая дубликаты при переносе между колонками и удаляя архивированные/отозванные записи.
+- **Защита `handleLoadMoreColumn` и синхронизация `leads` / `boardColumns`:**
+  - Запрос догрузки колонки привязан к `leadsContextRef`, `columnRequestRef[stageKey]` и `boardGenerationRef`; поздние ответы отбрасываются при смене проекта/фильтра или конфликте с `refresh`.
+  - Плоский `leads` выводится из финально объединённых `boardColumns` через `flattenBoardColumns`.
+- **Очистка `sessionStorage` и защита от поздних ответов (`InstagramInboxPage.jsx`, `InstagramReplyComposer.jsx`):**
+  - При `401`/`403` удаляются записи в UI, `historyCache`, `drafts` (`Map`) и `sessionStorage`; поздние ответы `submit`/`reconcile` после отзыва/размонтирования/смены пользователя отбрасываются.
+
+## Итоги проверок
+- **Client (`Vitest jsdom`):** 12 файлов, **51/51 тест `PASS`** (включая `LeadsAutoRefreshR07.test.jsx` 5/5 и `InstagramAutoRefreshR07.test.jsx` 2/2); `vite build` `PASS`.
+- **Server (`PGlite` + `Supertest`):** 4 файла, **29/29 тестов `PASS`** (R05/R06 регрессия).
+- **Live `N-02` / staging / Meta:** `NOT_RUN`.
