@@ -132,6 +132,30 @@ function createPgliteSupabaseAdapter() {
         );
         return { data: res.rows[0]?.res || null, error: null };
       }
+      if (fnName === 'fn_apply_outbox_effect') {
+        try {
+          const res = await state.db.query(
+            `SELECT public.fn_apply_outbox_effect($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb) AS res`,
+            [
+              paramsObj.p_event_id,
+              paramsObj.p_lease_token,
+              paramsObj.p_expected_lead_id,
+              paramsObj.p_expected_assigned_user_id,
+              paramsObj.p_require_open,
+              JSON.stringify(paramsObj.p_tasks || []),
+              JSON.stringify(paramsObj.p_notifications || []),
+              JSON.stringify(paramsObj.p_rule_executions || [])
+            ]
+          );
+          return { data: res.rows[0]?.res || null, error: null };
+        } catch (e) {
+          return { data: null, error: { message: e.message } };
+        }
+      }
+      if (fnName === 'fn_test_expire_lease_helper') {
+        await state.db.query(`UPDATE public.crm_event_outbox SET lease_expires_at = NOW() - interval '10 seconds' WHERE id = $1`, [paramsObj.p_event_id]);
+        return { data: true, error: null };
+      }
       return { data: null, error: null };
     }
   };
@@ -201,6 +225,7 @@ describe('R08: Real crm_event_outbox Worker, Lease Recovery, Idempotent Effects,
     await db.exec(readFileSync('src/db/migrations/063_harden_stage_transition_and_task_cancel.sql', 'utf8'));
     await db.exec(readFileSync('src/db/migrations/066_user_project_access.sql', 'utf8'));
     await db.exec(readFileSync('src/db/migrations/068_outbox_worker_lease_and_controls.sql', 'utf8'));
+    await db.exec(readFileSync('src/db/migrations/069_outbox_atomic_effect_guard.sql', 'utf8'));
     state.db = db;
   }, 30000);
 
@@ -327,5 +352,76 @@ describe('R08: Real crm_event_outbox Worker, Lease Recovery, Idempotent Effects,
     expect(res.done).toBe(2);
     // Neither forbidden project nor closed lead should receive a notification!
     expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.user_notifications`)).rows[0].c).toBe(0);
+  });
+
+  it('R08.1: creates 1 mandatory PRIMARY_FIRST_CONTACT task across LEAD_CREATED + LEAD_ASSIGNED even with rules disabled, and handles NO_ANSWER follow-up', async () => {
+    await state.db.query(`INSERT INTO public.leads (id, full_name, status, stage, responsible_user_id, interested_project_id) VALUES (50, 'New 50', 'NEW', 'NEW', 2, 1)`);
+    await state.db.query(`INSERT INTO public.lead_assignment_history (lead_id, from_user_id, to_user_id, assigned_by_user_id, assignment_type) VALUES (50, NULL, 2, 1, 'MANUAL')`);
+    await state.db.query(`INSERT INTO public.lead_communications (lead_id, actor_user_id, channel, direction, event_type, outcome, project_id) VALUES (50, 2, 'CALL', 'OUTBOUND', 'NO_ANSWER', 'NO_ANSWER', 1)`);
+
+    const res = await OutboxWorkerService.runOnce({ workerId: 'w1' });
+    expect(res.done).toBe(3);
+
+    const primaryTasks = (await state.db.query(`SELECT * FROM public.tasks WHERE lead_id = 50 AND rule_key = 'PRIMARY_FIRST_CONTACT'`)).rows;
+    expect(primaryTasks).toHaveLength(1);
+    const noAnswerTasks = (await state.db.query(`SELECT * FROM public.tasks WHERE lead_id = 50 AND rule_key = 'COMM_NO_ANSWER_FOLLOWUP'`)).rows;
+    expect(noAnswerTasks).toHaveLength(1);
+  });
+
+  it('R08.1: skips mismatched source/condition rules (not EXECUTED), quarantines unsupported actions, and skips historical imports', async () => {
+    await state.db.query(`INSERT INTO public.crm_automation_rules (id, name, source_code, event_type, conditions_json, action_type, is_enabled) VALUES
+      (1, 'Insta Only', 'INSTAGRAM', 'LEAD_CREATED', '{}'::jsonb, 'CREATE_TASK', true),
+      (2, 'Unsupported SMS', NULL, 'LEAD_ASSIGNED', '{}'::jsonb, 'SEND_EXTERNAL_SMS', true)`);
+
+    // Lead 60 has source DIRECT (mismatch with INSTAGRAM rule 1), plus historical Lead 61
+    await state.db.query(`INSERT INTO public.leads (id, full_name, source, status, stage, responsible_user_id, interested_project_id) VALUES (60, 'Direct 60', 'DIRECT', 'NEW', 'NEW', 2, 1)`);
+    await state.db.query(`INSERT INTO public.leads (id, full_name, source, status, stage, responsible_user_id, interested_project_id, is_historical_import) VALUES (61, 'Hist 61', 'DIRECT', 'NEW', 'NEW', 2, 1, true)`);
+
+    const r1 = await OutboxWorkerService.runOnce({ workerId: 'w1' });
+    expect(r1.done).toBe(2);
+
+    // Rule 1 must be SKIPPED (not EXECUTED!)
+    const exec1 = (await state.db.query(`SELECT status, error_message FROM public.crm_automation_executions WHERE rule_id = 1`)).rows;
+    expect(exec1).toHaveLength(1);
+    expect(exec1[0].status).toBe('SKIPPED');
+    expect(exec1[0].error_message).toBe('SOURCE_MISMATCH');
+
+    // Historical Lead 61 must have 0 tasks and 0 notifications
+    expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.tasks WHERE lead_id = 61`)).rows[0].c).toBe(0);
+    expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.user_notifications WHERE entity_id = 61`)).rows[0].c).toBe(0);
+
+    // Unsupported action on LEAD_ASSIGNED -> quarantined, NEVER marked EXECUTED
+    await state.db.query(`INSERT INTO public.lead_assignment_history (lead_id, to_user_id, assigned_by_user_id) VALUES (60, 2, 1)`);
+    const r2 = await OutboxWorkerService.runOnce({ workerId: 'w1' });
+    expect(r2.quarantined).toBe(1);
+    expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.crm_automation_executions WHERE rule_id = 2 AND status = 'EXECUTED'`)).rows[0].c).toBe(0);
+  });
+
+  it('R08.1: blocks effect write when lease expired before apply, blocks tasks on SIGNED deal despite stale stage, and rolls back on execution log failure', async () => {
+    // 1. Lease expired right before fn_apply_outbox_effect -> 0 tasks/notifications created!
+    await state.db.query(`INSERT INTO public.leads (id, full_name, status, stage, responsible_user_id, interested_project_id) VALUES (70, 'Lease Lost 70', 'NEW', 'NEW', 2, 1)`);
+    const rLease = await OutboxWorkerService.runOnce({ workerId: 'w1', injectFault: 'EXPIRE_LEASE_BEFORE_APPLY' });
+    expect(rLease.leaseLost).toBe(1);
+    expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.tasks WHERE lead_id = 70`)).rows[0].c).toBe(0);
+
+    // 2. Lead 71 has stale stage='NEGOTIATION' but authoritative SIGNED deal -> 0 open-sales tasks!
+    await state.db.query(`INSERT INTO public.leads (id, full_name, status, stage, responsible_user_id, interested_project_id) VALUES (71, 'Signed 71', 'NEGOTIATION', 'NEGOTIATION', 2, 1)`);
+    await state.db.query(`INSERT INTO public.deals (lead_id, unit_id, responsible_user_id, status) VALUES (71, 501, 2, 'SIGNED')`);
+    await OutboxWorkerService.runOnce({ workerId: 'w1' });
+    expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.tasks WHERE lead_id = 71`)).rows[0].c).toBe(0);
+
+    // 3. Failure writing crm_automation_executions rolls back task/notification atomically
+    await state.db.exec(`
+      CREATE OR REPLACE FUNCTION public.fail_exec_log() RETURNS TRIGGER AS $$
+      BEGIN RAISE EXCEPTION 'EXEC_LOG_WRITE_FAILED'; END;
+      $$ LANGUAGE plpgsql;
+      CREATE TRIGGER trg_fail_exec_log BEFORE INSERT ON public.crm_automation_executions FOR EACH ROW EXECUTE FUNCTION public.fail_exec_log();
+    `);
+    await state.db.query(`INSERT INTO public.crm_automation_rules (id, name, event_type, action_type, is_enabled) VALUES (10, 'Rule 10', 'LEAD_CREATED', 'CREATE_TASK', true)`);
+    await state.db.query(`INSERT INTO public.leads (id, full_name, status, stage, responsible_user_id, interested_project_id) VALUES (72, 'Rollback 72', 'NEW', 'NEW', 2, 1)`);
+    const rRoll = await OutboxWorkerService.runOnce({ workerId: 'w1' });
+    expect(rRoll.retried).toBe(1);
+    expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.tasks WHERE lead_id = 72`)).rows[0].c).toBe(0);
+    await state.db.exec(`DROP TRIGGER IF EXISTS trg_fail_exec_log ON public.crm_automation_executions;`);
   });
 });

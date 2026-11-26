@@ -1,5 +1,6 @@
 import { getServiceDB, getDB } from '../../db/connection.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
+import { calculateSalesSlaDeadline, normalizeToSalesWorkingWindow } from '../leads/leadSla.service.js';
 
 const getSafeDB = () => {
   try { return getServiceDB(); } catch { return getDB(); }
@@ -13,6 +14,8 @@ export const SUPPORTED_OUTBOX_EVENTS = new Set([
   'LEAD_LOST',
   'COMMUNICATION_LOGGED'
 ]);
+
+const SUPPORTED_RULE_ACTIONS = new Set(['CREATE_TASK', 'IN_APP_NOTIFICATION']);
 
 class OutboxPermanentError extends Error {
   constructor(code, message) {
@@ -30,197 +33,87 @@ class OutboxUnknownEventError extends Error {
   }
 }
 
+class OutboxLeaseLostError extends Error {
+  constructor() {
+    super('LEASE_LOST');
+    this.code = 'LEASE_LOST';
+  }
+}
+
 function logTechnical(level, payload) {
-  // Technical IDs only: never log tokens, audio, or customer message text
-  const safe = {
-    ts: new Date().toISOString(),
-    ...payload
-  };
+  const safe = { ts: new Date().toISOString(), ...payload };
   if (level === 'warn') console.warn('[outbox-worker]', safe);
   else console.info('[outbox-worker]', safe);
 }
 
-async function loadAuthoritativeLead(db, leadId) {
-  const { data, error } = await db
-    .from('leads')
-    .select('id, full_name, status, stage, version, responsible_user_id, interested_project_id, archived_at')
-    .eq('id', Number(leadId))
-    .maybeSingle();
-  if (error) throw new Error(`Lead lookup failed: ${error.message}`);
-  return data || null;
+function evaluateRuleConditions(rule, event, lead) {
+  if (rule.project_id && Number(rule.project_id) !== Number(lead.interested_project_id)) {
+    return { matched: false, reason: 'PROJECT_MISMATCH' };
+  }
+  const leadSource = String(lead.source_code || lead.source || '').toUpperCase();
+  if (rule.source_code && String(rule.source_code).toUpperCase() !== leadSource) {
+    return { matched: false, reason: 'SOURCE_MISMATCH' };
+  }
+  const cond = rule.conditions_json || {};
+  const currentStage = String(lead.stage || lead.status || 'NEW').toUpperCase();
+  if (cond.stage && String(cond.stage).toUpperCase() !== currentStage) {
+    return { matched: false, reason: 'STAGE_MISMATCH' };
+  }
+  if (cond.min_budget_minor !== undefined && Number(lead.budget_max_minor || 0) < Number(cond.min_budget_minor)) {
+    return { matched: false, reason: 'BUDGET_BELOW_MIN' };
+  }
+  const payload = event.payload_json || {};
+  if (cond.channel && String(cond.channel).toUpperCase() !== String(payload.channel || '').toUpperCase()) {
+    return { matched: false, reason: 'CHANNEL_MISMATCH' };
+  }
+  if (cond.outcome && String(cond.outcome).toUpperCase() !== String(payload.outcome || '').toUpperCase()) {
+    return { matched: false, reason: 'OUTCOME_MISMATCH' };
+  }
+  if (cond.comm_event_type && String(cond.comm_event_type).toUpperCase() !== String(payload.comm_event_type || '').toUpperCase()) {
+    return { matched: false, reason: 'COMM_EVENT_TYPE_MISMATCH' };
+  }
+  return { matched: true };
 }
 
-async function checkUserActiveAndProjectAccess(db, userId, projectId) {
-  if (!userId) return { eligible: false, reason: 'NO_USER' };
-  const { data: user, error: userErr } = await db
-    .from('users')
-    .select('id, name, role, is_active, all_projects_access')
-    .eq('id', Number(userId))
-    .maybeSingle();
-  if (userErr) throw new Error(`User lookup failed: ${userErr.message}`);
-  if (!user || Number(user.is_active) !== 1) {
-    return { eligible: false, reason: 'USER_INACTIVE' };
+function buildRuleActionEffects(rule, event, lead, tasks, notifications) {
+  if (!SUPPORTED_RULE_ACTIONS.has(rule.action_type)) {
+    throw new OutboxPermanentError('UNSUPPORTED_RULE_ACTION', `Неподдержанное действие правила: ${rule.action_type}`);
   }
-  if (user.all_projects_access === true) {
-    return { eligible: true, user };
-  }
-  if (projectId === null || projectId === undefined) {
-    return { eligible: false, reason: 'PROJECT_ACCESS_DENIED' };
-  }
-  const { data: accessRows, error: accessErr } = await db
-    .from('user_project_access')
-    .select('project_id')
-    .eq('user_id', Number(userId))
-    .eq('project_id', Number(projectId))
-    .eq('can_view', true);
-  if (accessErr) throw new Error(`Project access lookup failed: ${accessErr.message}`);
-  if (!accessRows || accessRows.length === 0) {
-    return { eligible: false, reason: 'PROJECT_ACCESS_DENIED' };
-  }
-  return { eligible: true, user };
-}
-
-async function insertIdempotentNotification(db, {
-  userId,
-  eventType,
-  title,
-  message,
-  entityType = 'lead',
-  entityId,
-  actionUrl,
-  dedupeKey,
-  metadata = {}
-}) {
-  const { error } = await db
-    .from('user_notifications')
-    .upsert(
-      [{
-        user_id: Number(userId),
-        event_type: eventType,
-        type: eventType,
-        title,
-        message,
-        entity_type: entityType,
-        entity_id: Number(entityId),
-        action_url: actionUrl,
-        dedupe_key: dedupeKey,
-        metadata
-      }],
-      { onConflict: 'dedupe_key', ignoreDuplicates: true }
-    );
-  if (error) throw new Error(`Notification insert failed: ${error.message}`);
-}
-
-async function insertIdempotentTask(db, {
-  leadId,
-  assignedUserId,
-  createdBy,
-  type = 'CALL',
-  priority = 'NORMAL',
-  title,
-  description,
-  dueAt,
-  ruleKey,
-  eventRef
-}) {
-  const { data: existing, error: selErr } = await db
-    .from('tasks')
-    .select('id')
-    .eq('event_ref', eventRef)
-    .eq('rule_key', ruleKey)
-    .maybeSingle();
-  if (selErr) throw new Error(`Task idempotency lookup failed: ${selErr.message}`);
-  if (existing) return existing;
-
-  const { data, error } = await db
-    .from('tasks')
-    .insert([{
-      lead_id: Number(leadId),
-      assigned_user_id: assignedUserId ? Number(assignedUserId) : null,
-      created_by: createdBy ? Number(createdBy) : null,
-      type,
-      priority,
-      title,
-      description,
-      due_at: dueAt || new Date(Date.now() + 3600000).toISOString(),
-      status: 'OPEN',
-      rule_key: ruleKey,
-      event_ref: eventRef,
-      idempotency_key: `${eventRef}:${ruleKey}`
-    }])
-    .select('id')
-    .single();
-
-  if (error) {
-    // Handle concurrent unique constraint (23505) idempotently
-    if (String(error.code) === '23505') {
-      const { data: dup } = await db
-        .from('tasks')
-        .select('id')
-        .eq('event_ref', eventRef)
-        .eq('rule_key', ruleKey)
-        .maybeSingle();
-      if (dup) return dup;
-    }
-    throw new Error(`Task insert failed: ${error.message}`);
-  }
-  return data;
-}
-
-async function applyEnabledAutomationRules(db, event, lead, injectFault = null) {
-  const { data: rules, error } = await db
-    .from('crm_automation_rules')
-    .select('*')
-    .eq('event_type', event.event_type)
-    .eq('is_enabled', true);
-  if (error) throw new Error(`Automation rules lookup failed: ${error.message}`);
-
-  for (const rule of (rules || [])) {
-    if (rule.project_id && Number(rule.project_id) !== Number(lead.interested_project_id)) {
-      continue;
-    }
-    const { data: existingExec } = await db
-      .from('crm_automation_executions')
-      .select('id')
-      .eq('rule_id', rule.id)
-      .eq('event_key', event.idempotency_key)
-      .maybeSingle();
-    if (existingExec) continue;
-
-    // Only safe internal DB actions (CREATE_TASK, IN_APP_NOTIFICATION) are allowed in R08
-    if (rule.action_type === 'CREATE_TASK' && lead.responsible_user_id) {
-      const access = await checkUserActiveAndProjectAccess(db, lead.responsible_user_id, lead.interested_project_id);
-      if (access.eligible) {
-        await insertIdempotentTask(db, {
-          leadId: lead.id,
-          assignedUserId: lead.responsible_user_id,
-          createdBy: event.payload_json?.actor_user_id || lead.responsible_user_id,
-          type: rule.action_params_json?.task_type || 'CALL',
-          priority: rule.action_params_json?.priority || 'NORMAL',
-          title: rule.action_params_json?.title || rule.name,
-          description: rule.action_params_json?.description || `Автоматическая задача по правилу: ${rule.name}`,
-          dueAt: rule.action_params_json?.due_at || null,
-          ruleKey: `RULE_${rule.id}`,
-          eventRef: event.idempotency_key
-        });
-      }
-    }
-
-    if (injectFault === 'AFTER_EFFECT_BEFORE_DONE') {
-      throw new Error('Injected crash after side effect before DONE');
-    }
-
-    await db
-      .from('crm_automation_executions')
-      .upsert(
-        [{ rule_id: rule.id, event_key: event.idempotency_key, lead_id: lead.id, status: 'EXECUTED' }],
-        { onConflict: 'rule_id,event_key', ignoreDuplicates: true }
-      );
+  if (rule.action_type === 'CREATE_TASK' && lead.responsible_user_id) {
+    const minutes = Number(rule.action_params_json?.sla_minutes || 60);
+    const dueAtDate = rule.action_params_json?.due_at
+      ? normalizeToSalesWorkingWindow(new Date(rule.action_params_json.due_at))
+      : calculateSalesSlaDeadline(new Date(), minutes);
+    const dueAt = (dueAtDate || calculateSalesSlaDeadline(new Date(), 60)).toISOString();
+    tasks.push({
+      assigned_user_id: lead.responsible_user_id,
+      created_by: event.payload_json?.actor_user_id || lead.responsible_user_id,
+      type: rule.action_params_json?.task_type || 'CALL',
+      priority: rule.action_params_json?.priority || 'NORMAL',
+      title: rule.action_params_json?.title || rule.name,
+      description: rule.action_params_json?.description || `Автоматическая задача по правилу: ${rule.name}`,
+      due_at: dueAt,
+      due_date: dueAt.split('T')[0],
+      timezone: 'Asia/Dushanbe',
+      rule_key: `RULE_${rule.id}`,
+      event_ref: event.idempotency_key,
+      idempotency_key: `${event.idempotency_key}:RULE_${rule.id}`
+    });
+  } else if (rule.action_type === 'IN_APP_NOTIFICATION' && lead.responsible_user_id) {
+    notifications.push({
+      user_id: lead.responsible_user_id,
+      event_type: event.event_type,
+      title: rule.action_params_json?.title || rule.name,
+      message: rule.action_params_json?.message || `Сработало правило «${rule.name}» по лиду #${lead.id}`,
+      action_url: `/leads?leadId=${lead.id}`,
+      dedupe_key: `outbox:${event.idempotency_key}:rule:${rule.id}:${lead.responsible_user_id}`,
+      metadata: { lead_id: lead.id, rule_id: rule.id, event_id: event.id }
+    });
   }
 }
 
 export class OutboxWorkerService {
-  static async processClaimedEvent(db, event, { injectFault = null } = {}) {
+  static async processClaimedEvent(db, event, settings = {}, { injectFault = null } = {}) {
     if (!SUPPORTED_OUTBOX_EVENTS.has(event.event_type)) {
       throw new OutboxUnknownEventError(event.event_type);
     }
@@ -231,129 +124,243 @@ export class OutboxWorkerService {
       throw new OutboxPermanentError('INVALID_PAYLOAD', 'Отсутствует корректный lead_id в payload_json');
     }
 
-    const lead = await loadAuthoritativeLead(db, leadId);
+    const { data: lead, error: leadErr } = await db
+      .from('leads')
+      .select('id, full_name, phone, source, source_code, status, stage, version, responsible_user_id, interested_project_id, budget_max_minor, first_contact_at, is_historical_import, archived_at')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (leadErr) throw new Error(`Lead lookup failed: ${leadErr.message}`);
     if (!lead || lead.archived_at) {
       return { skipped: true, reason: lead ? 'LEAD_ARCHIVED' : 'LEAD_NOT_FOUND' };
     }
 
-    const currentStage = lead.stage || lead.status || 'NEW';
+    // Historical import policy: never generate fresh SLA/notifications/auto-tasks by default
+    const isHistorical = event.event_type === 'LEAD_IMPORTED' || lead.is_historical_import === true || payload.is_historical_import === true;
+    if (isHistorical && !settings?.process_historical_import) {
+      return { skipped: true, reason: 'HISTORICAL_IMPORT_SKIPPED' };
+    }
+
+    const tasks = [];
+    const notifications = [];
+    const ruleExecutions = [];
+    let expectedAssignedUserId = null;
+    let requireOpen = true;
 
     if (event.event_type === 'LEAD_LOST') {
-      if (currentStage !== 'LOST') {
+      requireOpen = false;
+      if ((lead.stage || lead.status) !== 'LOST') {
         return { skipped: true, reason: 'LEAD_REOPENED' };
       }
-      await applyEnabledAutomationRules(db, event, lead, injectFault);
-      return { handled: true };
-    }
-
-    if (currentStage === 'LOST' || currentStage === 'SIGNED') {
-      return { skipped: true, reason: 'LEAD_ALREADY_CLOSED' };
-    }
-
-    if (event.event_type === 'LEAD_ASSIGNED') {
+    } else if (event.event_type === 'LEAD_ASSIGNED') {
       const targetUserId = Number(payload.to_user_id);
-      if (!targetUserId || Number(lead.responsible_user_id) !== targetUserId) {
-        return { skipped: true, reason: 'LEAD_REASSIGNED_ELSEWHERE' };
+      if (!targetUserId) return { skipped: true, reason: 'NO_TARGET_USER' };
+      expectedAssignedUserId = targetUserId;
+
+      if (!lead.first_contact_at) {
+        const deadline = calculateSalesSlaDeadline(new Date(), 15);
+        const dueAt = (deadline || new Date(Date.now() + 15 * 60000)).toISOString();
+        tasks.push({
+          assigned_user_id: targetUserId,
+          created_by: payload.actor_user_id || targetUserId,
+          type: 'CALL',
+          priority: 'HIGH',
+          title: `Первичный контакт (15 мин SLA): ${lead.full_name || `#${lead.id}`}`,
+          description: `Связаться с клиентом в течение 15 минут. Регламент: Asia/Dushanbe.`,
+          due_at: dueAt,
+          due_date: dueAt.split('T')[0],
+          timezone: 'Asia/Dushanbe',
+          rule_key: 'PRIMARY_FIRST_CONTACT',
+          event_ref: `lead_primary_${lead.id}`,
+          idempotency_key: `lead_primary_${lead.id}`
+        });
       }
-      const access = await checkUserActiveAndProjectAccess(db, targetUserId, lead.interested_project_id);
-      if (!access.eligible) {
-        return { skipped: true, reason: access.reason };
-      }
-      await insertIdempotentNotification(db, {
-        userId: targetUserId,
-        eventType: 'LEAD_ASSIGNED',
+
+      notifications.push({
+        user_id: targetUserId,
+        event_type: 'LEAD_ASSIGNED',
         title: `Назначен лид #${lead.id}`,
         message: `Вам назначен лид ${lead.full_name || `#${lead.id}`}`,
-        entityId: lead.id,
-        actionUrl: `/leads?leadId=${lead.id}`,
-        dedupeKey: `outbox:${event.idempotency_key}:assigned:${targetUserId}`,
+        action_url: `/leads?leadId=${lead.id}`,
+        dedupe_key: `outbox:${event.idempotency_key}:assigned:${targetUserId}`,
         metadata: { lead_id: lead.id, event_id: event.id }
       });
-      if (injectFault === 'AFTER_EFFECT_BEFORE_DONE') {
-        throw new Error('Injected crash after notification before DONE');
+    } else if (event.event_type === 'LEAD_CREATED' || event.event_type === 'LEAD_IMPORTED') {
+      if (lead.responsible_user_id) {
+        if (!lead.first_contact_at) {
+          const deadline = calculateSalesSlaDeadline(new Date(), 15);
+          const dueAt = (deadline || new Date(Date.now() + 15 * 60000)).toISOString();
+          tasks.push({
+            assigned_user_id: lead.responsible_user_id,
+            created_by: payload.actor_user_id || lead.responsible_user_id,
+            type: 'CALL',
+            priority: 'HIGH',
+            title: `Первичный контакт (15 мин SLA): ${lead.full_name || `#${lead.id}`}`,
+            description: `Связаться с новым клиентом в течение 15 минут. Регламент: Asia/Dushanbe.`,
+            due_at: dueAt,
+            due_date: dueAt.split('T')[0],
+            timezone: 'Asia/Dushanbe',
+            rule_key: 'PRIMARY_FIRST_CONTACT',
+            event_ref: `lead_primary_${lead.id}`,
+            idempotency_key: `lead_primary_${lead.id}`
+          });
+        }
+        notifications.push({
+          user_id: lead.responsible_user_id,
+          event_type: event.event_type,
+          title: `Новый лид #${lead.id}`,
+          message: `Поступил лид ${lead.full_name || `#${lead.id}`}`,
+          action_url: `/leads?leadId=${lead.id}`,
+          dedupe_key: `outbox:${event.idempotency_key}:created:${lead.responsible_user_id}`,
+          metadata: { lead_id: lead.id, event_id: event.id }
+        });
       }
-      await applyEnabledAutomationRules(db, event, lead, injectFault);
-      return { handled: true };
-    }
-
-    if (event.event_type === 'LEAD_STAGE_CHANGED') {
+    } else if (event.event_type === 'LEAD_STAGE_CHANGED') {
       const toStage = String(payload.to_stage || '').toUpperCase();
-      if (toStage && toStage !== currentStage) {
+      if (toStage && toStage !== String(lead.stage || lead.status || '').toUpperCase()) {
         return { skipped: true, reason: 'STAGE_ALREADY_ADVANCED' };
       }
       if (lead.responsible_user_id) {
-        const access = await checkUserActiveAndProjectAccess(db, lead.responsible_user_id, lead.interested_project_id);
-        if (access.eligible) {
-          if (toStage === 'MEETING_SCHEDULED' && payload.meeting_at) {
-            await insertIdempotentTask(db, {
-              leadId: lead.id,
-              assignedUserId: lead.responsible_user_id,
-              createdBy: payload.actor_user_id || lead.responsible_user_id,
-              type: 'MEETING',
-              priority: 'HIGH',
-              title: `Встреча с клиентом #${lead.id}`,
-              description: `Запланированная встреча по лиду #${lead.id}`,
-              dueAt: payload.meeting_at,
-              ruleKey: 'STAGE_MEETING_FOLLOWUP',
-              eventRef: event.idempotency_key
-            });
-          } else if (toStage === 'SHOWING_DONE' && payload.showing_at) {
-            await insertIdempotentTask(db, {
-              leadId: lead.id,
-              assignedUserId: lead.responsible_user_id,
-              createdBy: payload.actor_user_id || lead.responsible_user_id,
-              type: 'CALL',
-              priority: 'NORMAL',
-              title: `Итоги показа по лиду #${lead.id}`,
-              description: `Связаться с клиентом после показа (объект #${payload.showing_project_id || lead.interested_project_id || '—'})`,
-              dueAt: payload.showing_at,
-              ruleKey: 'STAGE_SHOWING_FOLLOWUP',
-              eventRef: event.idempotency_key
-            });
-          }
-          await insertIdempotentNotification(db, {
-            userId: lead.responsible_user_id,
-            eventType: 'LEAD_STAGE_CHANGED',
-            title: `Этап лида #${lead.id}: ${toStage || currentStage}`,
-            message: `Лид ${lead.full_name || `#${lead.id}`} переведён на этап ${toStage || currentStage}`,
-            entityId: lead.id,
-            actionUrl: `/leads?leadId=${lead.id}`,
-            dedupeKey: `outbox:${event.idempotency_key}:stage:${lead.responsible_user_id}`,
-            metadata: { lead_id: lead.id, to_stage: toStage, event_id: event.id }
+        if (toStage === 'MEETING_SCHEDULED' && payload.meeting_at) {
+          const dueAt = normalizeToSalesWorkingWindow(new Date(payload.meeting_at)).toISOString();
+          tasks.push({
+            assigned_user_id: lead.responsible_user_id,
+            created_by: payload.actor_user_id || lead.responsible_user_id,
+            type: 'MEETING',
+            priority: 'HIGH',
+            title: `Встреча с клиентом #${lead.id}`,
+            description: `Запланированная встреча по лиду #${lead.id}`,
+            due_at: dueAt,
+            due_date: dueAt.split('T')[0],
+            timezone: 'Asia/Dushanbe',
+            rule_key: 'STAGE_MEETING_FOLLOWUP',
+            event_ref: event.idempotency_key,
+            idempotency_key: `${event.idempotency_key}:STAGE_MEETING_FOLLOWUP`
+          });
+        } else if (toStage === 'SHOWING_DONE' && payload.showing_at) {
+          const dueAt = calculateSalesSlaDeadline(new Date(payload.showing_at), 60).toISOString();
+          tasks.push({
+            assigned_user_id: lead.responsible_user_id,
+            created_by: payload.actor_user_id || lead.responsible_user_id,
+            type: 'CALL',
+            priority: 'NORMAL',
+            title: `Итоги показа по лиду #${lead.id}`,
+            description: `Связаться с клиентом после показа (объект #${payload.showing_project_id || lead.interested_project_id || '—'})`,
+            due_at: dueAt,
+            due_date: dueAt.split('T')[0],
+            timezone: 'Asia/Dushanbe',
+            rule_key: 'STAGE_SHOWING_FOLLOWUP',
+            event_ref: event.idempotency_key,
+            idempotency_key: `${event.idempotency_key}:STAGE_SHOWING_FOLLOWUP`
           });
         }
+        notifications.push({
+          user_id: lead.responsible_user_id,
+          event_type: 'LEAD_STAGE_CHANGED',
+          title: `Этап лида #${lead.id}: ${toStage || lead.stage}`,
+          message: `Лид ${lead.full_name || `#${lead.id}`} переведён на этап ${toStage || lead.stage}`,
+          action_url: `/leads?leadId=${lead.id}`,
+          dedupe_key: `outbox:${event.idempotency_key}:stage:${lead.responsible_user_id}`,
+          metadata: { lead_id: lead.id, to_stage: toStage, event_id: event.id }
+        });
       }
-      if (injectFault === 'AFTER_EFFECT_BEFORE_DONE') {
-        throw new Error('Injected crash after side effect before DONE');
+    } else if (event.event_type === 'COMMUNICATION_LOGGED' && lead.responsible_user_id) {
+      const commType = String(payload.comm_event_type || payload.outcome || '').toUpperCase();
+      if (commType === 'NO_ANSWER' || commType === 'BUSY') {
+        const slaMins = commType === 'BUSY' ? 60 : 120;
+        const dueAt = calculateSalesSlaDeadline(new Date(), slaMins).toISOString();
+        tasks.push({
+          assigned_user_id: lead.responsible_user_id,
+          created_by: payload.actor_user_id || lead.responsible_user_id,
+          type: 'CALL',
+          priority: 'NORMAL',
+          title: commType === 'BUSY' ? `Перезвонить (занято): #${lead.id}` : `Повторный звонок (недозвон): #${lead.id}`,
+          description: `Автоматический перезвон по регламенту рабочего времени (Asia/Dushanbe)`,
+          due_at: dueAt,
+          due_date: dueAt.split('T')[0],
+          timezone: 'Asia/Dushanbe',
+          rule_key: `COMM_${commType}_FOLLOWUP`,
+          event_ref: event.idempotency_key,
+          idempotency_key: `${event.idempotency_key}:COMM_${commType}_FOLLOWUP`
+        });
+      } else if (payload.callback_at) {
+        const dueAt = normalizeToSalesWorkingWindow(new Date(payload.callback_at)).toISOString();
+        tasks.push({
+          assigned_user_id: lead.responsible_user_id,
+          created_by: payload.actor_user_id || lead.responsible_user_id,
+          type: 'CALL',
+          priority: 'HIGH',
+          title: `Согласованный перезвон: #${lead.id}`,
+          description: `Согласованный перезвон клиенту #${lead.id}`,
+          due_at: dueAt,
+          due_date: dueAt.split('T')[0],
+          timezone: 'Asia/Dushanbe',
+          rule_key: 'COMM_CALLBACK',
+          event_ref: event.idempotency_key,
+          idempotency_key: `${event.idempotency_key}:COMM_CALLBACK`
+        });
       }
-      await applyEnabledAutomationRules(db, event, lead, injectFault);
-      return { handled: true };
     }
 
-    if (event.event_type === 'LEAD_CREATED' || event.event_type === 'LEAD_IMPORTED' || event.event_type === 'COMMUNICATION_LOGGED') {
-      if (lead.responsible_user_id) {
-        const access = await checkUserActiveAndProjectAccess(db, lead.responsible_user_id, lead.interested_project_id);
-        if (access.eligible && (event.event_type === 'LEAD_CREATED' || event.event_type === 'LEAD_IMPORTED')) {
-          await insertIdempotentNotification(db, {
-            userId: lead.responsible_user_id,
-            eventType: event.event_type,
-            title: `Новый лид #${lead.id}`,
-            message: `Поступил лид ${lead.full_name || `#${lead.id}`}`,
-            entityId: lead.id,
-            actionUrl: `/leads?leadId=${lead.id}`,
-            dedupeKey: `outbox:${event.idempotency_key}:created:${lead.responsible_user_id}`,
-            metadata: { lead_id: lead.id, event_id: event.id }
-          });
-        }
+    // Evaluate enabled crm_automation_rules (never mark EXECUTED if skipped/unsupported!)
+    const { data: rules, error: rulesErr } = await db
+      .from('crm_automation_rules')
+      .select('*')
+      .eq('event_type', event.event_type)
+      .eq('is_enabled', true);
+    if (rulesErr) throw new Error(`Automation rules lookup failed: ${rulesErr.message}`);
+
+    for (const rule of (rules || [])) {
+      const check = evaluateRuleConditions(rule, event, lead);
+      if (!check.matched) {
+        ruleExecutions.push({
+          rule_id: rule.id,
+          event_key: event.idempotency_key,
+          status: 'SKIPPED',
+          error_message: check.reason
+        });
+        continue;
       }
-      if (injectFault === 'AFTER_EFFECT_BEFORE_DONE') {
-        throw new Error('Injected crash after side effect before DONE');
-      }
-      await applyEnabledAutomationRules(db, event, lead, injectFault);
-      return { handled: true };
+      // Unsupported action throws OutboxPermanentError -> NEVER recorded as EXECUTED
+      buildRuleActionEffects(rule, event, lead, tasks, notifications);
+      ruleExecutions.push({
+        rule_id: rule.id,
+        event_key: event.idempotency_key,
+        status: 'EXECUTED',
+        error_message: null
+      });
     }
 
-    return { handled: true };
+    if (injectFault === 'EXPIRE_LEASE_BEFORE_APPLY') {
+      await db.rpc('fn_test_expire_lease_helper', { p_event_id: event.id }).catch(() => {});
+    }
+
+    if (tasks.length === 0 && notifications.length === 0 && ruleExecutions.length === 0) {
+      return { handled: true, empty: true };
+    }
+
+    const { data: applyRes, error: applyErr } = await db.rpc('fn_apply_outbox_effect', {
+      p_event_id: event.id,
+      p_lease_token: event.lease_token,
+      p_expected_lead_id: lead.id,
+      p_expected_assigned_user_id: expectedAssignedUserId,
+      p_require_open: requireOpen,
+      p_tasks: tasks,
+      p_notifications: notifications,
+      p_rule_executions: ruleExecutions
+    });
+
+    if (applyErr) {
+      throw new Error(`Effect apply failed: ${applyErr.message}`);
+    }
+    if (applyRes?.ok === false && applyRes?.code === 'LEASE_LOST') {
+      throw new OutboxLeaseLostError();
+    }
+
+    if (injectFault === 'AFTER_EFFECT_BEFORE_DONE') {
+      throw new Error('Injected crash after effect before DONE');
+    }
+
+    return applyRes;
   }
 
   static async runOnce({
@@ -364,12 +371,15 @@ export class OutboxWorkerService {
     injectFault = null
   } = {}) {
     const db = getSafeDB();
-    const { data: claimed, error: claimErr } = await db.rpc('fn_claim_outbox_batch', {
-      p_worker_id: workerId,
-      p_batch_size: batchSize,
-      p_lease_seconds: leaseSeconds,
-      p_ignore_enabled: ignoreEnabled
-    });
+    const [{ data: settings }, { data: claimed, error: claimErr }] = await Promise.all([
+      db.from('crm_outbox_settings').select('*').eq('id', 1).maybeSingle(),
+      db.rpc('fn_claim_outbox_batch', {
+        p_worker_id: workerId,
+        p_batch_size: batchSize,
+        p_lease_seconds: leaseSeconds,
+        p_ignore_enabled: ignoreEnabled
+      })
+    ]);
 
     if (claimErr) {
       throw new AppError(`Не удалось захватить партию outbox: ${claimErr.message}`, 503);
@@ -389,7 +399,7 @@ export class OutboxWorkerService {
         if (injectFault === 'CRASH_BEFORE_EFFECT') {
           throw new Error('Injected crash before effect');
         }
-        await this.processClaimedEvent(db, event, { injectFault });
+        await this.processClaimedEvent(db, event, settings || {}, { injectFault });
 
         const { data: ack, error: ackErr } = await db.rpc('fn_complete_outbox_event', {
           p_event_id: event.id,
@@ -406,6 +416,11 @@ export class OutboxWorkerService {
           logTechnical('info', { eventId: event.id, eventType: event.event_type, aggregateId: event.aggregate_id, outcome: 'DONE' });
         }
       } catch (err) {
+        if (err instanceof OutboxLeaseLostError || err?.code === 'LEASE_LOST') {
+          results.leaseLost += 1;
+          logTechnical('warn', { eventId: event.id, eventType: event.event_type, code: 'LEASE_LOST' });
+          continue;
+        }
         const isUnknown = err instanceof OutboxUnknownEventError || err?.kind === 'UNKNOWN_EVENT';
         const isPermanent = err instanceof OutboxPermanentError || err?.kind === 'PERMANENT';
         const outcome = (isUnknown || isPermanent) ? 'QUARANTINE' : 'RETRY';
@@ -445,6 +460,17 @@ export class OutboxWorkerService {
     return results;
   }
 
+  static async isOutboxWorkerActive() {
+    if (process.env.OUTBOX_WORKER_ENABLED !== 'true') return false;
+    try {
+      const db = getSafeDB();
+      const { data } = await db.from('crm_outbox_settings').select('is_enabled').eq('id', 1).maybeSingle();
+      return Boolean(data?.is_enabled);
+    } catch {
+      return false;
+    }
+  }
+
   static async getDiagnostics() {
     const db = getSafeDB();
     const [{ data: settings }, { data: rows, error }] = await Promise.all([
@@ -461,6 +487,14 @@ export class OutboxWorkerService {
     const dueCandidates = [...pending, ...failed];
     const oldestMs = dueCandidates.length ? Math.min(...dueCandidates.map((r) => Date.parse(r.created_at))) : null;
 
+    const envWorkerEnabled = process.env.OUTBOX_WORKER_ENABLED === 'true';
+    const dbWorkerEnabled = Boolean(settings?.is_enabled);
+    const misconfiguredWarning = envWorkerEnabled !== dbWorkerEnabled
+      ? (envWorkerEnabled
+          ? 'OUTBOX_WORKER_ENABLED=true, но crm_outbox_settings.is_enabled=false: работает legacy-резерв'
+          : 'crm_outbox_settings.is_enabled=true, но OUTBOX_WORKER_ENABLED!=true')
+      : null;
+
     return {
       queueSize: pending.length + failed.length,
       pendingCount: pending.length,
@@ -468,6 +502,10 @@ export class OutboxWorkerService {
       processingCount: processing.length,
       quarantinedCount: quarantined.length,
       oldestPendingAgeSeconds: oldestMs ? Math.max(0, Math.floor((Date.now() - oldestMs) / 1000)) : 0,
+      envWorkerEnabled,
+      dbWorkerEnabled,
+      effectiveActive: envWorkerEnabled && dbWorkerEnabled,
+      misconfiguredWarning,
       settings: settings || null,
       recentQuarantined: quarantined.slice(-20)
     };
@@ -492,13 +530,14 @@ export class OutboxWorkerService {
     };
   }
 
-  static async updateSettings({ isEnabled, cutoffAt, batchSize, leaseSeconds, actorUserId }) {
+  static async updateSettings({ isEnabled, cutoffAt, batchSize, leaseSeconds, processHistoricalImport, actorUserId }) {
     const db = getSafeDB();
     const patch = {
       updated_by: actorUserId ? Number(actorUserId) : null,
       updated_at: new Date().toISOString()
     };
     if (typeof isEnabled === 'boolean') patch.is_enabled = isEnabled;
+    if (typeof processHistoricalImport === 'boolean') patch.process_historical_import = processHistoricalImport;
     if (cutoffAt !== undefined) {
       const ms = Date.parse(cutoffAt);
       if (!Number.isFinite(ms)) throw new AppError('Некорректная дата cutoffAt', 400);

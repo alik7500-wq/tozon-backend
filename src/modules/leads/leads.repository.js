@@ -2,6 +2,7 @@ import { getDB, getServiceDB } from '../../db/connection.js';
 import { parseOptionalBigInt, parseRequiredBigInt } from '../../utils/idNormalizer.js';
 import { matchSearchQuery } from '../../utils/searchUtils.js';
 import { NotificationsService } from '../notifications/notifications.service.js';
+import { OutboxWorkerService } from '../outbox/outboxWorker.service.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { TasksRepository } from '../tasks/tasks.repository.js';
 import { InventoryRepository } from '../inventory/inventory.repository.js';
@@ -303,8 +304,8 @@ export class LeadsRepository {
     const { data: lead, error } = await db.from('leads').insert([prepared]).select().single();
     if (error) throw error;
 
-    if (process.env.OUTBOX_WORKER_ENABLED !== 'true') {
-      // Legacy direct notification fallback when outbox worker is disabled
+    if (!(await OutboxWorkerService.isOutboxWorkerActive())) {
+      // Legacy direct notification fallback when outbox worker is not active
       NotificationsService.notifyLeadCreated(lead).catch(err => {
         console.warn('Failed to dispatch LEAD_CREATED notification:', err);
       });
@@ -429,7 +430,7 @@ export class LeadsRepository {
 
       if (rpcResult.success) {
         const updatedLead = await this.findById(cleanId);
-        if (cleanTargetId && process.env.OUTBOX_WORKER_ENABLED !== 'true') {
+        if (cleanTargetId && !(await OutboxWorkerService.isOutboxWorkerActive())) {
           TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
             console.warn('Failed to generate call task on lead assigned:', err);
           });
@@ -508,8 +509,8 @@ export class LeadsRepository {
 
       const updatedLead = await this.findById(cleanId);
 
-      // If assigned to a manager, trigger call task and in-app notification (legacy fallback when worker disabled)
-      if (cleanTargetId && process.env.OUTBOX_WORKER_ENABLED !== 'true') {
+      // If assigned to a manager, trigger call task and in-app notification (legacy fallback when worker inactive)
+      if (cleanTargetId && !(await OutboxWorkerService.isOutboxWorkerActive())) {
         TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
           console.warn('Failed to generate call task on lead assigned:', err);
         });
