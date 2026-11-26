@@ -1,0 +1,674 @@
+{
+  "mode": "OFFLINE_JSONB_STAGING",
+  "application_imported": false,
+  "rows": 6519,
+  "tables": 63,
+  "fk_constraints": 139,
+  "fk_remap_passes": 2,
+  "source_orphans": [],
+  "staging_orphans": [],
+  "unchanged_business_fields": true,
+  "integrity": [
+    {
+      "table_name": "barter_realization_results",
+      "rows": 2,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "created_by",
+        "purchase_payment_id",
+        "reclassified_expense_id",
+        "reclassified_payment_id",
+        "reclassified_transfer_id",
+        "result_cash_desk_id",
+        "sale_transfer_id",
+        "source_cash_desk_id"
+      ]
+    },
+    {
+      "table_name": "buildings",
+      "rows": 4,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "project_id"
+      ]
+    },
+    {
+      "table_name": "cash_transfers",
+      "rows": 13,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "created_by",
+        "destination_cash_desk_id",
+        "destination_payment_id",
+        "source_cash_desk_id",
+        "source_expense_id",
+        "voided_by"
+      ]
+    },
+    {
+      "table_name": "construction_documents",
+      "rows": 16,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "created_by",
+        "destination_id",
+        "expense_id",
+        "party_id",
+        "payment_id",
+        "posted_by",
+        "project_id",
+        "warehouse_id"
+      ]
+    },
+    {
+      "table_name": "construction_expense_settlement_audit",
+      "rows": 10,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "actor_id"
+      ]
+    },
+    {
+      "table_name": "construction_materials",
+      "rows": 16,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id"
+      ]
+    },
+    {
+      "table_name": "construction_parties",
+      "rows": 4,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "user_id"
+      ]
+    },
+    {
+      "table_name": "construction_price_corrections",
+      "rows": 8,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "actor_id",
+        "receipt_id"
+      ]
+    },
+    {
+      "table_name": "construction_report_receipts",
+      "rows": 0,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "receipt_id",
+        "report_id"
+      ]
+    },
+    {
+      "table_name": "construction_settings",
+      "rows": 1,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "approver_user_id"
+      ]
+    },
+    {
+      "table_name": "construction_settlement_entries",
+      "rows": 9,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "document_id",
+        "party_id"
+      ]
+    },
+    {
+      "table_name": "construction_stock_entries",
+      "rows": 30,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "document_id",
+        "material_id",
+        "warehouse_id"
+      ]
+    },
+    {
+      "table_name": "construction_warehouses",
+      "rows": 1,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "responsible_id"
+      ]
+    },
+    {
+      "table_name": "cost_audit",
+      "rows": 473,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "actor_id"
+      ]
+    },
+    {
+      "table_name": "cost_building_bases",
+      "rows": 2,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "building_id",
+        "updated_by"
+      ]
+    },
+    {
+      "table_name": "cost_expense_allocations",
+      "rows": 465,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "expense_id",
+        "updated_by"
+      ]
+    },
+    {
+      "table_name": "cost_material_audit",
+      "rows": 14,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "actor_id"
+      ]
+    },
+    {
+      "table_name": "cost_material_payment_links",
+      "rows": 2,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "expense_id",
+        "updated_by",
+        "usage_id"
+      ]
+    },
+    {
+      "table_name": "cost_material_usages",
+      "rows": 8,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "building_id",
+        "stock_entry_id",
+        "updated_by"
+      ]
+    },
+    {
+      "table_name": "crm_document_settings",
+      "rows": 1,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id"
+      ]
+    },
+    {
+      "table_name": "crm_document_settings_history",
+      "rows": 1,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id"
+      ]
+    },
+    {
+      "table_name": "crm_document_templates",
+      "rows": 0,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id"
+      ]
+    },
+    {
+      "table_name": "crm_roles",
+      "rows": 8,
+      "non_reference_changes": 0,
+      "remapped_columns": []
+    },
+    {
+      "table_name": "deal_audit_logs",
+      "rows": 297,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "deal_id",
+        "user_id"
+      ]
+    },
+    {
+      "table_name": "deal_payment_schedules",
+      "rows": 2731,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "deal_id"
+      ]
+    },
+    {
+      "table_name": "deal_source_history",
+      "rows": 92,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "changed_by",
+        "deal_id",
+        "new_partner_id",
+        "old_partner_id"
+      ]
+    },
+    {
+      "table_name": "deals",
+      "rows": 103,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "lead_id",
+        "marketing_partner_id",
+        "refund_expense_id",
+        "responsible_user_id",
+        "source_confirmed_by",
+        "terminated_by_user_id",
+        "unit_id"
+      ]
+    },
+    {
+      "table_name": "dictionaries",
+      "rows": 62,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id"
+      ]
+    },
+    {
+      "table_name": "discount_schemes",
+      "rows": 4,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "project_id"
+      ]
+    },
+    {
+      "table_name": "expenses",
+      "rows": 733,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "cash_desk_id",
+        "conversion_expense_id",
+        "created_by_user_id",
+        "deal_id",
+        "settlement_party_id",
+        "settlement_updated_by",
+        "conversion_id"
+      ]
+    },
+    {
+      "table_name": "floors",
+      "rows": 44,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "section_id"
+      ]
+    },
+    {
+      "table_name": "layout_features",
+      "rows": 47,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "layout_type_id"
+      ]
+    },
+    {
+      "table_name": "layout_rooms",
+      "rows": 165,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "layout_type_id"
+      ]
+    },
+    {
+      "table_name": "layout_types",
+      "rows": 56,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "project_id"
+      ]
+    },
+    {
+      "table_name": "lead_assignment_history",
+      "rows": 2,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "assigned_by_user_id",
+        "from_user_id",
+        "lead_id",
+        "to_user_id"
+      ]
+    },
+    {
+      "table_name": "lead_interested_units",
+      "rows": 1,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "created_by_user_id",
+        "lead_id",
+        "unit_id"
+      ]
+    },
+    {
+      "table_name": "lead_notes",
+      "rows": 3,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "author_user_id",
+        "lead_id"
+      ]
+    },
+    {
+      "table_name": "lead_status_history",
+      "rows": 2,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "changed_by_user_id",
+        "lead_id"
+      ]
+    },
+    {
+      "table_name": "leads",
+      "rows": 96,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "first_contact_by_user_id",
+        "interested_project_id",
+        "responsible_user_id"
+      ]
+    },
+    {
+      "table_name": "map_hotspots",
+      "rows": 4,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "target_building_id",
+        "target_floor_id",
+        "target_section_id",
+        "target_unit_id",
+        "visual_map_id"
+      ]
+    },
+    {
+      "table_name": "marketing_commissions",
+      "rows": 0,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "approved_by",
+        "deal_id",
+        "partner_id"
+      ]
+    },
+    {
+      "table_name": "marketing_partners",
+      "rows": 1,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "created_by"
+      ]
+    },
+    {
+      "table_name": "panorama_360",
+      "rows": 8,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "tour_id"
+      ]
+    },
+    {
+      "table_name": "panorama_hotspots",
+      "rows": 11,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "panorama_id",
+        "target_panorama_id"
+      ]
+    },
+    {
+      "table_name": "payments",
+      "rows": 491,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "cash_desk_id",
+        "created_by_user_id",
+        "deal_id",
+        "schedule_id",
+        "conversion_id"
+      ]
+    },
+    {
+      "table_name": "project_media",
+      "rows": 16,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "project_id"
+      ]
+    },
+    {
+      "table_name": "projects",
+      "rows": 2,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id"
+      ]
+    },
+    {
+      "table_name": "resettlement_allocation_approvals",
+      "rows": 2,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "case_id"
+      ]
+    },
+    {
+      "table_name": "resettlement_allocation_lines",
+      "rows": 3,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "approval_id",
+        "deal_id"
+      ]
+    },
+    {
+      "table_name": "resettlement_case_audit",
+      "rows": 6,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "actor_id",
+        "case_id"
+      ]
+    },
+    {
+      "table_name": "resettlement_case_units",
+      "rows": 3,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "case_id",
+        "deal_id",
+        "unit_id"
+      ]
+    },
+    {
+      "table_name": "resettlement_cases",
+      "rows": 2,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "approved_by",
+        "created_by",
+        "project_id"
+      ]
+    },
+    {
+      "table_name": "resettlement_deal_signings",
+      "rows": 2,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "approval_id",
+        "case_id",
+        "deal_id"
+      ]
+    },
+    {
+      "table_name": "scene_3d",
+      "rows": 1,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "building_id",
+        "project_id"
+      ]
+    },
+    {
+      "table_name": "scene_3d_entities",
+      "rows": 7,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "scene_id"
+      ]
+    },
+    {
+      "table_name": "sections",
+      "rows": 4,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "building_id"
+      ]
+    },
+    {
+      "table_name": "tasks",
+      "rows": 62,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "assigned_user_id",
+        "created_by",
+        "deal_id",
+        "lead_id"
+      ]
+    },
+    {
+      "table_name": "tours_360",
+      "rows": 3,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "project_id"
+      ]
+    },
+    {
+      "table_name": "unit_status_history",
+      "rows": 14,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "changed_by",
+        "deal_id",
+        "unit_id"
+      ]
+    },
+    {
+      "table_name": "units",
+      "rows": 330,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "floor_id",
+        "layout_type_id"
+      ]
+    },
+    {
+      "table_name": "user_cash_desk_access",
+      "rows": 10,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "cash_desk_id",
+        "user_id"
+      ]
+    },
+    {
+      "table_name": "users",
+      "rows": 10,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "role",
+        "is_active"
+      ]
+    },
+    {
+      "table_name": "visual_maps",
+      "rows": 1,
+      "non_reference_changes": 0,
+      "remapped_columns": [
+        "id",
+        "building_id",
+        "floor_id",
+        "project_id",
+        "section_id"
+      ]
+    }
+  ],
+  "runtime_ready": false,
+  "pending": [
+    "Undeclared references and IDs nested in immutable audit JSON remain source references.",
+    "No application business tables populated.",
+    "No external storage files downloaded.",
+    "No staff access enabled."
+  ],
+  "conversion_groups": [
+    {
+      "side": "source",
+      "groups": 224,
+      "legs": 659
+    },
+    {
+      "side": "staged",
+      "groups": 224,
+      "legs": 659
+    }
+  ],
+  "enabled_staged_users": 0
+}
