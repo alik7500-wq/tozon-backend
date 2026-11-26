@@ -89,17 +89,35 @@ export class RoundRobinService {
     const scopedIds = projectScopedManagers.map((m) => Number(m.id));
     const { data: openLeads, error: leadsErr } = await db
       .from('leads')
-      .select('id, responsible_user_id')
+      .select('id, responsible_user_id, status, stage')
       .in('responsible_user_id', scopedIds)
-      .in('status', ['NEW', 'IN_PROGRESS', 'NEGOTIATION'])
+      .neq('status', 'LOST')
       .is('archived_at', null);
 
     if (leadsErr) {
       throw new AppError(`Ошибка расчёта текущей нагрузки менеджеров: ${leadsErr.message}`, 503);
     }
 
+    const activeLeads = (openLeads || []).filter(
+      (l) => !['LOST', 'SIGNED'].includes(String(l.stage || l.status || '').toUpperCase())
+    );
+    const activeLeadIds = activeLeads.map((l) => Number(l.id)).filter((id) => Number.isInteger(id) && id > 0);
+    const signedDealLeadIds = new Set();
+    if (activeLeadIds.length > 0) {
+      const { data: signedDeals, error: dealsErr } = await db
+        .from('deals')
+        .select('lead_id')
+        .in('lead_id', activeLeadIds)
+        .eq('status', 'SIGNED');
+      if (dealsErr) {
+        throw new AppError(`Ошибка проверки подписанных сделок при расчёте нагрузки: ${dealsErr.message}`, 503);
+      }
+      (signedDeals || []).forEach((d) => signedDealLeadIds.add(Number(d.lead_id)));
+    }
+
     const counts = {};
-    (openLeads || []).forEach((l) => {
+    activeLeads.forEach((l) => {
+      if (signedDealLeadIds.has(Number(l.id))) return;
       const uid = Number(l.responsible_user_id);
       counts[uid] = (counts[uid] || 0) + 1;
     });
@@ -142,10 +160,11 @@ export class RoundRobinService {
   }
 
   /**
-   * Legacy-compatible pre-create resolution helper.
-   * Note: for multi-process atomicity, callers should persist the lead and call `assignLeadAtomic(lead.id)`.
+   * Resolution helper: manual assignment and existing-owner preservation are returned directly;
+   * automated selection ALWAYS delegates to PostgreSQL `fn_select_and_assign_lead_atomic`
+   * (never picking a manager in JavaScript).
    */
-  static async resolveAssignment(explicitManagerId = null, currentResponsibleId = null, { projectId = null } = {}) {
+  static async resolveAssignment(explicitManagerId = null, currentResponsibleId = null, options = {}) {
     if (explicitManagerId !== null && explicitManagerId !== undefined) {
       return {
         responsible_user_id: Number(explicitManagerId),
@@ -162,6 +181,10 @@ export class RoundRobinService {
         assignment_type: 'EXISTING',
         reason: 'Лид уже закреплен за ответственным менеджером; автоматическая перезапись заблокирована'
       };
+    }
+
+    if (options?.leadId) {
+      return await this.assignLeadAtomic(options.leadId, options);
     }
 
     const settings = await DistributionSettingsService.getSettings({ forceFresh: true });
@@ -195,9 +218,8 @@ export class RoundRobinService {
       };
     }
 
-    let eligible = [];
     try {
-      eligible = await this.getEligibleReps({ projectId });
+      await this.getEligibleReps({ projectId: options?.projectId ?? null });
     } catch (err) {
       return {
         responsible_user_id: null,
@@ -208,30 +230,12 @@ export class RoundRobinService {
       };
     }
 
-    if (eligible.length === 0) {
-      return {
-        responsible_user_id: null,
-        assigned_at: null,
-        assignment_type: 'POOL',
-        pool_reason: 'NO_ELIGIBLE_REPS',
-        reason: 'Нет доступных свободных менеджеров; заявка направлена в пул'
-      };
-    }
-
-    eligible.sort((a, b) => {
-      if ((settings.algorithm || 'LEAST_LOADED') !== 'ROUND_ROBIN' && a.openLeadsCount !== b.openLeadsCount) {
-        return a.openLeadsCount - b.openLeadsCount;
-      }
-      return Number(a.id) - Number(b.id);
-    });
-
-    const nextRep = eligible[0];
     return {
-      responsible_user_id: Number(nextRep.id),
-      assigned_at: new Date().toISOString(),
-      assignment_type: 'ROUND_ROBIN',
-      reason: `Автоматическое распределение (${settings.algorithm || 'LEAST_LOADED'}) менеджеру ${nextRep.name}`,
-      rep: nextRep
+      responsible_user_id: null,
+      assigned_at: null,
+      assignment_type: 'DEFERRED_TO_ATOMIC',
+      pool_reason: 'REQUIRES_ATOMIC_ASSIGNMENT',
+      reason: 'Автоматический выбор выполняется транзакционно через fn_select_and_assign_lead_atomic'
     };
   }
 }

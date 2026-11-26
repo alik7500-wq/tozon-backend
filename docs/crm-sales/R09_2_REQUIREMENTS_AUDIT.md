@@ -140,10 +140,10 @@
 
 ## 5. Реестр обнаруженных пробелов и дефектов (задачи для исполнителей)
 
-### `GAP-01` (`P0`) — **CLOSED в PGlite** (остаётся 2-процессный тест на staging PostgreSQL) — Транзакционное проектное автораспределение и обработчик пула `unassigned`
-- **Реализация:** Миграция `071_r09_2_gap01_transactional_distribution.sql` (`fn_select_and_assign_lead_atomic`, `fn_run_lead_pool_batch`), `roundRobin.service.js`, `leadPoolWorker.service.js`, `run-lead-pool-worker.js`, `leads.router.js`, `outboxWorker.service.js`.
-- **Доказательство:** `071_r09_2_gap01_distribution.test.js` (5/5 `PASS` в PGlite), `persistent_distribution_settings.test.js` (12/12 `PASS`).
-- **Остаток на staging (`NOT_RUN`):** `node server/src/scripts/verify-gap01-two-process-pg.mjs` против реального PostgreSQL (`STAGING_DATABASE_URL`).
+### `GAP-01` (`P0`) — **CLOSED в PGlite** (остаётся 2-процессный тест на staging PostgreSQL) — Транзакционное проектное автораспределение, кросс-проектная защита вместимости и обработчик пула `unassigned`
+- **Реализация:** Миграции `071_r09_2_gap01_transactional_distribution.sql` и `072_r09_2_gap01_1_cross_project_capacity_and_pool_backoff.sql` (`fn_select_and_assign_lead_atomic` с блокировкой `users ORDER BY id ASC FOR UPDATE`, `pool_next_attempt_at` backoff, `v_has_settings`), `roundRobin.service.js`, `leadPoolWorker.service.js`, `run-lead-pool-worker.js`, `leads.router.js`, `outboxWorker.service.js`.
+- **Доказательство:** `071_r09_2_gap01_distribution.test.js` (7/7 `PASS` в PGlite), `sales_launch_phase3_6_concurrency.test.js` (23/23 `PASS`), `persistent_distribution_settings.test.js` (12/12 `PASS`).
+- **Остаток на staging (`NOT_RUN`):** `TEST_DATABASE_URL="..." node server/src/scripts/verify-gap01-two-process-pg.mjs`.
 
 ### `GAP-02` (`P2`) — Отсутствует фоновый обработчик очереди ИИ-анализа звонков (`F-20` / `A49`)
 - **Последствие:** Записи в `call_ai_analyses` со статусом `QUEUED` никогда не переходят в `PROCESSING`/`READY`/`FAILED`; загрузка аудио из Moizvonki и вызов OpenAI не выполняются даже при наличии `OPENAI_API_KEY`.

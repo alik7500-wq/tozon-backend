@@ -17,7 +17,7 @@
 
 ## План оставшейся R09
 1. **`R09.2` — Сверка всех `F/N/A` с кодом (`DONE`):** полный отчёт и реестр `GAP-01`–`GAP-09` зафиксированы в `docs/crm-sales/R09_2_REQUIREMENTS_AUDIT.md`.
-2. **Закрытие `P0`-пробелов (перед `R09.3`/`R09.4`):** `GAP-01` (`DONE` в PGlite, 2-процессный тест подготовлен в `verify-gap01-two-process-pg.mjs` — `NOT_RUN` на staging), далее `GAP-05` (UI проектных прав), `GAP-07` (rollback `062`–`070`), `GAP-08` (`TasksPage` `due_at`).
+2. **Закрытие `P0`-пробелов (перед `R09.3`/`R09.4`):** `GAP-01` + `GAP-01.1` (`DONE` в PGlite 7/7 + `sales_launch_phase3_6_concurrency` 23/23, 2-процессный тест `verify-gap01-two-process-pg.mjs` — `NOT_RUN` на staging), далее `GAP-05` (UI проектных прав), `GAP-07` (rollback `062`–`072`), `GAP-08` (`TasksPage` `due_at`).
 3. **`R09.3` — Общий прогон и регрессия:** полный прогон всех модульных и интеграционных тестов backend (`vitest`) и frontend (`vite build` + `vitest jsdom`).
 4. **`R09.4` — Staging, нагрузка и разрешённые живые каналы:** прогон миграций `060–070` на изолированной staging PostgreSQL, 2-процессный конкурентный тест outbox/RoundRobin/R06, замеры `N-02` и живая проверка Meta/Moizvonki/OpenAI при наличии доступов.
 5. **`R09.5` — Итоговый предрелизный комплект:** финальный отчёт готовности, список миграций/runbook и передача SHA на merge/deploy владельцу проекта.

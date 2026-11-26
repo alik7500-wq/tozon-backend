@@ -163,8 +163,8 @@ import { DistributionSettingsService } from '../distributionSettings.service.js'
 import { LeadPoolWorkerService } from '../leadPoolWorker.service.js';
 import { OutboxWorkerService } from '../../outbox/outboxWorker.service.js';
 
-const WORKING_HOUR_ISO = '2026-11-26T06:00:00.000Z'; // 11:00 Asia/Dushanbe (Thursday)
-const NIGHT_HOUR_ISO = '2026-11-26T20:00:00.000Z';   // 01:00 Asia/Dushanbe (Friday night)
+const WORKING_HOUR_ISO = '2026-11-27T06:00:00.000Z'; // 11:00 Asia/Dushanbe (Friday, after NOW())
+const NIGHT_HOUR_ISO = '2026-11-27T20:00:00.000Z';   // 01:00 Asia/Dushanbe (Saturday night)
 
 describe('R09.2 GAP-01: Transactional Project-Scoped Lead Distribution & Pool Worker', () => {
   beforeAll(async () => {
@@ -227,6 +227,7 @@ describe('R09.2 GAP-01: Transactional Project-Scoped Lead Distribution & Pool Wo
     await db.exec(readFileSync('src/db/migrations/069_outbox_atomic_effect_guard.sql', 'utf8'));
     await db.exec(readFileSync('src/db/migrations/070_r09_1_outbox_and_project_access_tx.sql', 'utf8'));
     await db.exec(readFileSync('src/db/migrations/071_r09_2_gap01_transactional_distribution.sql', 'utf8'));
+    await db.exec(readFileSync('src/db/migrations/072_r09_2_gap01_1_cross_project_capacity_and_pool_backoff.sql', 'utf8'));
     state.db = db;
   }, 30000);
 
@@ -381,5 +382,63 @@ describe('R09.2 GAP-01: Transactional Project-Scoped Lead Distribution & Pool Wo
     await OutboxWorkerService.runOnce({ workerId: 'w_pool', now: WORKING_HOUR_ISO });
     expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.tasks WHERE lead_id = 501`)).rows[0].c).toBe(1);
     expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.tasks WHERE lead_id = 505`)).rows[0].c).toBe(0);
+  });
+
+  it('protects manager capacity across DIFFERENT projects, counts canonical open stages, and handles no-project + missing settings safely', async () => {
+    await state.db.exec(`
+      INSERT INTO public.users (id, name, email, role, is_active, is_sales_rep, all_projects_access)
+      VALUES (6, 'CrossProj Mgr', 'm6@t.tj', 'SALES_MANAGER', 1, TRUE, TRUE);
+      UPDATE public.lead_distribution_settings SET excluded_user_ids = '[2,3,4]'::jsonb, max_open_leads_per_rep = 1 WHERE id = 1;
+      INSERT INTO public.lead_distribution_settings (id, project_id, enabled, algorithm, max_open_leads_per_rep, excluded_user_ids, working_hours_only, work_start_hour, work_end_hour)
+      VALUES
+        (2, 1, TRUE, 'LEAST_LOADED', 1, '[2,3,4]'::jsonb, FALSE, 8, 20),
+        (3, 2, TRUE, 'LEAST_LOADED', 1, '[2,3,4]'::jsonb, FALSE, 8, 20);
+      INSERT INTO public.leads (id, full_name, status, stage, interested_project_id) VALUES
+        (601, 'Cross P1', 'NEW', 'NEW', 1),
+        (602, 'Cross P2', 'NEW', 'NEW', 2);
+    `);
+
+    const [p1Res, p2Res] = await Promise.all([
+      RoundRobinService.assignLeadAtomic(601, { now: WORKING_HOUR_ISO }),
+      RoundRobinService.assignLeadAtomic(602, { now: WORKING_HOUR_ISO })
+    ]);
+    expect([p1Res, p2Res].filter((r) => r.status === 'ASSIGNED')).toHaveLength(1);
+    expect([p1Res, p2Res].filter((r) => r.status === 'POOLED')).toHaveLength(1);
+
+    // Lead with RESERVED stage counts toward capacity; SIGNED deal frees capacity
+    await state.db.query(`UPDATE public.leads SET status = 'RESERVED', stage = 'RESERVED' WHERE responsible_user_id = 6`);
+    await state.db.query(`INSERT INTO public.leads (id, full_name, status, stage, interested_project_id) VALUES (603, 'Blocked By Reserved', 'NEW', 'NEW', 1)`);
+    const blockedRes = await RoundRobinService.assignLeadAtomic(603, { now: WORKING_HOUR_ISO });
+    expect(blockedRes).toMatchObject({ success: true, status: 'POOLED', pool_reason: 'NO_ELIGIBLE_REPS' });
+
+    // Lead without interested_project_id AND missing global settings row -> clean SETTINGS_UNAVAILABLE without SQL error
+    await state.db.query(`DELETE FROM public.lead_distribution_settings WHERE id = 1`);
+    await state.db.query(`INSERT INTO public.leads (id, full_name, status, stage, interested_project_id) VALUES (604, 'NoProj NoSettings', 'NEW', 'NEW', NULL)`);
+    const noSetRes = await RoundRobinService.assignLeadAtomic(604, { now: WORKING_HOUR_ISO });
+    expect(noSetRes).toMatchObject({ success: true, status: 'POOLED', pool_reason: 'SETTINGS_UNAVAILABLE' });
+  });
+
+  it('prevents pool starvation when first 25 leads belong to an unavailable project', async () => {
+    process.env.LEAD_POOL_WORKER_ENABLED = 'true';
+    await state.db.exec(`
+      UPDATE public.lead_distribution_settings SET pool_worker_enabled = TRUE, max_open_leads_per_rep = 10 WHERE id = 1;
+      INSERT INTO public.projects (id, name) VALUES (99, 'No-Rep Project');
+      INSERT INTO public.leads (id, full_name, status, stage, interested_project_id, created_at)
+      SELECT 700 + g, 'Blocked ' || g::text, 'NEW', 'NEW', 99, ('2026-11-26T01:' || LPAD(g::text, 2, '0') || ':00Z')
+      FROM generate_series(1, 25) AS g;
+      INSERT INTO public.leads (id, full_name, status, stage, interested_project_id, created_at)
+      VALUES (726, 'Reachable P1', 'NEW', 'NEW', 1, '2026-11-26T02:00:00Z');
+    `);
+
+    // Run 1: processes first 25 (all Proj 99 -> POOLED with pool_next_attempt_at backoff)
+    const run1 = await LeadPoolWorkerService.runOnce({ batchSize: 25, now: WORKING_HOUR_ISO });
+    expect(run1).toMatchObject({ skipped: false, scanned: 25, pooled: 25, assigned: 0 });
+
+    // Run 2 (10s later): skips backed-off 25 leads and immediately assigns 26th lead (#726)
+    const tenSecLater = new Date(Date.parse(WORKING_HOUR_ISO) + 10000).toISOString();
+    const run2 = await LeadPoolWorkerService.runOnce({ batchSize: 25, now: tenSecLater });
+    expect(run2).toMatchObject({ skipped: false, scanned: 1, assigned: 1 });
+    const l726 = (await state.db.query(`SELECT responsible_user_id FROM public.leads WHERE id = 726`)).rows[0];
+    expect(l726.responsible_user_id).not.toBeNull();
   });
 });

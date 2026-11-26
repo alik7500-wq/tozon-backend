@@ -94,47 +94,30 @@ describe('TOZON CRM — Phase 3.6 Concurrency, Security & Integrity Test Suite',
       ]);
 
       const mockDb = {
-        from: vi.fn(() => ({
-          select: vi.fn(() => ({
-            in: vi.fn(() => ({
-              in: vi.fn(() => ({
-                is: vi.fn().mockResolvedValue({
-                  data: [
-                    ...Array(24).fill({ id: 1, responsible_user_id: 10 }),
-                    ...Array(25).fill({ id: 2, responsible_user_id: 20 })
-                  ],
-                  error: null
-                })
-              }))
-            }))
-          }))
-        }))
+        rpc: vi.fn()
+          .mockResolvedValueOnce({ data: { success: true, status: 'ASSIGNED', to_user_id: 10 }, error: null })
+          .mockResolvedValueOnce({ data: { success: true, status: 'POOLED', pool_reason: 'NO_ELIGIBLE_REPS' }, error: null })
+          .mockResolvedValueOnce({ data: { success: true, status: 'POOLED', pool_reason: 'NO_ELIGIBLE_REPS' }, error: null })
       };
       getDB.mockReturnValue(mockDb);
+      getServiceDB.mockReturnValue(mockDb);
 
-      // Simulate 3 concurrent incoming leads arriving at the exact same millisecond
+      // Concurrent auto-assignments delegate to PostgreSQL fn_select_and_assign_lead_atomic
       const [res1, res2, res3] = await Promise.all([
-        RoundRobinService.resolveAssignment(),
-        RoundRobinService.resolveAssignment(),
-        RoundRobinService.resolveAssignment()
+        RoundRobinService.assignLeadAtomic(101),
+        RoundRobinService.assignLeadAtomic(102),
+        RoundRobinService.assignLeadAtomic(103)
       ]);
 
-      // Exactly 1 lead can be assigned to Manager 1 (reaching 25)
-      // The other 2 leads must gracefully fallback to POOL (since neither rep has capacity)
-      const assignedToRep10 = [res1, res2, res3].filter(r => r.responsible_user_id === 10);
-      const fallbackToPool = [res1, res2, res3].filter(r => r.responsible_user_id === null && r.assignment_type === 'POOL');
+      const assignedToRep10 = [res1, res2, res3].filter((r) => r.status === 'ASSIGNED' && r.to_user_id === 10);
+      const fallbackToPool = [res1, res2, res3].filter((r) => r.status === 'POOLED');
 
       expect(assignedToRep10.length).toBe(1);
       expect(fallbackToPool.length).toBe(2);
-
-      // Cleanup slots
-      if (res1.releaseSlot) res1.releaseSlot();
-      if (res2.releaseSlot) res2.releaseSlot();
-      if (res3.releaseSlot) res3.releaseSlot();
     });
 
-    it('LEAST_LOADED учитывает актуальную нагрузку и резервы in-flight при одновременных вызовах', async () => {
-      vi.spyOn(DistributionSettingsService, 'getSettings').mockReturnValue({
+    it('LEAST_LOADED и защита от обхода в JS: resolveAssignment без leadId не выбирает менеджера в JS', async () => {
+      vi.spyOn(DistributionSettingsService, 'getSettings').mockResolvedValue({
         enabled: true,
         algorithm: 'LEAST_LOADED',
         maxOpenLeadsPerRep: 25,
@@ -142,51 +125,51 @@ describe('TOZON CRM — Phase 3.6 Concurrency, Security & Integrity Test Suite',
         workingHoursOnly: false
       });
 
-      // Manager 1 has 5 leads, Manager 2 has 10 leads
       vi.spyOn(SalesPlansRepository, 'getSalesManagers').mockResolvedValue([
-        { id: 101, name: 'Менеджер А', is_active: 1, is_sales_rep: true },
-        { id: 102, name: 'Менеджер Б', is_active: 1, is_sales_rep: true }
+        { id: 101, name: 'Менеджер А', is_active: 1, is_sales_rep: true, all_projects_access: true },
+        { id: 102, name: 'Менеджер Б', is_active: 1, is_sales_rep: true, all_projects_access: true }
       ]);
 
       const mockDb = {
-        from: vi.fn(() => ({
-          select: vi.fn(() => ({
-            in: vi.fn(() => ({
+        from: vi.fn((table) => {
+          if (table === 'deals') {
+            return {
+              select: vi.fn(() => ({
+                in: vi.fn(() => ({
+                  eq: vi.fn().mockResolvedValue({ data: [], error: null })
+                }))
+              }))
+            };
+          }
+          return {
+            select: vi.fn(() => ({
               in: vi.fn(() => ({
-                is: vi.fn().mockResolvedValue({
-                  data: [
-                    ...Array(5).fill({ id: 1, responsible_user_id: 101 }),
-                    ...Array(10).fill({ id: 2, responsible_user_id: 102 })
-                  ],
-                  error: null
-                })
+                neq: vi.fn(() => ({
+                  is: vi.fn().mockResolvedValue({
+                    data: [
+                      ...Array(5).fill({ id: 1, responsible_user_id: 101, status: 'NEW', stage: 'NEW' }),
+                      ...Array(10).fill({ id: 2, responsible_user_id: 102, status: 'NEW', stage: 'NEW' })
+                    ],
+                    error: null
+                  })
+                }))
               }))
             }))
-          }))
-        }))
+          };
+        })
       };
       getDB.mockReturnValue(mockDb);
+      getServiceDB.mockReturnValue(mockDb);
 
-      // Fire 3 assignments in parallel
-      const [a1, a2, a3] = await Promise.all([
-        RoundRobinService.resolveAssignment(),
-        RoundRobinService.resolveAssignment(),
-        RoundRobinService.resolveAssignment()
-      ]);
+      const eligible = await RoundRobinService.getEligibleReps();
+      expect(eligible[0].id).toBe(101);
+      expect(eligible[0].openLeadsCount).toBe(5);
+      expect(eligible[1].openLeadsCount).toBe(10);
 
-      // All 3 go to Manager A because initial workload (5) + inFlight (1, 2) is 5, 6, 7 < 10
-      expect(a1.responsible_user_id).toBe(101);
-      expect(a2.responsible_user_id).toBe(101);
-      expect(a3.responsible_user_id).toBe(101);
-
-      // Verify in-flight count was tracked
-      expect(RoundRobinService.getInFlightWorkload(101)).toBe(3);
-
-      // Clean up
-      a1.releaseSlot();
-      a2.releaseSlot();
-      a3.releaseSlot();
-      expect(RoundRobinService.getInFlightWorkload(101)).toBe(0);
+      // Without leadId, JS resolveAssignment NEVER pre-selects a rep in memory
+      const deferred = await RoundRobinService.resolveAssignment(null, null);
+      expect(deferred.responsible_user_id).toBeNull();
+      expect(deferred.assignment_type).toBe('DEFERRED_TO_ATOMIC');
     });
 
     it('ручное назначение имеет приоритет над автораспределением', async () => {
@@ -211,17 +194,17 @@ describe('TOZON CRM — Phase 3.6 Concurrency, Security & Integrity Test Suite',
       });
 
       vi.spyOn(SalesPlansRepository, 'getSalesManagers').mockResolvedValue([
-        { id: 1, name: 'Active Ineligible Non-Rep', is_active: 1, is_sales_rep: false },
-        { id: 2, name: 'Excluded Rep on leave', is_active: 1, is_sales_rep: true },
-        { id: 3, name: 'Inactive Rep', is_active: 0, is_sales_rep: true },
-        { id: 4, name: 'Eligible Rep', is_active: 1, is_sales_rep: true }
+        { id: 1, name: 'Active Ineligible Non-Rep', is_active: 1, is_sales_rep: false, all_projects_access: true },
+        { id: 2, name: 'Excluded Rep on leave', is_active: 1, is_sales_rep: true, all_projects_access: true },
+        { id: 3, name: 'Inactive Rep', is_active: 0, is_sales_rep: true, all_projects_access: true },
+        { id: 4, name: 'Eligible Rep', is_active: 1, is_sales_rep: true, all_projects_access: true }
       ]);
 
       const mockDb = {
         from: vi.fn(() => ({
           select: vi.fn(() => ({
             in: vi.fn(() => ({
-              in: vi.fn(() => ({
+              neq: vi.fn(() => ({
                 is: vi.fn().mockResolvedValue({ data: [], error: null })
               }))
             }))
@@ -229,6 +212,7 @@ describe('TOZON CRM — Phase 3.6 Concurrency, Security & Integrity Test Suite',
         }))
       };
       getDB.mockReturnValue(mockDb);
+      getServiceDB.mockReturnValue(mockDb);
 
       const eligible = await RoundRobinService.getEligibleReps();
       expect(eligible.length).toBe(1);
@@ -237,45 +221,20 @@ describe('TOZON CRM — Phase 3.6 Concurrency, Security & Integrity Test Suite',
 
     it('блокировка предотвращает одновременное конфликтное назначение одного лида', async () => {
       const leadId = 555;
-      let resolveFirstCall;
-      const firstCallHold = new Promise(res => { resolveFirstCall = res; });
-
-      vi.spyOn(LeadsRepository, 'findById').mockImplementation(async () => {
-        await firstCallHold;
-        return { id: leadId, responsible_user_id: null, full_name: 'Race Lead' };
-      });
-
       const mockDb = {
-        from: vi.fn(() => ({
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: { id: 1, name: 'Active Rep', role: 'SALES_MANAGER', is_active: 1, is_sales_rep: true },
-            error: null
-          }),
-          update: vi.fn().mockReturnThis(),
-          insert: vi.fn().mockResolvedValue({ data: {}, error: null })
-        }))
+        rpc: vi.fn()
+          .mockResolvedValueOnce({ data: { success: true, status: 'ASSIGNED', lead_id: leadId, to_user_id: 1, version: 2 }, error: null })
+          .mockResolvedValueOnce({ data: { success: false, error_code: 'VERSION_CONFLICT', message: 'Карточка лида была изменена' }, error: null })
       };
       getDB.mockReturnValue(mockDb);
       getServiceDB.mockReturnValue(mockDb);
+      vi.spyOn(LeadsRepository, 'findById').mockResolvedValue({ id: leadId, responsible_user_id: 1, version: 2, full_name: 'Race Lead' });
 
-      // Start first assignment
-      const p1 = LeadsRepository.assignManager(leadId, 1, 'First assign', 1);
+      const p1 = LeadsRepository.assignManager(leadId, 1, 'First assign', 1, true, 1);
+      const p2 = LeadsRepository.assignManager(leadId, 2, 'Second assign', 1, true, 1);
 
-      // Second assignment attempts to acquire the lock for the exact same leadId
-      const p2 = LeadsRepository.assignManager(leadId, 2, 'Second assign', 1);
-
-      // p2 should be rejected with 409 Conflict immediately because p1 is in flight
-      await expect(p2).rejects.toThrow('Операция назначения для данного лида уже выполняется');
-
-      // Unblock p1
-      resolveFirstCall();
-      try {
-        await p1;
-      } catch {
-        // ok
-      }
+      await expect(p1).resolves.toMatchObject({ id: leadId, responsible_user_id: 1 });
+      await expect(p2).rejects.toThrow(/Операция назначения для данного лида|изменена|конфликт/i);
     });
   });
 
@@ -634,41 +593,14 @@ describe('TOZON CRM — Phase 3.6 Concurrency, Security & Integrity Test Suite',
         p_target_user_id: 10
       }));
 
-      // 2. With RPC missing (not yet migrated) -> falls back to transactional JS without error
+      // 2. With RPC missing (not yet migrated) -> fails closed with explicit 503 (never falls back to unsafe JS)
       const mockMissingRpcDb = {
-        rpc: vi.fn().mockRejectedValue(new Error('function fn_assign_lead_atomic does not exist')),
-        from: vi.fn((table) => {
-          if (table === 'users') {
-            return {
-              select: vi.fn(() => ({
-                eq: vi.fn(() => ({
-                  maybeSingle: vi.fn().mockResolvedValue({
-                    data: { id: 10, name: 'Rep 10', is_active: 1, is_sales_rep: true },
-                    error: null
-                  })
-                }))
-              }))
-            };
-          }
-          if (table === 'leads') {
-            return {
-              update: vi.fn(() => ({
-                eq: vi.fn().mockResolvedValue({ error: null })
-              }))
-            };
-          }
-          if (table === 'lead_assignment_history') {
-            return {
-              insert: vi.fn().mockResolvedValue({ error: null })
-            };
-          }
-        })
+        rpc: vi.fn().mockResolvedValue({ data: null, error: { message: 'function fn_assign_lead_atomic does not exist' } })
       };
       getServiceDB.mockReturnValue(mockMissingRpcDb);
       getDB.mockReturnValue(mockMissingRpcDb);
 
-      const assignedFallback = await LeadsRepository.assignManager(99, 10, 'Fallback Assignment', 1);
-      expect(assignedFallback).toBeDefined();
+      await expect(LeadsRepository.assignManager(99, 10, 'Fallback Assignment', 1)).rejects.toThrow(/Сервис атомарного назначения лида временно недоступен/i);
     });
   });
 
