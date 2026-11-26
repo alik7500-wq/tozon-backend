@@ -58,6 +58,7 @@ async function setupDbWith064() {
 
   await db.exec(readFileSync('src/db/migrations/060_crm_sales_completion_foundation.sql', 'utf8'));
   await db.exec(readFileSync('src/db/migrations/064_unified_lead_query_and_cursor.sql', 'utf8'));
+  await db.exec(readFileSync('src/db/migrations/065_harden_unified_query_cursor_and_scope.sql', 'utf8'));
   return db;
 }
 
@@ -143,7 +144,7 @@ describe('R04: Unified DB Query, Canonical Stage Filtering, Timezone [from, to),
     expect(rPaused.leads.map((l) => l.id)).toEqual([3]);
 
     // Check SALES_MANAGER scope: even with managerId=ALL, Rep A (id=2) cannot see Rep B's Lead 2
-    const qMgr = validateAndNormalizeLeadQuery({ managerId: 'ALL' }, { id: 2, role: 'SALES_MANAGER' });
+    const qMgr = validateAndNormalizeLeadQuery({ managerId: 'ALL' }, { id: 2, role: 'SALES_MANAGER', all_projects_access: true });
     const rMgr = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(qMgr.dbFilters), JSON.stringify(qMgr.dbScope)])).rows[0].res;
     expect(rMgr.leads.map((l) => l.id).sort()).toEqual([1, 3]);
     expect(rMgr.total).toBe(2);
@@ -159,5 +160,90 @@ describe('R04: Unified DB Query, Canonical Stage Filtering, Timezone [from, to),
     const q1 = validateAndNormalizeLeadQuery({ stage: 'NEW' }, user);
     const c1 = encodeLeadCursor({ id: 5, created_at: '2026-11-25T10:00:00.000Z' }, q1.filterHash);
     expect(() => validateAndNormalizeLeadQuery({ stage: 'LOST', cursor: c1 }, user)).toThrow(/не соответствует текущему набору фильтров/);
+  });
+
+  it('R04.1: preserves exact microsecond cursor boundaries (same millisecond, different microseconds)', async () => {
+    const db = await setupDbWith064();
+    await db.query(
+      `INSERT INTO public.leads (id, full_name, phone, status, stage, responsible_user_id, interested_project_id, created_at)
+       VALUES
+         (101, 'Us 1', '+992900001101', 'NEW', 'NEW', 2, 1, '2026-11-25T10:00:10.123456+00:00'),
+         (102, 'Us 2', '+992900001102', 'NEW', 'NEW', 2, 1, '2026-11-25T10:00:10.123455+00:00'),
+         (103, 'Us 3', '+992900001103', 'NEW', 'NEW', 2, 1, '2026-11-25T10:00:10.123454+00:00'),
+         (104, 'Us 4', '+992900001104', 'NEW', 'NEW', 2, 1, '2026-11-25T10:00:10.123454+00:00')`
+    );
+
+    const user = { id: 1, role: 'DIRECTOR' };
+    const q1 = validateAndNormalizeLeadQuery({ limit: '2' }, user);
+    const r1 = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(q1.dbFilters), JSON.stringify(q1.dbScope)])).rows[0].res;
+    expect(r1.leads.map((l) => l.id)).toEqual([101, 102]);
+    expect(r1.leads[1].created_at_iso_us).toBe('2026-11-25T10:00:10.123455Z');
+
+    const cursor = encodeLeadCursor(r1.leads[1], q1.filterHash);
+    const q2 = validateAndNormalizeLeadQuery({ limit: '2', cursor }, user);
+    expect(q2.dbFilters.cursor_created_at).toBe('2026-11-25T10:00:10.123455Z');
+
+    const r2 = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(q2.dbFilters), JSON.stringify(q2.dbScope)])).rows[0].res;
+    expect(r2.leads.map((l) => l.id)).toEqual([104, 103]);
+  });
+
+  it('R04.1: loads independent board_columns per stage even when NEW has >page rows', async () => {
+    const db = await setupDbWith064();
+    for (let i = 1; i <= 25; i += 1) {
+      await db.query(
+        `INSERT INTO public.leads (id, full_name, phone, status, stage, responsible_user_id, interested_project_id, created_at)
+         VALUES ($1, $2, $3, 'NEW', 'NEW', 2, 1, $4)`,
+        [i, `New ${i}`, `+99290001${String(i).padStart(4, '0')}`, new Date(Date.UTC(2026, 10, 25, 12, i, 0)).toISOString()]
+      );
+    }
+    await db.query(
+      `INSERT INTO public.leads (id, full_name, phone, status, stage, responsible_user_id, interested_project_id, created_at)
+       VALUES
+         (201, 'Reserved Lead', '+992900090201', 'NEW', 'RESERVED', 2, 1, '2026-11-25T10:00:00Z'),
+         (202, 'Lost Lead', '+992900090202', 'LOST', 'LOST', 2, 1, '2026-11-25T09:00:00Z')`
+    );
+
+    const user = { id: 1, role: 'DIRECTOR' };
+    const q = validateAndNormalizeLeadQuery({ limit: '0', boardPerStageLimit: '10' }, user);
+    const res = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(q.dbFilters), JSON.stringify(q.dbScope)])).rows[0].res;
+
+    expect(res.total).toBe(27);
+    expect(res.board_columns.NEW.leads).toHaveLength(10);
+    expect(res.board_columns.NEW.total).toBe(25);
+    expect(res.board_columns.RESERVED.leads.map((l) => l.id)).toEqual([201]);
+    expect(res.board_columns.LOST.leads.map((l) => l.id)).toEqual([202]);
+  });
+
+  it('R04.1: fails closed on empty/missing project permissions for restricted user and enforces allowed_project_ids', async () => {
+    const db = await setupDbWith064();
+    await db.query(
+      `INSERT INTO public.leads (id, full_name, phone, status, stage, responsible_user_id, interested_project_id, created_at)
+       VALUES
+         (301, 'Proj 1 Lead', '+992900080301', 'NEW', 'NEW', 2, 1, '2026-11-25T10:00:00Z'),
+         (302, 'Proj 2 Lead', '+992900080302', 'NEW', 'NEW', 2, 2, '2026-11-25T10:01:00Z')`
+    );
+
+    // Restricted user with empty allowed_project_ids -> must see 0 rows (NOT all projects!)
+    const emptyScopeUser = { id: 2, role: 'SALES_MANAGER', allowed_project_ids: [] };
+    const qEmpty = validateAndNormalizeLeadQuery({}, emptyScopeUser);
+    expect(qEmpty.dbScope.has_all_projects).toBe(false);
+    const rEmpty = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(qEmpty.dbFilters), JSON.stringify(qEmpty.dbScope)])).rows[0].res;
+    expect(rEmpty.total).toBe(0);
+    expect(rEmpty.leads).toEqual([]);
+
+    // Restricted user with missing/unknown project scope -> must also fail closed (0 rows)
+    const unknownScopeUser = { id: 2, role: 'SALES_MANAGER' };
+    const qUnknown = validateAndNormalizeLeadQuery({}, unknownScopeUser);
+    expect(qUnknown.dbScope.has_all_projects).toBe(false);
+    const rUnknown = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(qUnknown.dbFilters), JSON.stringify(qUnknown.dbScope)])).rows[0].res;
+    expect(rUnknown.total).toBe(0);
+    expect(rUnknown.leads).toEqual([]);
+
+    // Restricted user with explicit allowed_project_ids: [1] -> sees only project 1, never project 2
+    const proj1User = { id: 2, role: 'SALES_MANAGER', allowed_project_ids: [1] };
+    const qProj1 = validateAndNormalizeLeadQuery({}, proj1User);
+    const rProj1 = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(qProj1.dbFilters), JSON.stringify(qProj1.dbScope)])).rows[0].res;
+    expect(rProj1.total).toBe(1);
+    expect(rProj1.leads.map((l) => l.id)).toEqual([301]);
   });
 });

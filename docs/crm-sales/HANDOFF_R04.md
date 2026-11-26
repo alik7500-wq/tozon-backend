@@ -1,22 +1,21 @@
-# HANDOFF_R04.md — Фильтры, счётчики и пагинация
+# HANDOFF_R04.md — R04 & R04.1: Фильтры, счётчики, доска, пагинация, экспорт и project scope
 
-- **Задача:** `R04`
-- **Статус:** `DONE` (PGlite DB/validator + UI mock тесты пройдены; staging API — `NOT_RUN`; сохранение догруженных страниц при автообновлении передано в `R07`)
-- **Репозитории / Ветки:**
-  - `alik7500-wq/tozon-backend`: `feat/crm-sales-completion`
-  - `alik7500-wq/tozon-crm`: `a00`
-
-## Изменения
+## Реализованные артефакты (R04 + R04.1)
 - **Backend:**
-  - `server/src/db/migrations/064_unified_lead_query_and_cursor.sql` — `fn_query_leads_unified(p_filters, p_scope)` (в БД: канонический этап от `deals`, `NO_TASK`/`PAUSED`/`OVERDUE` без дублей на `JOIN`, `[from, to)` в `Asia/Dushanbe`, keyset-курсор `(created_at_ts DESC, id DESC)`, полный `total`, `stats`, `stage_counts`, принудительный RBAC).
-  - `server/src/modules/leads/leadFilterValidator.js` — whitelist-валидация фильтров (ошибка `400` на неизвестные параметры), кодирование и проверка курсора с `filterHash`.
-  - `server/src/modules/leads/leads.repository.js` (`queryUnified`) и `leads.router.js` (`GET /`, `GET /stats`, `GET /export`).
-  - `server/src/modules/leads/__tests__/064_unified_query_cursor.test.js` — PGlite-тесты (>page, одинаковые `created_at`, вставка между страницами, `SIGNED` vs legacy `WON`, `[from, to)`, `PAUSED` vs `NO_TASK`, `SALES_MANAGER` scope, невалидные фильтры/курсор).
+  - `src/db/migrations/064_unified_lead_query_and_cursor.sql` — базовая единая функция `public.fn_query_leads_unified(p_filters JSONB, p_scope JSONB)`.
+  - `src/db/migrations/065_harden_unified_query_cursor_and_scope.sql` — аддитивное обновление `public.fn_query_leads_unified`:
+    - `created_at_iso_us` (`YYYY-MM-DD"T"HH24:MI:SS.US"Z"`) для точного микросекундного keyset-курсора;
+    - fail-closed `has_all_projects` / `allowed_project_ids` (при `has_all_projects = false` и пустом/отсутствующем списке проектов возвращает `0` строк);
+    - `board_per_stage_limit` для независимой порционной выборки по каждой из 9 канонических колонок (`board_columns`).
+  - `src/modules/leads/leadFilterValidator.js` — сохранение микросекунд и `id_str` в курсоре, проверка формата/диапазона и `filterHash`, поддержка `boardPerStageLimit`, константа `MAX_EXPORT_ROWS`.
+  - `src/modules/leads/leads.repository.js` — `LeadsRepository.queryUnified` с формированием `boardColumns` и per-column `nextCursor`.
+  - `src/modules/leads/leads.router.js` — добавлен `GET /api/leads/board`; `GET /api/leads/export` переведён на потоковую отдачу `.xlsx` (по умолчанию, `ExcelJS.stream.xlsx.WorkbookWriter`) и `csv` (`?format=csv`) без тихого обрезания на 10 000 строках и с явным `413 EXPORT_LIMIT_EXCEEDED`.
+  - Тесты: `064_unified_query_cursor.test.js` (PGlite), `065_export_and_board_api.test.js` (Supertest + ExcelJS).
 - **Frontend:**
-  - `client/src/features/leads/LeadsPage.jsx` — единый `buildUnifiedFilterParams` для `/leads`, `/leads/stats`, `/leads/export`, фильтры `taskState`, `archive`, `unread`, кнопка `Экспорт CSV`.
-  - `client/src/features/leads/LeadKanbanView.jsx` — отображение полных `stageCounts` на каждой колонке.
-  - `client/src/features/leads/__tests__/LeadsWorkspaceCompletion.test.jsx` — UI mock тест единых фильтров и `stageCounts`.
+  - `src/features/leads/LeadsPage.jsx`, `src/features/leads/LeadKanbanView.jsx` — загрузка доски через `/leads/board`, независимая догрузка колонок (`Показать ещё`), кнопка `Экспорт Excel`.
+  - Тесты: `src/features/leads/__tests__/LeadsWorkspaceCompletion.test.jsx`.
 
-## Ограничения и передача в R07
-- Проверено на изолированном PGlite + UI mocks; прогон на live staging БД/API — `NOT_RUN`.
-- Сохранение догруженных страниц при фоновом автообновлении передано в `R07`.
+## Ограничения и статусы среды
+- Локально: PGlite (`@electric-sql/pglite`), Vitest + Supertest (`server`) и Vite build + Vitest jsdom (`client`) — `PASS`.
+- Live staging PostgreSQL: `NOT_RUN` (нет подключения к staging Supabase в среде выполнения).
+- Примечание для `R07`: фоновый авто-refresh (`tick`) по-прежнему перезагружает первую страницу/снимок; сохранение догруженных курсором страниц при автообновлении выполняется в `R07`.

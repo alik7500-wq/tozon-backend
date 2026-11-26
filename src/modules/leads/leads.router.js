@@ -1,6 +1,8 @@
 import express from 'express';
 import crypto from 'crypto';
+import ExcelJS from 'exceljs';
 import { LeadsRepository } from './leads.repository.js';
+import { MAX_EXPORT_ROWS } from './leadFilterValidator.js';
 import { TasksService } from '../tasks/tasks.service.js';
 import { ManagerPerformanceService } from '../reports/managerPerformance.service.js';
 import { RoundRobinService } from './roundRobin.service.js';
@@ -258,42 +260,131 @@ router.get('/stats', async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-// GET /api/leads/export - Export leads using the exact same unified filter & RBAC scope (R04)
+// GET /api/leads/board - Independent per-column board chunked loading with unified filters & RBAC scope (R04.1)
+router.get('/board', async (req, res, next) => {
+  try {
+    const { perStageLimit, ...restQuery } = req.query || {};
+    const result = await LeadsRepository.queryUnified(
+      { ...restQuery, limit: '0', boardPerStageLimit: perStageLimit || restQuery.boardPerStageLimit || '20' },
+      req.user
+    );
+    res.status(200).json({
+      status: 'success',
+      data: {
+        boardColumns: result.boardColumns || {},
+        stageCounts: result.stageCounts,
+        stats: result.stats,
+        total: result.total,
+        appliedFilters: result.appliedFilters,
+        scope: result.scope,
+        generatedAt: result.generatedAt
+      }
+    });
+  } catch (error) { next(error); }
+});
+
+// GET /api/leads/export - Streaming export (.xlsx default, optional ?format=csv) with unified filter & RBAC scope (R04.1)
 router.get('/export', async (req, res, next) => {
   try {
-    const allRows = [];
-    let cursor = null;
-    let guard = 0;
-    let meta = null;
+    const { format: rawFormat, ...filterQuery } = req.query || {};
+    const format = String(rawFormat || 'xlsx').toLowerCase();
+    if (format !== 'xlsx' && format !== 'csv') {
+      return next(new AppError(`Неподдерживаемый формат экспорта: ${rawFormat}. Используйте xlsx или csv`, 400));
+    }
 
-    do {
-      const page = await LeadsRepository.queryUnified({ ...req.query, limit: '500', ...(cursor ? { cursor } : {}) }, req.user);
-      if (!meta) meta = page;
-      allRows.push(...page.leads);
-      cursor = page.nextCursor;
-      guard += 1;
-    } while (cursor && guard < 20);
+    const firstPage = await LeadsRepository.queryUnified({ ...filterQuery, limit: '500' }, req.user);
+    const expectedTotal = Number(firstPage.total || 0);
 
-    const escapeCsv = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+    if (expectedTotal > MAX_EXPORT_ROWS) {
+      return res.status(413).json({
+        status: 'error',
+        code: 'EXPORT_LIMIT_EXCEEDED',
+        message: `Выборка содержит ${expectedTotal} записей, что превышает лимит экспорта (${MAX_EXPORT_ROWS}). Уточните фильтры.`
+      });
+    }
+
     const header = ['ID', 'ФИО', 'Телефон', 'Этап', 'Источник', 'Проект', 'Менеджер', 'Создан'];
-    const lines = [
-      header.map(escapeCsv).join(';'),
-      ...allRows.map((l) => [
-        l.id_str || l.id,
-        l.full_name,
-        l.phone || '',
-        l.stage,
-        l.source_code || l.source || '',
-        l.interested_project_name || '',
-        l.responsible_user_name || '',
-        l.created_at || ''
-      ].map(escapeCsv).join(';'))
+    const mapLeadToRow = (l) => [
+      l.id_str || String(l.id ?? ''),
+      l.full_name || '',
+      l.phone || '',
+      l.stage || '',
+      l.source_code || l.source || '',
+      l.interested_project_name || '',
+      l.responsible_user_name || '',
+      l.created_at_iso_us || l.created_at || ''
     ];
 
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="leads-export.csv"');
-    res.status(200).send('\uFEFF' + lines.join('\r\n'));
-  } catch (error) { next(error); }
+    res.setHeader('X-Export-Expected-Count', String(expectedTotal));
+
+    let exportedCount = 0;
+
+    if (format === 'csv') {
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="leads-export.csv"');
+      const escapeCsv = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
+      res.write('\uFEFF' + header.map(escapeCsv).join(';') + '\r\n');
+
+      let page = firstPage;
+      let cursor = page.nextCursor;
+      while (true) {
+        if (page.leads.length > 0) {
+          const chunk = page.leads.map((l) => mapLeadToRow(l).map(escapeCsv).join(';')).join('\r\n') + '\r\n';
+          res.write(chunk);
+          exportedCount += page.leads.length;
+        }
+        if (!cursor) break;
+        const prevCursor = cursor;
+        page = await LeadsRepository.queryUnified({ ...filterQuery, limit: '500', cursor }, req.user);
+        cursor = page.nextCursor;
+        if (cursor && cursor === prevCursor) {
+          throw new Error('Detected non-advancing cursor during export');
+        }
+      }
+      if (exportedCount !== expectedTotal) {
+        res.destroy(new Error(`Export count mismatch: expected ${expectedTotal}, exported ${exportedCount}`));
+        return;
+      }
+      res.end();
+      return;
+    }
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="leads-export.xlsx"');
+
+    const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: false });
+    const sheet = workbook.addWorksheet('Лиды');
+    sheet.addRow(header).commit();
+
+    let page = firstPage;
+    let cursor = page.nextCursor;
+    while (true) {
+      for (const l of page.leads) {
+        sheet.addRow(mapLeadToRow(l)).commit();
+        exportedCount += 1;
+      }
+      if (!cursor) break;
+      const prevCursor = cursor;
+      page = await LeadsRepository.queryUnified({ ...filterQuery, limit: '500', cursor }, req.user);
+      cursor = page.nextCursor;
+      if (cursor && cursor === prevCursor) {
+        throw new Error('Detected non-advancing cursor during export');
+      }
+    }
+
+    if (exportedCount !== expectedTotal) {
+      res.destroy(new Error(`Export count mismatch: expected ${expectedTotal}, exported ${exportedCount}`));
+      return;
+    }
+
+    await workbook.commit();
+  } catch (error) {
+    if (res.headersSent) {
+      res.destroy(error);
+      return;
+    }
+    next(error);
+  }
 });
 
 // GET /api/leads/distribution/settings - Get automated distribution configuration

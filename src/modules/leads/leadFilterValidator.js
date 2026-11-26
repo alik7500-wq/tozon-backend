@@ -12,10 +12,13 @@ export const ALLOWED_SOURCES = Object.freeze([
   'WALK_IN', 'PHONE', 'INSTAGRAM', 'FACEBOOK', 'TELEGRAM', 'WHATSAPP', 'REFERRAL', 'WEBSITE', 'OTHER', 'DIRECT'
 ]);
 
+export const MAX_EXPORT_ROWS = Number(process.env.LEADS_EXPORT_MAX_ROWS || 50000);
+
 const KNOWN_QUERY_KEYS = new Set([
   'projectId', 'managerId', 'source', 'accountId', 'stage', 'status',
   'createdFrom', 'createdTo', 'taskState', 'unread', 'archive', 'lostReason',
-  'quickFilter', 'search', 'unassigned', 'groupBy', 'cursor', 'limit'
+  'quickFilter', 'search', 'unassigned', 'groupBy', 'cursor', 'limit',
+  'boardPerStageLimit'
 ]);
 
 export function computeFilterHash(filters) {
@@ -37,10 +40,14 @@ export function computeFilterHash(filters) {
   return crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }
 
+const ISO_US_CURSOR_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/;
+
 export function encodeLeadCursor(lastRow, filterHash) {
   if (!lastRow || !lastRow.id) return null;
+  const tsRaw = String(lastRow.created_at_iso_us || lastRow.created_at_ts || lastRow.created_at || '');
+  if (!tsRaw) return null;
   const payload = {
-    c: lastRow.created_at_ts || lastRow.created_at,
+    c: tsRaw,
     id: String(lastRow.id_str || lastRow.id),
     f: filterHash
   };
@@ -58,11 +65,12 @@ export function decodeAndVerifyLeadCursor(cursorToken, expectedFilterHash) {
     if (parsed.f !== expectedFilterHash) {
       throw new AppError('Курсор не соответствует текущему набору фильтров. Сбросьте пагинацию.', 400);
     }
-    const ts = new Date(parsed.c);
-    if (!Number.isFinite(ts.getTime())) {
+    // Preserve exact microsecond timestamp string (do NOT truncate via new Date().toISOString())
+    const parsedMs = Date.parse(parsed.c);
+    if (!ISO_US_CURSOR_RE.test(parsed.c) || !Number.isFinite(parsedMs) || parsedMs < 0 || parsedMs > 4102444800000) {
       throw new Error('Invalid cursor timestamp');
     }
-    return { cursor_created_at: ts.toISOString(), cursor_id: String(parsed.id) };
+    return { cursor_created_at: parsed.c, cursor_id: String(parsed.id) };
   } catch (err) {
     if (err instanceof AppError) throw err;
     throw new AppError('Некорректный курсор пагинации', 400);
@@ -163,6 +171,15 @@ export function validateAndNormalizeLeadQuery(query = {}, user = {}) {
     limit = n;
   }
 
+  let boardPerStageLimit = 0;
+  if (query.boardPerStageLimit !== undefined && query.boardPerStageLimit !== '') {
+    const b = Number(query.boardPerStageLimit);
+    if (!Number.isInteger(b) || b < 0 || b > 100) {
+      throw new AppError(`Недопустимый boardPerStageLimit: ${query.boardPerStageLimit}`, 400);
+    }
+    boardPerStageLimit = b;
+  }
+
   let projectId = null;
   if (query.projectId && String(query.projectId) !== 'ALL') {
     if (!/^\d+$/.test(String(query.projectId))) {
@@ -195,7 +212,8 @@ export function validateAndNormalizeLeadQuery(query = {}, user = {}) {
     lost_reason: lostReason,
     quick_filter: quickFilter,
     search: query.search ? String(query.search).trim() : null,
-    limit
+    limit,
+    ...(boardPerStageLimit > 0 ? { board_per_stage_limit: boardPerStageLimit } : {})
   };
 
   const filterHash = computeFilterHash(dbFilters);
@@ -205,11 +223,18 @@ export function validateAndNormalizeLeadQuery(query = {}, user = {}) {
     dbFilters.cursor_id = decodedCursor.cursor_id;
   }
 
+  // Server-authoritative project scope: never infer all-projects for empty/unknown restricted scope
+  const isGlobalSupervisor = ['ADMIN', 'DIRECTOR'].includes(scope.role);
+  const explicitAllProjects = user?.all_projects_access === true;
+  const hasExplicitProjectList = Array.isArray(user?.allowed_project_ids);
+  const hasAllProjects = explicitAllProjects || (isGlobalSupervisor && !hasExplicitProjectList);
+
   const dbScope = {
     user_id: user?.id ? String(user.id) : null,
     role: scope.role,
     restricted_to_self: scope.restrictedToSelf,
-    allowed_project_ids: Array.isArray(user?.allowed_project_ids) ? user.allowed_project_ids.map(String) : []
+    has_all_projects: hasAllProjects,
+    allowed_project_ids: hasExplicitProjectList ? user.allowed_project_ids.map(String) : []
   };
 
   return {

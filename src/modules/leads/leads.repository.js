@@ -17,7 +17,8 @@ import {
 } from './leadDomain.js';
 import {
   validateAndNormalizeLeadQuery,
-  encodeLeadCursor
+  encodeLeadCursor,
+  computeFilterHash
 } from './leadFilterValidator.js';
 
 const getHistoryDB = () => {
@@ -43,10 +44,17 @@ export class LeadsRepository {
     const { dbFilters, dbScope, filterHash, scope } = validateAndNormalizeLeadQuery(query, user);
 
     if (scope.restrictedToSelf && dbFilters.quick_filter === 'UNASSIGNED') {
+      const emptyBoardColumns = dbFilters.board_per_stage_limit > 0
+        ? Object.fromEntries(
+            ['NEW', 'IN_PROGRESS', 'NEGOTIATION', 'MEETING_SCHEDULED', 'SHOWING_DONE', 'RESERVED', 'CONTRACT_PREP', 'SIGNED', 'LOST']
+              .map((st) => [st, { leads: [], total: 0, nextCursor: null }])
+          )
+        : undefined;
       return {
         leads: [],
         total: 0,
         nextCursor: null,
+        ...(emptyBoardColumns ? { boardColumns: emptyBoardColumns } : {}),
         stats: { total: 0, new: 0, unassigned: 0, awaiting_contact: 0, overdue: 0, in_progress: 0, closed: 0, no_task: 0, unread: 0 },
         stageCounts: { NEW: 0, IN_PROGRESS: 0, NEGOTIATION: 0, MEETING_SCHEDULED: 0, SHOWING_DONE: 0, RESERVED: 0, CONTRACT_PREP: 0, SIGNED: 0, LOST: 0 },
         appliedFilters: dbFilters,
@@ -70,10 +78,27 @@ export class LeadsRepository {
     const hasMore = dbFilters.limit > 0 && leads.length === dbFilters.limit;
     const nextCursor = hasMore ? encodeLeadCursor(leads[leads.length - 1], filterHash) : null;
 
+    let boardColumns;
+    if (dbFilters.board_per_stage_limit > 0 && data.board_columns && typeof data.board_columns === 'object') {
+      boardColumns = {};
+      for (const [stageKey, colData] of Object.entries(data.board_columns)) {
+        const colLeads = Array.isArray(colData?.leads) ? colData.leads : [];
+        const colTotal = Number(colData?.total || 0);
+        const colHasMore = colLeads.length === dbFilters.board_per_stage_limit && colTotal > colLeads.length;
+        const stageHash = computeFilterHash({ ...dbFilters, stage: stageKey });
+        boardColumns[stageKey] = {
+          leads: colLeads,
+          total: colTotal,
+          nextCursor: colHasMore ? encodeLeadCursor(colLeads[colLeads.length - 1], stageHash) : null
+        };
+      }
+    }
+
     return {
       leads,
       total,
       nextCursor,
+      ...(boardColumns ? { boardColumns } : {}),
       stats: data.stats || {},
       stageCounts: data.stage_counts || {},
       appliedFilters: dbFilters,
