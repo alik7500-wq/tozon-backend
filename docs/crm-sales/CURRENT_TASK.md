@@ -1,20 +1,21 @@
 # CURRENT_TASK.md
 
-- **ID задачи:** `R04.2` — Подключение реального источника проектных прав
-- **Статус:** `DONE` (PGlite HTTP end-to-end `protect -> UsersRepository -> user_project_access -> queryUnified -> fn_query_leads_unified` + все модульные тесты пройдены; сохранение догруженных страниц при автообновлении передано в `R07`; live staging — `NOT_RUN`)
+- **ID задачи:** `R05` — Доступ `SALES_MANAGER` к основной странице Instagram и серверным маршрутам
+- **Статус:** `DONE` (UI mocks + PGlite HTTP `protect/sectionAccess/R04.2` тесты пройдены; живая проверка Meta — `BLOCKED_MISSING_TOKEN` / `NOT_RUN` из-за отсутствия тестового токена Meta в среде)
 - **Ветки:**
   - `tozon-backend`: `feat/crm-sales-completion`
-  - `tozon-crm`: `a00` (без изменений в `R04.2`)
+  - `tozon-crm`: `a00`
 - **Что сделано:**
-  - Зафиксировано отсутствие ранее существовавшего постоянного источника проектных прав в БД (`layout_presentation.repository.js` проверял только in-memory `assigned_project_ids`).
-  - Создана миграция `066_user_project_access.sql`: колонка `users.all_projects_access BOOLEAN NOT NULL DEFAULT FALSE` и таблица `public.user_project_access(user_id, project_id, can_view)` с RLS и правами только для `service_role`.
-  - В `UsersRepository.findById` подключена загрузка `all_projects_access` и `allowed_project_ids` из `public.user_project_access`; ошибка чтения `user_project_access` явно возвращает `503 AppError` (без расширения прав и без маскировки под пустой список).
-  - В `users.router.js` добавлен `PUT /api/users/:id/project-access` (только `ADMIN`) для явного назначения допусков существующим и новым пользователям без автоматической модификации рабочей БД.
-  - В `leadFilterValidator.js` убран автоматический вывод глобальных прав `DIRECTOR` из отсутствия `allowed_project_ids`: `DIRECTOR` без `all_projects_access = true` строго ограничен назначенными проектами (или видит `0` строк при пустом списке).
-  - Добавлен полный HTTP-интеграционный тест `066_project_access_integration.test.js` (`protect` + JWT + `UsersRepository.findById` + `user_project_access` + `leadsRouter` + `fn_query_leads_unified` в PGlite).
+  - Frontend (`navigationRegistry.js`, `MainLayout.jsx`, `InstagramInboxPage.jsx`):
+    - Открыт пункт меню `Instagram Direct` (`/instagram/inbox`) для `SALES_MANAGER` с правом `leads.view`.
+    - `InstagramInboxPage` разделён на режим управления (`ADMIN`/`DIRECTOR` -> `/integrations/instagram/connection`, кнопки подключения/отключения) и режим менеджера (`SALES_MANAGER` -> безопасный `GET /integrations/instagram/inbox/accounts`, без кнопок управления и OAuth-настроек, с пустым состоянием при отсутствии допусков).
+    - При отзыве доступа, смене аккаунта/пользователя или исчезновении диалога из списка `historyCache` и `drafts` очищаются.
+  - Backend (`sectionAccess.js`, `instagram-inbox.router.js`):
+    - `sectionAccess.js` допускает `SALES_MANAGER` к `GET /inbox/accounts`, `GET /inbox/conversations`, `GET /inbox/conversations/page`, `GET /inbox/conversations/:account/:contact/messages` и `POST /send/:account/:contact` по правам `leads.view` / `leads.manage`; административные маршруты `/connection`, `/connect`, `/disconnect` остаются строго за `ADMIN`/`DIRECTOR`.
+    - `instagram-inbox.router.js` проверяет реальные проектные права R04.2 (`all_projects_access`, `allowed_project_ids`) + `responsible_user_id` + права раздела (`leads.view`/`leads.manage`) на всех операциях (список, пагинация, сообщения, отправка) и отклоняет подмену `account`/`contact`/`cursor` и запросы после отзыва доступа.
 
-## Передано в R07
-- Сохранение догруженных по `nextCursor` страниц при фоновом периодическом автообновлении — решается в `R07`.
+## Обязательный список R09 (зарегистрировано в R05)
+- **Транзакционная замена проектных прав (`UsersRepository.setProjectAccess`):** перенести обновление `users.all_projects_access`, удаление старых и вставку новых строк `user_project_access` в единую атомарную SQL-транзакцию (RPC), чтобы сбой в середине не оставлял пользователя без проектных прав.
 
 ## Следующая задача
-- `R05` — Доступ `SALES_MANAGER` к основной `InstagramInboxPage` и маршруту (в ветках `feat/crm-sales-completion` и `a00`).
+- `R06` — Оставшиеся задачи этапа R06 (в ветках `feat/crm-sales-completion` и `a00`).
