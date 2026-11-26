@@ -228,6 +228,7 @@ describe('R09.2 GAP-01: Transactional Project-Scoped Lead Distribution & Pool Wo
     await db.exec(readFileSync('src/db/migrations/070_r09_1_outbox_and_project_access_tx.sql', 'utf8'));
     await db.exec(readFileSync('src/db/migrations/071_r09_2_gap01_transactional_distribution.sql', 'utf8'));
     await db.exec(readFileSync('src/db/migrations/072_r09_2_gap01_1_cross_project_capacity_and_pool_backoff.sql', 'utf8'));
+    await db.exec(readFileSync('src/db/migrations/073_r09_2_gap01_2_pool_lock_order_and_manual_project_access.sql', 'utf8'));
     state.db = db;
   }, 30000);
 
@@ -440,5 +441,40 @@ describe('R09.2 GAP-01: Transactional Project-Scoped Lead Distribution & Pool Wo
     expect(run2).toMatchObject({ skipped: false, scanned: 1, assigned: 1 });
     const l726 = (await state.db.query(`SELECT responsible_user_id FROM public.leads WHERE id = 726`)).rows[0];
     expect(l726.responsible_user_id).not.toBeNull();
+  });
+
+  it('enforces project access inside fn_assign_lead_atomic (including manual mode) with zero side effects on denial', async () => {
+    await state.db.exec(`
+      INSERT INTO public.users (id, name, email, role, is_active, is_sales_rep, all_projects_access) VALUES
+        (7, 'AllProj Rep', 'm7@t.tj', 'SALES_MANAGER', 1, TRUE, TRUE),
+        (8, 'NoProj Rep', 'm8@t.tj', 'SALES_MANAGER', 1, TRUE, FALSE);
+      INSERT INTO public.leads (id, full_name, status, stage, interested_project_id) VALUES
+        (801, 'P1 Lead', 'NEW', 'NEW', 1),
+        (802, 'P2 Lead', 'NEW', 'NEW', 2),
+        (803, 'NullProj Lead', 'NEW', 'NEW', NULL);
+    `);
+
+    // 1. Forbidden project (Mgr 2 only has Project 1, lead 802 is Project 2) -> PROJECT_ACCESS_DENIED, 0 history/outbox
+    const denied = (await state.db.query(`SELECT public.fn_assign_lead_atomic(802, 2, 1, 'Manual cross-proj', 25, true, 1) AS res`)).rows[0].res;
+    expect(denied).toMatchObject({ success: false, error_code: 'PROJECT_ACCESS_DENIED' });
+    expect((await state.db.query(`SELECT responsible_user_id, version FROM public.leads WHERE id = 802`)).rows[0]).toEqual({ responsible_user_id: null, version: 1 });
+    expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.lead_assignment_history WHERE lead_id = 802`)).rows[0].c).toBe(0);
+    expect((await state.db.query(`SELECT COUNT(*)::int AS c FROM public.crm_event_outbox WHERE aggregate_id = '802' AND event_type = 'LEAD_ASSIGNED'`)).rows[0].c).toBe(0);
+
+    // 2. Missing access (Mgr 8 has no project access at all) -> PROJECT_ACCESS_DENIED on both P1 and NULL project
+    const noAccessP1 = (await state.db.query(`SELECT public.fn_assign_lead_atomic(801, 8, 1, 'Manual no-access', 25, true, 1) AS res`)).rows[0].res;
+    expect(noAccessP1).toMatchObject({ success: false, error_code: 'PROJECT_ACCESS_DENIED' });
+    const noAccessNull = (await state.db.query(`SELECT public.fn_assign_lead_atomic(803, 8, 1, 'Manual null-proj', 25, true, 1) AS res`)).rows[0].res;
+    expect(noAccessNull).toMatchObject({ success: false, error_code: 'PROJECT_ACCESS_DENIED' });
+
+    // 3. Allowed project (Mgr 2 has Project 1) -> ASSIGNED
+    const okP1 = (await state.db.query(`SELECT public.fn_assign_lead_atomic(801, 2, 1, 'Manual allowed', 25, true, 1) AS res`)).rows[0].res;
+    expect(okP1).toMatchObject({ success: true, status: 'ASSIGNED', to_user_id: 2 });
+
+    // 4. all_projects_access = TRUE (Mgr 7) -> ASSIGNED on P2 and NULL project
+    const okAllP2 = (await state.db.query(`SELECT public.fn_assign_lead_atomic(802, 7, 1, 'Manual all-proj P2', 25, true, 1) AS res`)).rows[0].res;
+    expect(okAllP2).toMatchObject({ success: true, status: 'ASSIGNED', to_user_id: 7 });
+    const okAllNull = (await state.db.query(`SELECT public.fn_assign_lead_atomic(803, 7, 1, 'Manual all-proj NULL', 25, true, 1) AS res`)).rows[0].res;
+    expect(okAllNull).toMatchObject({ success: true, status: 'ASSIGNED', to_user_id: 7 });
   });
 });

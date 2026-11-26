@@ -447,6 +447,9 @@ export class LeadsRepository {
         conflictErr.current = latest;
         throw conflictErr;
       }
+      if (rpcResult.error_code === 'PROJECT_ACCESS_DENIED') {
+        throw new AppError(rpcResult.message || 'Менеджер не имеет допуска к проекту этого лида', 403);
+      }
       throw new AppError(rpcResult.message || 'Ошибка назначения лида', 422);
 
       const db = getDB();
