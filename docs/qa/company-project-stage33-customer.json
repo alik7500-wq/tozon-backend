@@ -1,0 +1,52 @@
+{
+  "batch_id": "25b2a940-dbc6-471b-9d84-5991ce4c1f4b",
+  "snapshot_at": "2026-11-26T18:52:38.372543+00:00",
+  "committed_at": "2026-11-26T20:32:28.516351+00:00",
+  "counts": [
+    {
+      "rows": 2731,
+      "table_name": "deal_payment_schedules"
+    },
+    {
+      "rows": 103,
+      "table_name": "deals"
+    },
+    {
+      "rows": 96,
+      "table_name": "leads"
+    },
+    {
+      "rows": 1,
+      "table_name": "marketing_partners"
+    }
+  ],
+  "deal_states": [
+    {
+      "rows": 15,
+      "status": "CANCELLED"
+    },
+    {
+      "rows": 7,
+      "status": "RESERVED"
+    },
+    {
+      "rows": 81,
+      "status": "SIGNED"
+    }
+  ],
+  "invented_snapshots": 0,
+  "missing_links": 0,
+  "background": {
+    "tasks": 0,
+    "sms_events": 0,
+    "sms_messages": 0,
+    "notifications": 1
+  },
+  "cash_counts": {
+    "expenses": 0,
+    "payments": 1
+  },
+  "deal_sums_match": true,
+  "schedule_amounts_match": true,
+  "schedule_paid_match": true
+}
