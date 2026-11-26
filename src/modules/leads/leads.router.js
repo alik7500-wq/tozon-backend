@@ -593,6 +593,7 @@ router.patch('/:id/status', async (req, res, next) => {
     }
 
     const nextStage = req.body.stage || req.body.status;
+    const idempotencyKey = req.headers['idempotency-key'] || req.body?.idempotency_key || null;
     const lead = await LeadsRepository.updateStatus(
       cleanId,
       nextStage,
@@ -601,6 +602,7 @@ router.patch('/:id/status', async (req, res, next) => {
       parseOptionalBigInt(req.user?.id),
       {
         expectedVersion: req.body.version,
+        idempotencyKey,
         meetingAt: req.body.meeting_at,
         showingProjectId: req.body.showing_project_id,
         showingAt: req.body.showing_at,
@@ -608,8 +610,10 @@ router.patch('/:id/status', async (req, res, next) => {
       }
     );
 
-    // Auto-generate task on status change (non-LOST)
-    await TasksService.onLeadStatusChanged(lead, nextStage, parseOptionalBigInt(req.user.id) || 1);
+    // Auto-generate task on status change (non-LOST), skipped on idempotent replay
+    if (!lead?._replayed) {
+      await TasksService.onLeadStatusChanged(lead, nextStage, parseOptionalBigInt(req.user.id) || 1);
+    }
     res.status(200).json({ status: 'success', data: { lead } });
   } catch (error) {
     if (error?.statusCode === 409 && error.current) {

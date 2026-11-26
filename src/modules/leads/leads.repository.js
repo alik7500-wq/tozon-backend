@@ -255,81 +255,42 @@ export class LeadsRepository {
 
   static async updateStatus(id, status, lostReason = null, comment = null, changedByUserId = null, options = {}) {
     const cleanId = parseRequiredBigInt(id, 'id');
-    const db = getDB();
-    const now = new Date().toISOString();
+    const secureDb = getSecureDB();
 
-    const { data: currentLead } = await db
-      .from('leads')
-      .select('id, status, stage, version, deals(id, status)')
-      .eq('id', cleanId)
-      .maybeSingle();
+    const { data: rpcResult, error: rpcErr } = await secureDb.rpc('fn_update_lead_stage_atomic', {
+      p_lead_id: cleanId,
+      p_target_stage: status,
+      p_lost_reason: lostReason || null,
+      p_comment: comment || null,
+      p_actor_user_id: changedByUserId ? Number(changedByUserId) : null,
+      p_expected_version: options.expectedVersion !== undefined && options.expectedVersion !== null ? Number(options.expectedVersion) : null,
+      p_idempotency_key: options.idempotencyKey || null,
+      p_meeting_at: options.meetingAt || null,
+      p_showing_project_id: options.showingProjectId ? Number(options.showingProjectId) : null,
+      p_showing_at: options.showingAt || null,
+      p_showing_outcome: options.showingOutcome || null
+    });
 
-    if (!currentLead) throw new AppError('Лид не найден', 404);
+    // Fail-closed: NEVER bypass concurrency protection with an unguarded direct UPDATE when RPC errors
+    if (rpcErr || !rpcResult) {
+      throw new AppError('Сервис атомарного изменения этапа временно недоступен', 503);
+    }
 
-    if (options.expectedVersion !== undefined && options.expectedVersion !== null && Number(currentLead.version || 1) !== Number(options.expectedVersion)) {
-      const latest = await this.findById(cleanId);
-      const err = new AppError('Карточка лида была изменена другим пользователем. Данные обновлены.', 409);
-      err.current = latest;
+    if (!rpcResult.success) {
+      const code = Number(rpcResult.status_code) || 400;
+      const err = new AppError(rpcResult.message || 'Ошибка изменения этапа лида', code);
+      err.code = rpcResult.error_code;
+      if (code === 409) {
+        err.current = await this.findById(cleanId);
+      }
       throw err;
     }
 
-    const { stage: currentStage } = resolveCanonicalStage(currentLead, currentLead.deals || []);
-    const targetStage = status;
-
-    const validation = validateStageTransition({
-      currentStage,
-      targetStage,
-      reasonCode: lostReason,
-      reasonComment: comment,
-      meetingAt: options.meetingAt,
-      showingProjectId: options.showingProjectId,
-      showingAt: options.showingAt,
-      showingOutcome: options.showingOutcome
-    });
-
-    if (!validation.ok) {
-      throw new AppError(validation.message, 400);
+    const updatedLead = await this.findById(cleanId);
+    if (rpcResult.replayed && updatedLead) {
+      updatedLead._replayed = true;
     }
-
-    const legacyStatus = mapStageToLegacyStatus(targetStage);
-    const nextVersion = Number(currentLead.version || 1) + 1;
-
-    const updatePayload = {
-      status: legacyStatus,
-      stage: targetStage,
-      version: nextVersion,
-      lost_reason: targetStage === 'LOST' ? (lostReason || null) : null,
-      lost_reason_code: targetStage === 'LOST' ? (lostReason || null) : null,
-      lost_reason_comment: targetStage === 'LOST' ? (comment || null) : null,
-      updated_at: now
-    };
-
-    // Moving stage NEVER fabricates first_contact_at or first_response_at (F-12, A16).
-    const { error } = await db.from('leads').update(updatePayload).eq('id', cleanId);
-    if (error) throw error;
-
-    if (currentStage !== targetStage) {
-      try {
-        const historyDb = getHistoryDB();
-        await historyDb.from('lead_stage_history').insert([{
-          lead_id: cleanId,
-          from_stage: currentStage,
-          to_stage: targetStage,
-          actor_user_id: changedByUserId || null,
-          reason: comment || lostReason || null,
-          lead_version: nextVersion,
-          created_at: now
-        }]);
-      } catch (histErr) {
-        console.error('[LeadsRepository] Stage history recording failed:', histErr?.message || histErr);
-      }
-    }
-
-    if (targetStage === 'LOST') {
-      await TasksService.cancelOpenSalesTasks(cleanId, comment || lostReason || 'Отказ по лиду', changedByUserId);
-    }
-
-    return this.findById(cleanId);
+    return updatedLead;
   }
 
   /**
@@ -348,43 +309,42 @@ export class LeadsRepository {
     try {
       const cleanTargetId = targetUserId !== null && targetUserId !== undefined ? parseRequiredBigInt(targetUserId, 'targetUserId') : null;
 
-      // Cross-instance safety: attempt PostgreSQL atomic RPC (migration 052 / 060)
-      try {
-        const secureDb = getSecureDB();
-        const { data: rpcResult, error: rpcErr } = await secureDb.rpc('fn_assign_lead_atomic', {
-          p_lead_id: cleanId,
-          p_target_user_id: cleanTargetId,
-          p_actor_user_id: actorUserId ? Number(actorUserId) : null,
-          p_reason: reason || null,
-          p_max_capacity: 25,
-          p_is_manual: isManual !== false,
-          p_expected_version: expectedVersion !== undefined && expectedVersion !== null ? Number(expectedVersion) : null
-        });
+      // Cross-instance safety: strictly require PostgreSQL atomic RPC (no unsafe fallback UPDATE)
+      const secureDb = getSecureDB();
+      const { data: rpcResult, error: rpcErr } = await secureDb.rpc('fn_assign_lead_atomic', {
+        p_lead_id: cleanId,
+        p_target_user_id: cleanTargetId,
+        p_actor_user_id: actorUserId ? Number(actorUserId) : null,
+        p_reason: reason || null,
+        p_max_capacity: 25,
+        p_is_manual: isManual !== false,
+        p_expected_version: expectedVersion !== undefined && expectedVersion !== null ? Number(expectedVersion) : null
+      });
 
-        if (!rpcErr && rpcResult && rpcResult.success) {
-          const updatedLead = await this.findById(cleanId);
-          if (cleanTargetId) {
-            TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
-              console.warn('Failed to generate call task on lead assigned:', err);
-            });
-            NotificationsService.notifyLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
-              console.warn('Failed to dispatch LEAD_ASSIGNED notification:', err);
-            });
-          }
-          return updatedLead;
-        } else if (!rpcErr && rpcResult && !rpcResult.success) {
-          if (rpcResult.error_code === 'VERSION_CONFLICT') {
-            const latest = await this.findById(cleanId);
-            const conflictErr = new AppError(rpcResult.message || 'Конфликт версии при назначении лида', 409);
-            conflictErr.current = latest;
-            throw conflictErr;
-          }
-          throw new AppError(rpcResult.message || 'Ошибка назначения лида', 422);
-        }
-      } catch (atomicErr) {
-        if (atomicErr instanceof AppError) throw atomicErr;
-        // RPC not defined yet on DB; seamlessly continue to transactional fallback below
+      if (rpcErr || !rpcResult) {
+        throw new AppError('Сервис атомарного назначения лида временно недоступен', 503);
       }
+
+      if (rpcResult.success) {
+        const updatedLead = await this.findById(cleanId);
+        if (cleanTargetId) {
+          TasksService.onLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
+            console.warn('Failed to generate call task on lead assigned:', err);
+          });
+          NotificationsService.notifyLeadAssigned(updatedLead, cleanTargetId, actorUserId).catch(err => {
+            console.warn('Failed to dispatch LEAD_ASSIGNED notification:', err);
+          });
+        }
+        return updatedLead;
+      }
+
+      if (rpcResult.error_code === 'VERSION_CONFLICT') {
+        const latest = await this.findById(cleanId);
+        const conflictErr = new AppError(rpcResult.message || 'Конфликт версии при назначении лида', 409);
+        conflictErr.current = latest;
+        throw conflictErr;
+      }
+      throw new AppError(rpcResult.message || 'Ошибка назначения лида', 422);
 
       const db = getDB();
       const now = new Date().toISOString();

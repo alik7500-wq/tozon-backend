@@ -1,13 +1,12 @@
 # CURRENT_TASK.md
 
-- **ID задачи:** `R02.1` — Исправление совместимого отката (после R02)
-- **Статус:** `DONE` (на изолированной PGlite БД; проверка именованного RPC через Supabase/PostgREST вынесена в staging-приёмку)
+- **ID задачи:** `R03` — Атомарная смена этапа лида
+- **Статус:** `DONE` (на изолированной PGlite БД + unit/fail-closed; проверка двумя независимыми соединениями/процессами на live PostgreSQL — `NOT_RUN`, вынесена в staging-приёмку)
 - **Ветка (`tozon-backend`):** `feat/crm-sales-completion`
 - **Что сделано:**
-  - Создана новая миграция `061_harden_fn_assign_lead_atomic_and_app_rollback.sql` (не переписывает историю `060`), устраняющая конфликт перегрузки 6-аргументной (из `052`) и 7-аргументной (`DEFAULT NULL` из `060`) `fn_assign_lead_atomic` и отзывающая `EXECUTE` у `PUBLIC`, `anon`, `authenticated` со всех перегрузок + защита `BIGSERIAL` sequence.
-  - Создан безопасный откат версии приложения `app_rollback_060_061_preserve_data.sql` (сохраняет все новые таблицы и накопленные данные, выравнивает `status` и сохраняет 6-аргументную совместимость).
-  - `rollback_060_crm_sales_completion_foundation.sql` защищён явным session-флагом `tozon.allow_destructive_test_cleanup = 'YES_TEST_ONLY'` исключительно для одноразовых тестовых БД.
-  - Добавлен и пройден PGlite-тест `061_safe_migration_and_rollback.test.js` (проверка `SET ROLE anon/authenticated/service_role` на 6- и 7-аргументных вызовах, идемпотентности и отката с сохранением данных).
+  - Создана миграция `062_atomic_lead_stage_transition.sql`: атомарная функция `public.fn_update_lead_stage_atomic(...)` с `FOR UPDATE`, CAS-проверкой `p_expected_version`, `pg_advisory_xact_lock` по `p_idempotency_key`, проверкой реальных сделок (`deals`), записью `lead_stage_history` + `crm_event_outbox` + отменой задач при `LOST` в одной транзакции, без создания фиктивного `first_contact_at` и без затирания `responsible_user_id`.
+  - В `LeadsRepository.updateStatus` и `LeadsRepository.assignManager` убран небезопасный обход через обычный `UPDATE` при ошибке RPC (fail-closed `503`).
+  - В `leads.router.js` (`PATCH /:id/status`) добавлена передача `Idempotency-Key` и пропуск повторного `TasksService.onLeadStatusChanged` при `replayed: true`.
 
 ## Следующая задача
-- `R03` — Атомарная смена этапа (`leads.repository.js` + интеграционный тест гонки запросов).
+- `R04` — Фильтры, счётчики и пагинация (в ветках `feat/crm-sales-completion` и `a00`).
