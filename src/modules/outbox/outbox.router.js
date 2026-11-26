@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { protect, restrictTo, checkPermission } from '../../middleware/auth.middleware.js';
+import { AppError } from '../../shared/errors/errorHandler.js';
 import { OutboxWorkerService } from './outboxWorker.service.js';
 
 const router = Router();
@@ -40,10 +41,14 @@ router.patch('/settings', restrictTo('ADMIN'), checkPermission('settings.manage'
 
 router.post('/run-once', restrictTo('ADMIN'), checkPermission('settings.manage'), async (req, res, next) => {
   try {
+    const rawIgnoreEnabled = req.body?.ignore_enabled;
+    if (rawIgnoreEnabled !== undefined && typeof rawIgnoreEnabled !== 'boolean') {
+      throw new AppError('Поле ignore_enabled должно быть boolean', 400);
+    }
     const data = await OutboxWorkerService.runOnce({
       workerId: `api_${req.user?.id || 'admin'}`,
       batchSize: req.body?.batch_size || 25,
-      ignoreEnabled: Boolean(req.body?.ignore_enabled),
+      ignoreEnabled: rawIgnoreEnabled === true,
       actorUserId: req.user?.id || null
     });
     res.json({ status: 'success', data });

@@ -193,7 +193,7 @@ describe('R09.1: Outbox Recipient Consistency, Historical vs Live, Execution Mod
   }, 30000);
 
   beforeEach(async () => {
-    delete process.env.OUTBOX_WORKER_ENABLED;
+    process.env.OUTBOX_WORKER_ENABLED = 'true';
     await state.db.exec(`
       TRUNCATE public.crm_automation_executions, public.crm_automation_rules, public.crm_event_outbox,
                public.user_notifications, public.tasks, public.lead_stage_history, public.lead_assignment_history,

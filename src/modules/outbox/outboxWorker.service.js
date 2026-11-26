@@ -385,19 +385,53 @@ export class OutboxWorkerService {
     actorUserId = null,
     injectFault = null
   } = {}) {
-    if (ignoreEnabled) {
+    const isManualOverride = ignoreEnabled === true;
+    const db = getSafeDB();
+    const emptyResult = {
+      claimed: 0,
+      done: 0,
+      retried: 0,
+      quarantined: 0,
+      leaseLost: 0
+    };
+
+    const { data: settings, error: settingsErr } = await db
+      .from('crm_outbox_settings')
+      .select('*')
+      .eq('id', 1)
+      .maybeSingle();
+
+    if (settingsErr || !settings) {
+      logTechnical('warn', {
+        action: 'OUTBOX_RUN_SKIPPED',
+        reason: 'SETTINGS_READ_ERROR',
+        workerId,
+        error: settingsErr?.message || 'SETTINGS_NOT_FOUND'
+      });
+      return { ...emptyResult, skipped: true, reason: 'SETTINGS_READ_ERROR' };
+    }
+
+    const envEnabled = process.env.OUTBOX_WORKER_ENABLED === 'true';
+    const dbEnabled = settings.is_enabled === true;
+
+    if (!isManualOverride && (!envEnabled || !dbEnabled)) {
+      const reason = !envEnabled && !dbEnabled
+        ? 'OUTBOX_DISABLED_ENV_AND_DB'
+        : (!envEnabled ? 'OUTBOX_DISABLED_ENV' : 'OUTBOX_DISABLED_DB');
+      logTechnical('info', { action: 'OUTBOX_RUN_SKIPPED', reason, workerId, envEnabled, dbEnabled });
+      return { ...emptyResult, skipped: true, reason };
+    }
+
+    if (isManualOverride) {
       logTechnical('info', { action: 'MANUAL_RUN_ONCE_OVERRIDE', actorUserId, workerId });
     }
-    const db = getSafeDB();
-    const [{ data: settings }, { data: claimed, error: claimErr }] = await Promise.all([
-      db.from('crm_outbox_settings').select('*').eq('id', 1).maybeSingle(),
-      db.rpc('fn_claim_outbox_batch', {
-        p_worker_id: workerId,
-        p_batch_size: batchSize,
-        p_lease_seconds: leaseSeconds,
-        p_ignore_enabled: ignoreEnabled
-      })
-    ]);
+
+    const { data: claimed, error: claimErr } = await db.rpc('fn_claim_outbox_batch', {
+      p_worker_id: workerId,
+      p_batch_size: batchSize,
+      p_lease_seconds: leaseSeconds,
+      p_ignore_enabled: isManualOverride
+    });
 
     if (claimErr) {
       throw new AppError(`Не удалось захватить партию outbox: ${claimErr.message}`, 503);
@@ -405,6 +439,7 @@ export class OutboxWorkerService {
 
     const events = Array.isArray(claimed) ? claimed : [];
     const results = {
+      skipped: false,
       claimed: events.length,
       done: 0,
       retried: 0,

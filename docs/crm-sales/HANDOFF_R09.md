@@ -6,7 +6,11 @@
 | Переназначение между чтением и записью эффекта -> `RECIPIENT_STALE_REASSIGNED`, 0 эффектов на старого менеджера | `fn_apply_outbox_effect` (`070_r09_1_consistency.test.js`) | PGlite | `PASS` |
 | Задержанная очередь и повтор без продления SLA; точные `meeting_at` / `callback_at` | `OutboxWorkerService` (`070_r09_1_consistency.test.js`) | PGlite | `PASS` |
 | Исторический импорт -> новое живое обращение обрабатывается по обычным правилам | `070_r09_1_consistency.test.js` | PGlite | `PASS` |
-| Все 4 сочетания `OUTBOX_WORKER_ENABLED` и `crm_outbox_settings.is_enabled` + override-журнал | `OutboxWorkerService`, `run-outbox-worker.js`, `outbox.router.js` (`070_r09_1_consistency.test.js`) | PGlite | `PASS` |
+| Диагностика (`isOutboxWorkerActive` / `getDiagnostics`): все 4 сочетания флагов | `OutboxWorkerService` (`070_r09_1_consistency.test.js`) | PGlite | `PASS` |
+| Фактическое выполнение `runOnce`: все 4 сочетания флагов (`0` захватов/эффектов без обоих `true`, `last_success_at` не обновляется) | `OutboxWorkerService.runOnce` (`071_r09_1_1_outbox_gate.test.js`) | PGlite | `PASS` |
+| Ошибка чтения `crm_outbox_settings` -> `SETTINGS_READ_ERROR`, блокировка захвата и `last_success_at = NULL` | `OutboxWorkerService.runOnce` (`071_r09_1_1_outbox_gate.test.js`) | PGlite | `PASS` |
+| `POST /api/outbox/run-once`: `ignore_enabled="false"` -> `400`, `ADMIN` + `settings.manage`, журнал `actorUserId` + `workerId` | `outbox.router.js` (`071_r09_1_1_outbox_gate.test.js`) | Express + PGlite | `PASS` |
+| CLI `runOutboxCli`: соблюдение выключателей без override и запрет `--force-override` вне `--once` | `run-outbox-worker.js` (`071_r09_1_1_outbox_gate.test.js`) | Node + PGlite | `PASS` |
 | Сбой/невалидные ID/non-boolean при замене проектных прав -> полный откат | `fn_set_user_project_access`, `UsersRepository.setProjectAccess` (`070_r09_1_consistency.test.js`) | PGlite | `PASS` |
 | Диагностика > 1000 строк в БД и сохранение `last_success_at = NULL` при `leaseLost` | `fn_outbox_diagnostics`, `fn_outbox_preview_cutoff` (`070_r09_1_consistency.test.js`) | PGlite | `PASS` |
 | 2-процессный тест на реальном PostgreSQL | — | Staging PostgreSQL | `NOT_RUN` |
