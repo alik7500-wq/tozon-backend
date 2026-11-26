@@ -43,7 +43,8 @@ router.post('/run-once', restrictTo('ADMIN'), checkPermission('settings.manage')
     const data = await OutboxWorkerService.runOnce({
       workerId: `api_${req.user?.id || 'admin'}`,
       batchSize: req.body?.batch_size || 25,
-      ignoreEnabled: Boolean(req.body?.ignore_enabled)
+      ignoreEnabled: Boolean(req.body?.ignore_enabled),
+      actorUserId: req.user?.id || null
     });
     res.json({ status: 'success', data });
   } catch (err) {

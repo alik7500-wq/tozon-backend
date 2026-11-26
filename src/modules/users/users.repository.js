@@ -165,30 +165,38 @@ export class UsersRepository {
     return true;
   }
 
-  static async setProjectAccess(userId, { allProjectsAccess = false, projectIds = [], actorId = null }) {
+  static async setProjectAccess(userId, { allProjectsAccess, projectIds, actorId = null }) {
+    if (!/^\d+$/.test(String(userId || '')) || Number(userId) <= 0) {
+      throw new AppError('Некорректный ID пользователя', 400);
+    }
+    if (typeof allProjectsAccess !== 'boolean') {
+      throw new AppError('all_projects_access должен быть boolean', 400);
+    }
+    if (!Array.isArray(projectIds)) {
+      throw new AppError('allowed_project_ids должен быть массивом', 400);
+    }
+    const normalizedIds = [];
+    for (const rawId of projectIds) {
+      const strId = String(rawId ?? '').trim();
+      if (!/^\d+$/.test(strId) || Number(strId) <= 0 || !Number.isSafeInteger(Number(strId))) {
+        throw new AppError(`Некорректный ID проекта: ${rawId}`, 400);
+      }
+      normalizedIds.push(Number(strId));
+    }
+
     const db = getDB();
-    const { error: userErr } = await db
-      .from('users')
-      .update({ all_projects_access: Boolean(allProjectsAccess), updated_at: new Date().toISOString() })
-      .eq('id', userId);
-    if (userErr) throw userErr;
-
-    const { error: delErr } = await db
-      .from('user_project_access')
-      .delete()
-      .eq('user_id', userId);
-    if (delErr) throw delErr;
-
-    const uniqueIds = [...new Set((projectIds || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
-    if (uniqueIds.length > 0) {
-      const rows = uniqueIds.map((projectId) => ({
-        user_id: Number(userId),
-        project_id: projectId,
-        can_view: true,
-        created_by: actorId ? Number(actorId) : null
-      }));
-      const { error: insErr } = await db.from('user_project_access').insert(rows);
-      if (insErr) throw insErr;
+    const { data: rpcRes, error: rpcErr } = await db.rpc('fn_set_user_project_access', {
+      p_user_id: Number(userId),
+      p_all_projects_access: allProjectsAccess,
+      p_project_ids: normalizedIds,
+      p_actor_id: actorId ? Number(actorId) : null
+    });
+    if (rpcErr) {
+      throw new AppError('Не удалось транзакционно обновить проектные права', 503);
+    }
+    if (rpcRes?.ok === false) {
+      const status = rpcRes.code === 'USER_NOT_FOUND' ? 404 : 400;
+      throw new AppError(rpcRes.message || 'Ошибка назначения проектных прав', status);
     }
 
     return this.findById(userId);

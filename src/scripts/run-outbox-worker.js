@@ -2,13 +2,22 @@ import 'dotenv/config';
 import { OutboxWorkerService } from '../modules/outbox/outboxWorker.service.js';
 
 const once = process.argv.includes('--once') || process.env.OUTBOX_WORKER_ONCE === 'true';
+const forceOverride = process.argv.includes('--force-override');
 const intervalMs = Math.max(2000, Number(process.env.OUTBOX_WORKER_INTERVAL_MS || 5000));
 const batchSize = Math.min(100, Math.max(1, Number(process.env.OUTBOX_WORKER_BATCH_SIZE || 25)));
 const leaseSeconds = Math.min(600, Math.max(5, Number(process.env.OUTBOX_WORKER_LEASE_SECONDS || 60)));
 
 async function main() {
+  if (process.env.OUTBOX_WORKER_ENABLED !== 'true' && !forceOverride) {
+    console.info('[outbox-cli] skipped: OUTBOX_WORKER_ENABLED is not true (use --force-override for manual run)');
+    process.exit(0);
+  }
+  if (forceOverride) {
+    console.warn('[outbox-cli] MANUAL_CLI_OVERRIDE enabled');
+  }
+
   if (once) {
-    const result = await OutboxWorkerService.runOnce({ batchSize, leaseSeconds });
+    const result = await OutboxWorkerService.runOnce({ batchSize, leaseSeconds, ignoreEnabled: forceOverride });
     console.info('[outbox-cli] run-once completed:', result);
     process.exit(0);
   }

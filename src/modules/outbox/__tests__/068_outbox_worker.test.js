@@ -156,6 +156,14 @@ function createPgliteSupabaseAdapter() {
         await state.db.query(`UPDATE public.crm_event_outbox SET lease_expires_at = NOW() - interval '10 seconds' WHERE id = $1`, [paramsObj.p_event_id]);
         return { data: true, error: null };
       }
+      if (fnName === 'fn_outbox_diagnostics') {
+        const res = await state.db.query(`SELECT public.fn_outbox_diagnostics() AS res`);
+        return { data: res.rows[0]?.res || null, error: null };
+      }
+      if (fnName === 'fn_outbox_preview_cutoff') {
+        const res = await state.db.query(`SELECT public.fn_outbox_preview_cutoff($1::timestamptz) AS res`, [paramsObj.p_cutoff_at]);
+        return { data: res.rows[0]?.res || null, error: null };
+      }
       return { data: null, error: null };
     }
   };
@@ -226,6 +234,7 @@ describe('R08: Real crm_event_outbox Worker, Lease Recovery, Idempotent Effects,
     await db.exec(readFileSync('src/db/migrations/066_user_project_access.sql', 'utf8'));
     await db.exec(readFileSync('src/db/migrations/068_outbox_worker_lease_and_controls.sql', 'utf8'));
     await db.exec(readFileSync('src/db/migrations/069_outbox_atomic_effect_guard.sql', 'utf8'));
+    await db.exec(readFileSync('src/db/migrations/070_r09_1_outbox_and_project_access_tx.sql', 'utf8'));
     state.db = db;
   }, 30000);
 

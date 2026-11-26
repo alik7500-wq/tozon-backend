@@ -126,7 +126,7 @@ export class OutboxWorkerService {
 
     const { data: lead, error: leadErr } = await db
       .from('leads')
-      .select('id, full_name, phone, source, source_code, status, stage, version, responsible_user_id, interested_project_id, budget_max_minor, first_contact_at, is_historical_import, archived_at')
+      .select('id, full_name, phone, source, source_code, status, stage, version, responsible_user_id, interested_project_id, budget_max_minor, first_contact_at, assigned_at, created_at, is_historical_import, archived_at')
       .eq('id', leadId)
       .maybeSingle();
     if (leadErr) throw new Error(`Lead lookup failed: ${leadErr.message}`);
@@ -134,17 +134,22 @@ export class OutboxWorkerService {
       return { skipped: true, reason: lead ? 'LEAD_ARCHIVED' : 'LEAD_NOT_FOUND' };
     }
 
-    // Historical import policy: never generate fresh SLA/notifications/auto-tasks by default
-    const isHistorical = event.event_type === 'LEAD_IMPORTED' || lead.is_historical_import === true || payload.is_historical_import === true;
-    if (isHistorical && !settings?.process_historical_import) {
+    // Historical import policy: suppress ONLY the historical import event itself, NOT future live events on the contact/lead
+    const isHistoricalEvent = event.event_type === 'LEAD_IMPORTED' || payload.is_historical_import === true;
+    if (isHistoricalEvent && !settings?.process_historical_import) {
       return { skipped: true, reason: 'HISTORICAL_IMPORT_SKIPPED' };
     }
 
     const tasks = [];
     const notifications = [];
     const ruleExecutions = [];
-    let expectedAssignedUserId = null;
+    let expectedAssignedUserId = lead.responsible_user_id ? Number(lead.responsible_user_id) : null;
     let requireOpen = true;
+
+    const parseSafeDate = (val, fallback) => {
+      const ms = val ? Date.parse(val) : NaN;
+      return Number.isFinite(ms) ? new Date(ms) : fallback;
+    };
 
     if (event.event_type === 'LEAD_LOST') {
       requireOpen = false;
@@ -157,8 +162,9 @@ export class OutboxWorkerService {
       expectedAssignedUserId = targetUserId;
 
       if (!lead.first_contact_at) {
-        const deadline = calculateSalesSlaDeadline(new Date(), 15);
-        const dueAt = (deadline || new Date(Date.now() + 15 * 60000)).toISOString();
+        const factTime = parseSafeDate(lead.assigned_at || payload.assigned_at || event.created_at, new Date());
+        const deadline = calculateSalesSlaDeadline(factTime, 15);
+        const dueAt = (deadline || new Date(factTime.getTime() + 15 * 60000)).toISOString();
         tasks.push({
           assigned_user_id: targetUserId,
           created_by: payload.actor_user_id || targetUserId,
@@ -187,8 +193,9 @@ export class OutboxWorkerService {
     } else if (event.event_type === 'LEAD_CREATED' || event.event_type === 'LEAD_IMPORTED') {
       if (lead.responsible_user_id) {
         if (!lead.first_contact_at) {
-          const deadline = calculateSalesSlaDeadline(new Date(), 15);
-          const dueAt = (deadline || new Date(Date.now() + 15 * 60000)).toISOString();
+          const factTime = parseSafeDate(lead.created_at || event.created_at, new Date());
+          const deadline = calculateSalesSlaDeadline(factTime, 15);
+          const dueAt = (deadline || new Date(factTime.getTime() + 15 * 60000)).toISOString();
           tasks.push({
             assigned_user_id: lead.responsible_user_id,
             created_by: payload.actor_user_id || lead.responsible_user_id,
@@ -221,7 +228,8 @@ export class OutboxWorkerService {
       }
       if (lead.responsible_user_id) {
         if (toStage === 'MEETING_SCHEDULED' && payload.meeting_at) {
-          const dueAt = normalizeToSalesWorkingWindow(new Date(payload.meeting_at)).toISOString();
+          // Preserve exact agreed meeting timestamp without silent shifting
+          const dueAt = new Date(payload.meeting_at).toISOString();
           tasks.push({
             assigned_user_id: lead.responsible_user_id,
             created_by: payload.actor_user_id || lead.responsible_user_id,
@@ -237,7 +245,8 @@ export class OutboxWorkerService {
             idempotency_key: `${event.idempotency_key}:STAGE_MEETING_FOLLOWUP`
           });
         } else if (toStage === 'SHOWING_DONE' && payload.showing_at) {
-          const dueAt = calculateSalesSlaDeadline(new Date(payload.showing_at), 60).toISOString();
+          const factShowing = parseSafeDate(payload.showing_at, new Date());
+          const dueAt = calculateSalesSlaDeadline(factShowing, 60).toISOString();
           tasks.push({
             assigned_user_id: lead.responsible_user_id,
             created_by: payload.actor_user_id || lead.responsible_user_id,
@@ -267,7 +276,8 @@ export class OutboxWorkerService {
       const commType = String(payload.comm_event_type || payload.outcome || '').toUpperCase();
       if (commType === 'NO_ANSWER' || commType === 'BUSY') {
         const slaMins = commType === 'BUSY' ? 60 : 120;
-        const dueAt = calculateSalesSlaDeadline(new Date(), slaMins).toISOString();
+        const factTime = parseSafeDate(event.created_at, new Date());
+        const dueAt = calculateSalesSlaDeadline(factTime, slaMins).toISOString();
         tasks.push({
           assigned_user_id: lead.responsible_user_id,
           created_by: payload.actor_user_id || lead.responsible_user_id,
@@ -283,7 +293,8 @@ export class OutboxWorkerService {
           idempotency_key: `${event.idempotency_key}:COMM_${commType}_FOLLOWUP`
         });
       } else if (payload.callback_at) {
-        const dueAt = normalizeToSalesWorkingWindow(new Date(payload.callback_at)).toISOString();
+        // Preserve exact agreed callback timestamp without silent shifting
+        const dueAt = new Date(payload.callback_at).toISOString();
         tasks.push({
           assigned_user_id: lead.responsible_user_id,
           created_by: payload.actor_user_id || lead.responsible_user_id,
@@ -333,6 +344,9 @@ export class OutboxWorkerService {
     if (injectFault === 'EXPIRE_LEASE_BEFORE_APPLY') {
       await db.rpc('fn_test_expire_lease_helper', { p_event_id: event.id }).catch(() => {});
     }
+    if (injectFault === 'REASSIGN_BEFORE_APPLY') {
+      await db.rpc('fn_test_reassign_lead_helper', { p_lead_id: lead.id }).catch(() => {});
+    }
 
     if (tasks.length === 0 && notifications.length === 0 && ruleExecutions.length === 0) {
       return { handled: true, empty: true };
@@ -368,8 +382,12 @@ export class OutboxWorkerService {
     batchSize = 25,
     leaseSeconds = 60,
     ignoreEnabled = false,
+    actorUserId = null,
     injectFault = null
   } = {}) {
+    if (ignoreEnabled) {
+      logTechnical('info', { action: 'MANUAL_RUN_ONCE_OVERRIDE', actorUserId, workerId });
+    }
     const db = getSafeDB();
     const [{ data: settings }, { data: claimed, error: claimErr }] = await Promise.all([
       db.from('crm_outbox_settings').select('*').eq('id', 1).maybeSingle(),
@@ -448,11 +466,13 @@ export class OutboxWorkerService {
     }
 
     const nowIso = new Date().toISOString();
+    const isFullSuccess = results.retried === 0 && results.quarantined === 0 && results.leaseLost === 0;
     await db
       .from('crm_outbox_settings')
       .update({
         last_run_at: nowIso,
-        ...(results.retried === 0 && results.quarantined === 0 ? { last_success_at: nowIso, last_error: null } : {}),
+        ...(isFullSuccess ? { last_success_at: nowIso, last_error: null } : {}),
+        ...(results.leaseLost > 0 ? { last_error: 'LEASE_LOST' } : {}),
         updated_at: nowIso
       })
       .eq('id', 1);
@@ -473,22 +493,11 @@ export class OutboxWorkerService {
 
   static async getDiagnostics() {
     const db = getSafeDB();
-    const [{ data: settings }, { data: rows, error }] = await Promise.all([
-      db.from('crm_outbox_settings').select('*').eq('id', 1).maybeSingle(),
-      db.from('crm_event_outbox').select('id, event_type, aggregate_id, status, attempts, max_attempts, next_retry_at, error_kind, quarantine_reason, created_at, processed_at').order('created_at', { ascending: true }).limit(1000)
-    ]);
-    if (error) throw new AppError('Не удалось получить диагностику outbox', 503);
-
-    const list = rows || [];
-    const pending = list.filter((r) => r.status === 'PENDING');
-    const failed = list.filter((r) => r.status === 'FAILED');
-    const processing = list.filter((r) => r.status === 'PROCESSING');
-    const quarantined = list.filter((r) => r.status === 'QUARANTINED');
-    const dueCandidates = [...pending, ...failed];
-    const oldestMs = dueCandidates.length ? Math.min(...dueCandidates.map((r) => Date.parse(r.created_at))) : null;
+    const { data: diag, error } = await db.rpc('fn_outbox_diagnostics');
+    if (error || !diag) throw new AppError('Не удалось получить диагностику outbox', 503);
 
     const envWorkerEnabled = process.env.OUTBOX_WORKER_ENABLED === 'true';
-    const dbWorkerEnabled = Boolean(settings?.is_enabled);
+    const dbWorkerEnabled = Boolean(diag.settings?.is_enabled);
     const misconfiguredWarning = envWorkerEnabled !== dbWorkerEnabled
       ? (envWorkerEnabled
           ? 'OUTBOX_WORKER_ENABLED=true, но crm_outbox_settings.is_enabled=false: работает legacy-резерв'
@@ -496,38 +505,23 @@ export class OutboxWorkerService {
       : null;
 
     return {
-      queueSize: pending.length + failed.length,
-      pendingCount: pending.length,
-      failedCount: failed.length,
-      processingCount: processing.length,
-      quarantinedCount: quarantined.length,
-      oldestPendingAgeSeconds: oldestMs ? Math.max(0, Math.floor((Date.now() - oldestMs) / 1000)) : 0,
+      ...diag,
       envWorkerEnabled,
       dbWorkerEnabled,
       effectiveActive: envWorkerEnabled && dbWorkerEnabled,
-      misconfiguredWarning,
-      settings: settings || null,
-      recentQuarantined: quarantined.slice(-20)
+      misconfiguredWarning
     };
   }
 
   static async previewCutoff({ cutoffAt }) {
-    const db = getSafeDB();
-    const { data: rows, error } = await db
-      .from('crm_event_outbox')
-      .select('id, status, created_at')
-      .in('status', ['PENDING', 'FAILED']);
-    if (error) throw new AppError('Не удалось выполнить предпросмотр cutoff', 503);
     const cutoffMs = Date.parse(cutoffAt);
     if (!Number.isFinite(cutoffMs)) throw new AppError('Некорректная дата cutoffAt', 400);
-
-    const eligible = (rows || []).filter((r) => Date.parse(r.created_at) >= cutoffMs);
-    const skippedHistorical = (rows || []).filter((r) => Date.parse(r.created_at) < cutoffMs);
-    return {
-      cutoffAt: new Date(cutoffMs).toISOString(),
-      eligibleCount: eligible.length,
-      skippedHistoricalCount: skippedHistorical.length
-    };
+    const db = getSafeDB();
+    const { data, error } = await db.rpc('fn_outbox_preview_cutoff', {
+      p_cutoff_at: new Date(cutoffMs).toISOString()
+    });
+    if (error || !data) throw new AppError('Не удалось выполнить предпросмотр cutoff', 503);
+    return data;
   }
 
   static async updateSettings({ isEnabled, cutoffAt, batchSize, leaseSeconds, processHistoricalImport, actorUserId }) {

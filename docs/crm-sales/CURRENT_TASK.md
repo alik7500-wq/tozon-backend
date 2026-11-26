@@ -1,20 +1,26 @@
 # CURRENT_TASK.md
 
-- **ID задачи:** `R08.1` — Завершение бизнес-обработчиков и защиты эффектов outbox
-- **Статус:** `DONE` (PGlite worker + `fn_apply_outbox_effect` + регрессия R03/R04.2 `20/20 PASS`; проверка двумя независимыми процессами на реальном PostgreSQL — `NOT_RUN` из-за отсутствия среды)
+- **ID задачи:** `R09.1` — Согласованность outbox и транзакционных проектных прав
+- **Статус:** `DONE` (PGlite `070_r09_1_consistency.test.js` 6/6 + `068` 8/8 + `066` 5/5 + `062` 7/7 `PASS`; 2-процессный PostgreSQL / staging / live Meta — `NOT_RUN` / `BLOCKED`)
 - **Ветки:**
   - `tozon-backend`: `feat/crm-sales-completion`
-  - `tozon-crm`: `a00` (без изменений в `R08.1`)
+  - `tozon-crm`: `a00` (без изменений в `R09.1`)
 - **Что сделано:**
-  - Миграция `069_outbox_atomic_effect_guard.sql`:
-    - Добавлена настройка `crm_outbox_settings.process_historical_import BOOLEAN NOT NULL DEFAULT FALSE`.
-    - Добавлена единая транзакционная RPC `fn_apply_outbox_effect(...)`: в одной транзакции проверяет активный `lease_token` и `lease_expires_at > NOW()`, состояние лида, наличие закрывающего `SIGNED`-договора в `deals` (даже при устаревшем `leads.stage`), ожидаемого ответственного и проектный допуск, после чего идемпотентно записывает `tasks`, `user_notifications` и `crm_automation_executions`.
-  - `OutboxWorkerService` (`outboxWorker.service.js`):
-    - Обязательная первичная задача (`PRIMARY_FIRST_CONTACT`, `event_ref = lead_primary_<id>`) создаётся ровно 1 раз для `LEAD_CREATED`/`LEAD_ASSIGNED` по регламенту `calculateSalesSlaDeadline(..., 15)` даже при выключенных дополнительных правилах; `COMMUNICATION_LOGGED` (`NO_ANSWER`/`BUSY`/`callback_at`) планирует перезвон по рабочему календарю.
-    - Проверка `project_id`, `source_code` и `conditions_json`; неподдержанные `action_type` отправляются в карантин (`UNSUPPORTED_RULE_ACTION`) и никогда не получают `EXECUTED`; пропуски фиксируются как `SKIPPED`.
-    - `LEAD_IMPORTED` / `is_historical_import` по умолчанию пропускается без свежих SLA/уведомлений/автозадач.
-    - Согласованы `OUTBOX_WORKER_ENABLED` и `crm_outbox_settings.is_enabled` (`isOutboxWorkerActive()` + `misconfiguredWarning` в диагностике).
-  - Добавлены тесты `R08.1` в `068_outbox_worker.test.js` (8/8 `PASS`).
+  - Миграция `070_r09_1_outbox_and_project_access_tx.sql`:
+    - `fn_apply_outbox_effect`: проверка соответствия каждого подготовленного получателя (`assigned_user_id`, `user_id`) текущему `leads.responsible_user_id` в одной транзакции с записью эффектов (`RECIPIENT_STALE_REASSIGNED` при гонке переназначения).
+    - `fn_set_user_project_access`: транзакционная замена `users.all_projects_access` и `user_project_access` с проверкой существования пользователя и всех проектов.
+    - `fn_outbox_diagnostics` и `fn_outbox_preview_cutoff`: точный подсчёт в БД без ограничения 1000 строк.
+  - `OutboxWorkerService`:
+    - Расчёт первичного SLA от факта `lead.created_at` / `lead.assigned_at`, сохранение точных `meeting_at` / `callback_at` без молчаливого сдвига.
+    - Исторический импорт подавляет только событие импорта (`LEAD_IMPORTED` / `payload.is_historical_import`), не блокируя последующие живые события.
+    - `last_success_at` обновляется только при `retried=0 && quarantined=0 && leaseLost=0`; ручной override в API/CLI логируется отдельно.
+  - `UsersRepository.setProjectAccess` и `users.router.js`: строгая проверка boolean, ID пользователя и всех ID проектов без молчаливого отбрасывания невалидных значений.
+
+## План оставшейся R09
+- `R09.2` — Сверка всех требований `F-01–F-20`, `N-01–N-03`, `A01–A52` с фактическим кодом (`NOT_IMPLEMENTED` / `PASS` / `NOT_RUN` / `BLOCKED`).
+- `R09.3` — Общий прогон и регрессия backend + frontend.
+- `R09.4` — Staging PostgreSQL (включая 2-процессную конкурентность), нагрузка `N-02` и разрешённые живые каналы.
+- `R09.5` — Итоговый предрелизный комплект (без merge/deploy до решения владельца).
 
 ## Следующая задача
-- `R09` — Финальная стабилизация (включая транзакционную замену проектных прав `UsersRepository.setProjectAccess`).
+- `R09.2` — Сверка всех `F/N/A` с кодом.
