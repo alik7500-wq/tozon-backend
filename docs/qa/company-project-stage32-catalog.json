@@ -1,0 +1,47 @@
+{
+  "batch_id": "d83bc220-176a-4497-a4ac-e45095b4aeb3",
+  "snapshot_at": "2026-11-26T18:52:38.372543+00:00",
+  "rows": 666,
+  "tables": [
+    {
+      "table_name": "buildings",
+      "rows": 4
+    },
+    {
+      "table_name": "discount_schemes",
+      "rows": 4
+    },
+    {
+      "table_name": "floors",
+      "rows": 44
+    },
+    {
+      "table_name": "layout_features",
+      "rows": 47
+    },
+    {
+      "table_name": "layout_rooms",
+      "rows": 165
+    },
+    {
+      "table_name": "layout_types",
+      "rows": 56
+    },
+    {
+      "table_name": "projects",
+      "rows": 2
+    },
+    {
+      "table_name": "sections",
+      "rows": 4
+    },
+    {
+      "table_name": "units",
+      "rows": 330
+    },
+    {
+      "table_name": "users",
+      "rows": 10
+    }
+  ]
+}
