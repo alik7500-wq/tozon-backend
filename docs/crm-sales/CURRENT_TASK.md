@@ -1,17 +1,20 @@
 # CURRENT_TASK.md
 
-- **ID задачи:** `R06.1` — Согласование ошибок API и жизненного цикла попытки отправки Instagram
-- **Статус:** `DONE` (реальный Axios interceptor + PGlite HTTP `fn_instagram_send_claim` + `InstagramReplyComposer` lifecycle тесты пройдены; 2-процессный PostgreSQL и живая Meta — `NOT_RUN`)
+- **ID задачи:** `R07` — Автообновление без потери контекста, страниц, истории и черновиков
+- **Статус:** `DONE` (UI/fake-timer/race tests + серверные регрессионные тесты R05/R06 пройдены; живые замеры `N-02` и live Meta/staging — `NOT_RUN` из-за отсутствия среды)
 - **Ветки:**
   - `tozon-backend`: `feat/crm-sales-completion`
   - `tozon-crm`: `a00`
 - **Что сделано:**
-  - `client/src/api/client.js`: удалён фиктивный `normalized.response` для сетевых/таймаут-ошибок `/integrations/instagram/*`; сохраняются `hasHttpResponse`, `isTimeout`, `isNetworkError`, `networkCode`/`code` и `status`; добавлены объяснения для `SEND_IN_PROGRESS`, `IDEMPOTENCY_CONFLICT`, `INSTAGRAM_SEND_UNCONFIRMED`, `INSTAGRAM_ACCESS_DENIED`.
-  - `server/src/modules/integrations/instagram-send.service.js`: при ошибке хранилища после вызова поставщика возвращается `deliveryStatus: 'unknown'` вместо retryable `503`.
-  - `client/src/features/instagram/InstagramReplyComposer.jsx`: разделены `draftText` и `operation` (`idempotencyKey`, `sentText`, `state: idle|sending|confirmed|failed|unknown`); `SEND_IN_PROGRESS` и сетевые/таймаут-сбои переводятся в `unknown`; после `failed` требуется явная кнопка «Начать новую попытку» с новым ключом; при `unknown` сброс предупреждает о возможной доставке; поздний ответ или сверка старой операции не затирает новый черновик или другой диалог.
-
-## Обязательно зарегистрировано в R07
-- Первая страница списка диалогов не является полной проверкой сохранения доступа к выбранному диалогу; очистку кэша/черновиков проверять отдельно.
+  - `LeadsPage.jsx`:
+    - Фоновое обновление запрашивает загруженный диапазон (`Math.max(50, leads.length)` для списка/таблицы и `perStageLimit = maxLoadedPerCol` для доски), обновляет записи по ID/версии, обрабатывает выход из фильтра и сохраняет догруженные страницы, независимые курсоры колонок, выбранную карточку и скролл.
+    - Добавлена защита от гонок `fetchLeads` и `fetchStats` (последовательный ID + контекст фильтра/вида), backoff (`5s -> 30s`), восстановление `online`/`offline`/`focus`, индикатор связи и времени последнего обновления.
+  - `InstagramInboxPage.jsx` и `InstagramReplyComposer.jsx`:
+    - Исправлена очистка `drafts` как `Map` (`drafts.delete`/`drafts.clear`, убран ошибочный `drafts.current`), исправлено закрытие выбранного диалога вне первой страницы.
+    - Фоновое обновление сливает 1-ю страницу диалогов с уже загруженными страницами 2..N и объединяет новые сообщения со старой загруженной историей (`messagesCursor` сохранён).
+    - Разделены `401/403` (реальный отказ/отзыв доступа -> очистка кэшей и `drafts`) и `409/503` (конфликт/временный сбой -> без массовой очистки).
+    - Добавлен `contextVersionRef` для отбрасывания поздних ответов после logout/смены пользователя/аккаунта и привязка `onSent` к полному контексту операции (`accountId`, `contactId`, `idempotencyKey`).
+    - Самопланируемый опрос с exponential backoff (`3s -> 30s`), `online`/`offline`/`focus` восстановлением, очисткой таймеров и статусом связи.
 
 ## Следующая задача
-- `R07` — Автообновление, сохранение догруженных страниц и проверка отзыва доступа/очистки кэша (в ветках `feat/crm-sales-completion` и `a00`).
+- `R08` — Очередь следующих доработок (в ветках `feat/crm-sales-completion` и `a00`).
