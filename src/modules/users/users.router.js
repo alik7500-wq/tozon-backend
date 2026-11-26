@@ -208,5 +208,26 @@ router.delete('/:id', manageUsers, restrictTo('ADMIN'), chiefOnlyGuard, async (r
   }
 });
 
+// PUT /api/users/:id/project-access - Explicit assignment of project scope (R04.2)
+router.put('/:id/project-access', manageUsers, restrictTo('ADMIN'), chiefOnlyGuard, async (req, res, next) => {
+  try {
+    const { all_projects_access = false, allowed_project_ids = [] } = req.body || {};
+    if (!Array.isArray(allowed_project_ids)) {
+      return next(new AppError('allowed_project_ids должен быть массивом', 400));
+    }
+    const updatedUser = await UsersRepository.setProjectAccess(req.params.id, {
+      allProjectsAccess: Boolean(all_projects_access),
+      projectIds: allowed_project_ids,
+      actorId: req.user?.id
+    });
+    res.status(200).json({
+      status: 'success',
+      data: { user: updatedUser }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;
 

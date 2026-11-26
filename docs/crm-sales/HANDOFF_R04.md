@@ -1,21 +1,22 @@
-# HANDOFF_R04.md — R04 & R04.1: Фильтры, счётчики, доска, пагинация, экспорт и project scope
+# HANDOFF_R04.md — R04, R04.1 и R04.2: Фильтры, пагинация, доска, экспорт и реальный project scope
 
-## Реализованные артефакты (R04 + R04.1)
-- **Backend:**
-  - `src/db/migrations/064_unified_lead_query_and_cursor.sql` — базовая единая функция `public.fn_query_leads_unified(p_filters JSONB, p_scope JSONB)`.
-  - `src/db/migrations/065_harden_unified_query_cursor_and_scope.sql` — аддитивное обновление `public.fn_query_leads_unified`:
-    - `created_at_iso_us` (`YYYY-MM-DD"T"HH24:MI:SS.US"Z"`) для точного микросекундного keyset-курсора;
-    - fail-closed `has_all_projects` / `allowed_project_ids` (при `has_all_projects = false` и пустом/отсутствующем списке проектов возвращает `0` строк);
-    - `board_per_stage_limit` для независимой порционной выборки по каждой из 9 канонических колонок (`board_columns`).
-  - `src/modules/leads/leadFilterValidator.js` — сохранение микросекунд и `id_str` в курсоре, проверка формата/диапазона и `filterHash`, поддержка `boardPerStageLimit`, константа `MAX_EXPORT_ROWS`.
-  - `src/modules/leads/leads.repository.js` — `LeadsRepository.queryUnified` с формированием `boardColumns` и per-column `nextCursor`.
-  - `src/modules/leads/leads.router.js` — добавлен `GET /api/leads/board`; `GET /api/leads/export` переведён на потоковую отдачу `.xlsx` (по умолчанию, `ExcelJS.stream.xlsx.WorkbookWriter`) и `csv` (`?format=csv`) без тихого обрезания на 10 000 строках и с явным `413 EXPORT_LIMIT_EXCEEDED`.
-  - Тесты: `064_unified_query_cursor.test.js` (PGlite), `065_export_and_board_api.test.js` (Supertest + ExcelJS).
-- **Frontend:**
-  - `src/features/leads/LeadsPage.jsx`, `src/features/leads/LeadKanbanView.jsx` — загрузка доски через `/leads/board`, независимая догрузка колонок (`Показать ещё`), кнопка `Экспорт Excel`.
-  - Тесты: `src/features/leads/__tests__/LeadsWorkspaceCompletion.test.jsx`.
+## Аудит источника проектных прав (R04.2)
+- В существующей кодовой базе не было постоянного табличного или колоночного источника доступа пользователей к проектам (`user_cash_desk_access` существовал только для касс, а `layout_presentation.repository.js` проверял in-memory поле `user.assigned_project_ids`, которое не загружалось в `UsersRepository`).
+- Реализована минимальная постоянная модель допуска в `src/db/migrations/066_user_project_access.sql`:
+  - `public.users.all_projects_access BOOLEAN NOT NULL DEFAULT FALSE`
+  - `public.user_project_access (id, user_id, project_id, can_view, created_by, created_at)` с `UNIQUE(user_id, project_id)`, RLS и `REVOKE ALL FROM PUBLIC, anon, authenticated`.
 
-## Ограничения и статусы среды
-- Локально: PGlite (`@electric-sql/pglite`), Vitest + Supertest (`server`) и Vite build + Vitest jsdom (`client`) — `PASS`.
-- Live staging PostgreSQL: `NOT_RUN` (нет подключения к staging Supabase в среде выполнения).
-- Примечание для `R07`: фоновый авто-refresh (`tick`) по-прежнему перезагружает первую страницу/снимок; сохранение догруженных курсором страниц при автообновлении выполняется в `R07`.
+## Политика совместимости для существующих пользователей
+- Миграция `066` **не** выдаёт автоматически `all_projects_access = TRUE` менеджерам или директорам и не изменяет рабочую базу.
+- После применения `066` на staging/production администратор назначает допуски существующим пользователям явно через `PUT /api/users/:id/project-access` (либо контролируемым админ-скриптом).
+- Исключение только для `ADMIN` с явным wildcard-правом `permissions: ['*']` (если `all_projects_access` не выставлен в `false`).
+
+## Матрица приёмки R04.2
+| Проверка | Реализация / путь | Среда | Статус |
+|---|---|---|---|
+| `SALES_MANAGER` видит только свои лиды в разрешённом проекте (`list`, `board`, `stats`, `export`) | `protect -> UsersRepository.findById -> user_project_access -> fn_query_leads_unified` (`066_project_access_integration.test.js`) | PGlite + Express/Supertest | `PASS` |
+| `SALES_MANAGER` с пустым допуском получает `0` строк (fail-closed) | `leadFilterValidator` + `065` + `066` (`066_project_access_integration.test.js`) | PGlite + Express/Supertest | `PASS` |
+| `DIRECTOR` с `all_projects_access = false` ограничен назначенным проектом | `leadFilterValidator` (без автовывода глобальных прав) + `066_project_access_integration.test.js` | PGlite + Express/Supertest | `PASS` |
+| `ADMIN` с явным `all_projects_access = true` видит все проекты | `066_project_access_integration.test.js` | PGlite + Express/Supertest | `PASS` |
+| Ошибка загрузки `user_project_access` возвращает `503` (не `200 []` и не расширение прав) | `UsersRepository.findById` -> `protect` -> Express errorHandler (`066_project_access_integration.test.js`) | PGlite + Express/Supertest | `PASS` |
+| Проверка на live staging PostgreSQL | — | Live staging Supabase | `NOT_RUN` |

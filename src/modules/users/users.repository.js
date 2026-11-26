@@ -1,4 +1,29 @@
 import { getDB } from '../../db/connection.js';
+import { AppError } from '../../shared/errors/errorHandler.js';
+
+const BASE_USER_COLS = 'id, name, email, role, permissions, is_active, created_at, updated_at';
+const EXT_USER_COLS = 'id, name, email, role, permissions, is_active, is_sales_rep, all_projects_access, created_at, updated_at';
+
+async function attachUserProjectScope(db, user) {
+  if (!user) return null;
+  const { data: projectRows, error: projectErr } = await db
+    .from('user_project_access')
+    .select('project_id')
+    .eq('user_id', user.id)
+    .eq('can_view', true);
+
+  if (projectErr) {
+    throw new AppError('Не удалось загрузить проектные права доступа пользователя', 503);
+  }
+
+  const allowedIds = (projectRows || []).map((row) => String(row.project_id));
+  return {
+    ...user,
+    all_projects_access: Boolean(user.all_projects_access),
+    allowed_project_ids: allowedIds,
+    assigned_project_ids: allowedIds.map(Number)
+  };
+}
 
 export class UsersRepository {
   static async findAll() {
@@ -6,16 +31,16 @@ export class UsersRepository {
     try {
       const { data, error } = await db
         .from('users')
-        .select('id, name, email, role, permissions, is_active, is_sales_rep, created_at, updated_at')
+        .select(EXT_USER_COLS)
         .order('id', { ascending: true });
       if (!error && data) return data;
     } catch {
-      // Fallback if is_sales_rep column does not exist yet
+      // Fallback if extended columns do not exist yet
     }
 
     const { data: fbData, error: fbErr } = await db
       .from('users')
-      .select('id, name, email, role, permissions, is_active, created_at, updated_at')
+      .select(BASE_USER_COLS)
       .order('id', { ascending: true });
       
     if (fbErr) throw fbErr;
@@ -36,25 +61,30 @@ export class UsersRepository {
 
   static async findById(id) {
     const db = getDB();
+    let userRow = null;
     try {
       const { data, error } = await db
         .from('users')
-        .select('id, name, email, role, permissions, is_active, is_sales_rep, created_at, updated_at')
+        .select(EXT_USER_COLS)
         .eq('id', id)
         .single();
-      if (!error && data) return data;
+      if (!error && data) userRow = data;
     } catch {
-      // Fallback
+      // Fallback if extended columns do not exist yet
     }
 
-    const { data: fbData, error: fbErr } = await db
-      .from('users')
-      .select('id, name, email, role, permissions, is_active, created_at, updated_at')
-      .eq('id', id)
-      .single();
-      
-    if (fbErr && fbErr.code !== 'PGRST116') throw fbErr;
-    return fbData;
+    if (!userRow) {
+      const { data: fbData, error: fbErr } = await db
+        .from('users')
+        .select(BASE_USER_COLS)
+        .eq('id', id)
+        .single();
+        
+      if (fbErr && fbErr.code !== 'PGRST116') throw fbErr;
+      userRow = fbData;
+    }
+
+    return attachUserProjectScope(db, userRow);
   }
 
   static async create(user) {
@@ -133,5 +163,34 @@ export class UsersRepository {
 
     if (error) throw error;
     return true;
+  }
+
+  static async setProjectAccess(userId, { allProjectsAccess = false, projectIds = [], actorId = null }) {
+    const db = getDB();
+    const { error: userErr } = await db
+      .from('users')
+      .update({ all_projects_access: Boolean(allProjectsAccess), updated_at: new Date().toISOString() })
+      .eq('id', userId);
+    if (userErr) throw userErr;
+
+    const { error: delErr } = await db
+      .from('user_project_access')
+      .delete()
+      .eq('user_id', userId);
+    if (delErr) throw delErr;
+
+    const uniqueIds = [...new Set((projectIds || []).map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    if (uniqueIds.length > 0) {
+      const rows = uniqueIds.map((projectId) => ({
+        user_id: Number(userId),
+        project_id: projectId,
+        can_view: true,
+        created_by: actorId ? Number(actorId) : null
+      }));
+      const { error: insErr } = await db.from('user_project_access').insert(rows);
+      if (insErr) throw insErr;
+    }
+
+    return this.findById(userId);
   }
 }

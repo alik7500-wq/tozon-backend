@@ -1,19 +1,20 @@
 # CURRENT_TASK.md
 
-- **ID задачи:** `R04.1` — Исправление замечаний к фильтрам, пагинации, доске, экспорту и scope проектов
-- **Статус:** `DONE` (PGlite DB-side query/cursor + Supertest streaming export/board + UI mock тесты пройдены; сохранение догруженных страниц при фоновом автообновлении передано в `R07`; live staging — `NOT_RUN`)
+- **ID задачи:** `R04.2` — Подключение реального источника проектных прав
+- **Статус:** `DONE` (PGlite HTTP end-to-end `protect -> UsersRepository -> user_project_access -> queryUnified -> fn_query_leads_unified` + все модульные тесты пройдены; сохранение догруженных страниц при автообновлении передано в `R07`; live staging — `NOT_RUN`)
 - **Ветки:**
   - `tozon-backend`: `feat/crm-sales-completion`
-  - `tozon-crm`: `a00`
+  - `tozon-crm`: `a00` (без изменений в `R04.2`)
 - **Что сделано:**
-  - Миграция `065_harden_unified_query_cursor_and_scope.sql`: точный микросекундный курсор `created_at_iso_us` (`YYYY-MM-DD"T"HH24:MI:SS.US"Z"`), fail-closed `has_all_projects` / `allowed_project_ids` (пустой/неизвестный scope ограниченной роли возвращает `0` строк), независимая порционная выборка `board_columns` через `board_per_stage_limit`.
-  - В `leadFilterValidator.js` и `leads.repository.js`: сохранение микросекунд в курсоре без `Date.toISOString()`, валидация формата и диапазона курсора, per-column `nextCursor` с корректным `stageFilterHash`.
-  - В `leads.router.js`: добавлен `GET /api/leads/board`; `GET /api/leads/export` переведён на потоковый экспорт Excel (`.xlsx` по умолчанию через `ExcelJS.stream.xlsx.WorkbookWriter`, опционально `?format=csv`) без тихой обрезки на 10 000 строках и с явным `413 EXPORT_LIMIT_EXCEEDED` при превышении `MAX_EXPORT_ROWS`.
-  - На frontend (`LeadsPage.jsx`, `LeadKanbanView.jsx`): Kanban использует `GET /leads/board` и порционную догрузку каждой колонки (`Показать ещё` -> `/leads?stage=...&cursor=...`); кнопка экспорта переведена на `Экспорт Excel`.
-  - Тесты: `064_unified_query_cursor.test.js` (6/6), `065_export_and_board_api.test.js` (4/4, включая 10 050 строк `.xlsx` и `csv` и `413`), `LeadsWorkspaceCompletion.test.jsx` (3/3).
+  - Зафиксировано отсутствие ранее существовавшего постоянного источника проектных прав в БД (`layout_presentation.repository.js` проверял только in-memory `assigned_project_ids`).
+  - Создана миграция `066_user_project_access.sql`: колонка `users.all_projects_access BOOLEAN NOT NULL DEFAULT FALSE` и таблица `public.user_project_access(user_id, project_id, can_view)` с RLS и правами только для `service_role`.
+  - В `UsersRepository.findById` подключена загрузка `all_projects_access` и `allowed_project_ids` из `public.user_project_access`; ошибка чтения `user_project_access` явно возвращает `503 AppError` (без расширения прав и без маскировки под пустой список).
+  - В `users.router.js` добавлен `PUT /api/users/:id/project-access` (только `ADMIN`) для явного назначения допусков существующим и новым пользователям без автоматической модификации рабочей БД.
+  - В `leadFilterValidator.js` убран автоматический вывод глобальных прав `DIRECTOR` из отсутствия `allowed_project_ids`: `DIRECTOR` без `all_projects_access = true` строго ограничен назначенными проектами (или видит `0` строк при пустом списке).
+  - Добавлен полный HTTP-интеграционный тест `066_project_access_integration.test.js` (`protect` + JWT + `UsersRepository.findById` + `user_project_access` + `leadsRouter` + `fn_query_leads_unified` в PGlite).
 
 ## Передано в R07
-- Сохранение догруженных по `nextCursor` страниц при фоновом периодическом автообновлении (сейчас фоновый `tick` запрашивает первую страницу) — решается в `R07`.
+- Сохранение догруженных по `nextCursor` страниц при фоновом периодическом автообновлении — решается в `R07`.
 
 ## Следующая задача
 - `R05` — Доступ `SALES_MANAGER` к основной `InstagramInboxPage` и маршруту (в ветках `feat/crm-sales-completion` и `a00`).

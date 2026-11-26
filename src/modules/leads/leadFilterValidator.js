@@ -223,11 +223,20 @@ export function validateAndNormalizeLeadQuery(query = {}, user = {}) {
     dbFilters.cursor_id = decodedCursor.cursor_id;
   }
 
-  // Server-authoritative project scope: never infer all-projects for empty/unknown restricted scope
-  const isGlobalSupervisor = ['ADMIN', 'DIRECTOR'].includes(scope.role);
-  const explicitAllProjects = user?.all_projects_access === true;
+  // Server-authoritative project scope (R04.2):
+  // - Never infer global DIRECTOR rights from missing allowed_project_ids
+  // - Never grant all-projects access on empty/unknown scope
+  // - Only explicit all_projects_access === true (or ADMIN with wildcard '*' and not explicitly disabled) grants global scope
+  if (user?.project_scope_error) {
+    throw new AppError('Не удалось загрузить проектные права доступа пользователя', 503);
+  }
+  const isExplicitAdminWildcard =
+    scope.role === 'ADMIN' &&
+    Array.isArray(user?.permissions) &&
+    user.permissions.includes('*') &&
+    user?.all_projects_access !== false;
   const hasExplicitProjectList = Array.isArray(user?.allowed_project_ids);
-  const hasAllProjects = explicitAllProjects || (isGlobalSupervisor && !hasExplicitProjectList);
+  const hasAllProjects = user?.all_projects_access === true || isExplicitAdminWildcard;
 
   const dbScope = {
     user_id: user?.id ? String(user.id) : null,

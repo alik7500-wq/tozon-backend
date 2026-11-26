@@ -77,7 +77,7 @@ describe('R04: Unified DB Query, Canonical Stage Filtering, Timezone [from, to),
       );
     }
 
-    const user = { id: 1, role: 'DIRECTOR' };
+    const user = { id: 1, role: 'DIRECTOR', all_projects_access: true };
     const collectedIds = [];
     let cursor = null;
 
@@ -128,18 +128,18 @@ describe('R04: Unified DB Query, Canonical Stage Filtering, Timezone [from, to),
     await db.query(`INSERT INTO public.leads (id, full_name, status, stage, responsible_user_id, interested_project_id, pause_until, pause_reason, created_at) VALUES (3, 'Paused Lead', 'IN_PROGRESS', 'IN_PROGRESS', 2, 1, NOW() + interval '2 days', 'Отпуск', '2026-11-25T12:00:00.000Z')`);
 
     // Check SIGNED filter for Director: only Lead 2 (not Lead 1 legacy WON)
-    const qSigned = validateAndNormalizeLeadQuery({ stage: 'SIGNED' }, { id: 1, role: 'DIRECTOR' });
+    const qSigned = validateAndNormalizeLeadQuery({ stage: 'SIGNED' }, { id: 1, role: 'DIRECTOR', all_projects_access: true });
     const rSigned = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(qSigned.dbFilters), JSON.stringify(qSigned.dbScope)])).rows[0].res;
     expect(rSigned.total).toBe(1);
     expect(rSigned.leads[0].id).toBe(2);
 
     // Check Asia/Dushanbe [from, to): 2026-11-25 22:00 UTC is 2026-11-26 03:00 Dushanbe -> excluded from createdTo=2026-11-25
-    const qNov25 = validateAndNormalizeLeadQuery({ createdFrom: '2026-11-25', createdTo: '2026-11-25' }, { id: 1, role: 'DIRECTOR' });
+    const qNov25 = validateAndNormalizeLeadQuery({ createdFrom: '2026-11-25', createdTo: '2026-11-25' }, { id: 1, role: 'DIRECTOR', all_projects_access: true });
     const rNov25 = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(qNov25.dbFilters), JSON.stringify(qNov25.dbScope)])).rows[0].res;
     expect(rNov25.leads.map((l) => l.id).sort()).toEqual([2, 3]);
 
     // Check NO_TASK vs PAUSED distinction
-    const qPaused = validateAndNormalizeLeadQuery({ taskState: 'PAUSED' }, { id: 1, role: 'DIRECTOR' });
+    const qPaused = validateAndNormalizeLeadQuery({ taskState: 'PAUSED' }, { id: 1, role: 'DIRECTOR', all_projects_access: true });
     const rPaused = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(qPaused.dbFilters), JSON.stringify(qPaused.dbScope)])).rows[0].res;
     expect(rPaused.leads.map((l) => l.id)).toEqual([3]);
 
@@ -151,7 +151,7 @@ describe('R04: Unified DB Query, Canonical Stage Filtering, Timezone [from, to),
   }, 30000);
 
   it('rejects unsupported filter keys, unknown stage/taskState, and mismatched/corrupt cursor with 400', () => {
-    const user = { id: 1, role: 'DIRECTOR' };
+    const user = { id: 1, role: 'DIRECTOR', all_projects_access: true };
     expect(() => validateAndNormalizeLeadQuery({ unknownParam: '1' }, user)).toThrow(/Неподдерживаемый параметр/);
     expect(() => validateAndNormalizeLeadQuery({ stage: 'BOGUS' }, user)).toThrow(/Неизвестный этап/);
     expect(() => validateAndNormalizeLeadQuery({ taskState: 'BOGUS' }, user)).toThrow(/Неизвестное состояние/);
@@ -173,7 +173,7 @@ describe('R04: Unified DB Query, Canonical Stage Filtering, Timezone [from, to),
          (104, 'Us 4', '+992900001104', 'NEW', 'NEW', 2, 1, '2026-11-25T10:00:10.123454+00:00')`
     );
 
-    const user = { id: 1, role: 'DIRECTOR' };
+    const user = { id: 1, role: 'DIRECTOR', all_projects_access: true };
     const q1 = validateAndNormalizeLeadQuery({ limit: '2' }, user);
     const r1 = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(q1.dbFilters), JSON.stringify(q1.dbScope)])).rows[0].res;
     expect(r1.leads.map((l) => l.id)).toEqual([101, 102]);
@@ -203,7 +203,7 @@ describe('R04: Unified DB Query, Canonical Stage Filtering, Timezone [from, to),
          (202, 'Lost Lead', '+992900090202', 'LOST', 'LOST', 2, 1, '2026-11-25T09:00:00Z')`
     );
 
-    const user = { id: 1, role: 'DIRECTOR' };
+    const user = { id: 1, role: 'DIRECTOR', all_projects_access: true };
     const q = validateAndNormalizeLeadQuery({ limit: '0', boardPerStageLimit: '10' }, user);
     const res = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(q.dbFilters), JSON.stringify(q.dbScope)])).rows[0].res;
 
@@ -238,6 +238,14 @@ describe('R04: Unified DB Query, Canonical Stage Filtering, Timezone [from, to),
     const rUnknown = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(qUnknown.dbFilters), JSON.stringify(qUnknown.dbScope)])).rows[0].res;
     expect(rUnknown.total).toBe(0);
     expect(rUnknown.leads).toEqual([]);
+
+    // DIRECTOR without all_projects_access or allowed_project_ids must ALSO fail closed (0 rows)
+    const dirNoAccess = { id: 1, role: 'DIRECTOR' };
+    const qDirNoAccess = validateAndNormalizeLeadQuery({}, dirNoAccess);
+    expect(qDirNoAccess.dbScope.has_all_projects).toBe(false);
+    const rDirNoAccess = (await db.query(`SELECT public.fn_query_leads_unified($1::jsonb, $2::jsonb) AS res`, [JSON.stringify(qDirNoAccess.dbFilters), JSON.stringify(qDirNoAccess.dbScope)])).rows[0].res;
+    expect(rDirNoAccess.total).toBe(0);
+    expect(rDirNoAccess.leads).toEqual([]);
 
     // Restricted user with explicit allowed_project_ids: [1] -> sees only project 1, never project 2
     const proj1User = { id: 2, role: 'SALES_MANAGER', allowed_project_ids: [1] };
