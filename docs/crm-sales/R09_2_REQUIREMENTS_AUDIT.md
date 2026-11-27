@@ -41,7 +41,7 @@
 |---|---|---|---|---|---|---|---|---|
 | F-01 | Каноническая воронка (9 этапов, единый источник истины) | `leadDomain.js`, `leads.router.js` (`/stages`), `062`/`063` | `LeadKanbanView.jsx`, `LeadsPage.jsx` | `leadDomain.test.js`, `LeadsWorkspaceCompletion.test.jsx` | Unit + jsdom | `IMPLEMENTED` | `PASS` (unit/mock); `NOT_RUN` (live) | Требуется E2E на staging PostgreSQL |
 | F-02 | Правила переходов этапов, причины отказа, откат с причиной | `leadDomain.js`, `062_atomic_lead_stage_transition.sql`, `063` | `LeadDrawer.jsx`, `LeadKanbanView.jsx` | `062_atomic_stage_transition.test.js` (7/7), `leadDomain.test.js` | PGlite + Unit | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (live) | Нет rollback-скрипта для `062`/`063` (`GAP-07`) |
-| F-03 | Общие фильтры, доска/таблица/список, курсор, счётчики, экспорт | `064`/`065`, `leadFilterValidator.js`, `leads.router.js` (`/`, `/export`, `/stats`) | `LeadsPage.jsx` (3 вида, URL, порционная доска) | `064_unified_query_cursor.test.js`, `066_project_access_integration.test.js` (5/5) | PGlite + jsdom | `IMPLEMENTED` | `PASS` (PGlite/mock); `NOT_RUN` (browser E2E) | Нет UI для назначения `project-access` существующим пользователям (`GAP-05`) |
+| F-03 | Общие фильтры, доска/таблица/список, курсор, счётчики, экспорт | `064`/`065`, `leadFilterValidator.js`, `leads.router.js` (`/`, `/export`, `/stats`), `users.router.js` (`/project-access`) | `LeadsPage.jsx`, `UsersPage.jsx`, `ProjectAccessModal.jsx` | `064`, `066` (5/5), `075` (2/2), `UsersProjectAccess.test.jsx` (4/4) | PGlite + jsdom | `IMPLEMENTED` | `PASS` (PGlite/jsdom); `NOT_RUN` (browser E2E) | — |
 | F-04 | Карточка на доске (контакт, ID, проект, бюджет/«Не указан», узкий экран) | `leads.repository.js` | `LeadKanbanView.jsx` | `LeadsWorkspaceCompletion.test.jsx` | jsdom + `vite build` | `IMPLEMENTED` | `PASS` (jsdom/build) | — |
 | F-05 | Единый жизненный цикл входящего события (outbox, SQL-пути) | `060`, `068`, `069`, `070`, `OutboxWorkerService` | — | `068_outbox_worker.test.js` (8/8), `070` (6/6), `071` (5/5) | PGlite | `IMPLEMENTED` | `PASS` (PGlite); `NOT_RUN` (2-proc PG) | Не проверен на 2 независимых процессах реального PostgreSQL |
 | F-06 | Источники, UTM, Google Forms/Sheets, файловый импорт, исторический импорт | `lead-intake/` (`intake.router.js`, `intake.service.js`), `060`, `070` | `LeadIntakeModal.jsx` | `intake.migration.test.js`, `LeadIntakeModal.test.jsx`, `070` | PGlite + jsdom | `IMPLEMENTED` | `PASS` (PGlite/jsdom) | Требуется staging-проверка live Google Forms/импорта большой партии |
@@ -97,7 +97,7 @@
 | A26 | P0 | Два договора одного покупателя | `deals`, `contacts` | `ClientsPage.jsx` | `ClientsPage.buyers.test.jsx` | jsdom | `IMPLEMENTED` | `PASS` (jsdom); `NOT_RUN` (live) | — |
 | A27 | P0 | Расторжение и другой действующий договор | `deals` | `ClientsPage.jsx` | `ClientsPage.buyers.test.jsx` | jsdom | `IMPLEMENTED` | `PASS` (jsdom); `NOT_RUN` (live) | — |
 | A28 | P0 | Прямая попытка открыть чужой lead/dialog/media | `leads.router.js`, `instagram-inbox.router.js`, `066` | — | `066`, R05 tests | PGlite + unit | `IMPLEMENTED` | `PASS` (PGlite/unit); `NOT_RUN` (live) | — |
-| A29 | P0 | Изменение роли/проекта во время сессии | `users.repository.js`, `070`, `InstagramInboxPage.jsx` | `LeadsPage.jsx`, `InstagramInboxPage.jsx` | `070`, R07.1 jsdom tests | PGlite + jsdom | `IMPLEMENTED` | `PASS` (mock); `NOT_RUN` (live) | Нет UI назначения `project-access` (`GAP-05`) |
+| A29 | P0 | Изменение роли/проекта во время сессии | `users.repository.js`, `users.router.js`, `070` | `UsersPage.jsx`, `ProjectAccessModal.jsx`, `LeadsPage.jsx`, `InstagramInboxPage.jsx` | `070`, `075` (2/2), `UsersProjectAccess.test.jsx` (4/4), R07.1 jsdom tests | PGlite + jsdom | `IMPLEMENTED` | `PASS` (PGlite/jsdom); `NOT_RUN` (live browser E2E) | — |
 | A30 | P0 | Два Instagram-профиля с одинаковым внешним ID | `060`, `instagram-inbox.router.js` | `InstagramInboxPage.jsx`, `InstagramReplyComposer.jsx` | `Instagram*.test.jsx` | jsdom | `IMPLEMENTED` | `PASS` (jsdom); `NOT_RUN` (live) | — |
 | A31 | P0 | Двойной клик «Отправить» | `067_instagram_send_idempotency.sql` | `InstagramReplyComposer.jsx` | R06 tests | jsdom + unit | `IMPLEMENTED` | `PASS` (mock); `NOT_RUN` (live Meta) | — |
 | A32 | P0 | Meta приняла, БД не сохранила / сеть оборвалась | `067`, `instagram-inbox.router.js` | `InstagramReplyComposer.jsx` | R06.1 tests | jsdom + unit | `IMPLEMENTED` | `PASS` (mock); `NOT_RUN` (live Meta) | — |
@@ -163,11 +163,9 @@
 - **Зависимости:** `060` (`contacts`), `ClientsPage.jsx`.
 - **Задача для исполнителя:** Реализовать API и UI ручного объединения дублей контактов с предпросмотром и защитой договоров.
 
-### `GAP-05` (`P0`) — Отсутствует UI назначения проектных прав существующим пользователям (`F-03` / `A29`)
-- **Последствие:** Проектные права (`all_projects_access`, `projectIds`) можно изменить только прямым вызовом `PUT /api/users/:id/project-access`, но не через интерфейс управления пользователями.
-- **Критерий исправления:** В экране управления пользователями (`ADMIN`) есть форма выбора `all_projects_access` и списка проектов, вызывающая `PUT /api/users/:id/project-access`.
-- **Зависимости:** `users.router.js`, `070` (`fn_set_user_project_access`).
-- **Задача для исполнителя:** Добавить управление проектными допусками в UI списка/карточки пользователя и покрыть тестом `vitest`.
+### `GAP-05` (`P0`) — **CLOSED в UI + PGlite** (сквозной browser E2E на staging остаётся `NOT_RUN`) — Интерфейс назначения проектных прав пользователям
+- **Реализация:** `ProjectAccessModal.jsx`, `UsersPage.jsx` (только для `ADMIN`, использует `PUT /api/users/:id/project-access` и `fn_set_user_project_access`).
+- **Доказательство:** `UsersProjectAccess.test.jsx` (4/4 `PASS`), `075_gap05_project_access_api.test.js` (2/2 `PASS`), `client vite build` (`PASS`).
 
 ### `GAP-06` (`P1`) — Неполные формулы аналитики (`F-16`–`F-18`, `A39`, `A43`)
 - **Последствие:** В `salesAnalytics.service.js` и `managerPerformance.service.js` отсутствуют медиана / P90 / P95 времени первого ответа и поэтапная когортная конверсия; не подтверждена сквозная сходимость клика на KPI-цифру с детализацией и Excel-выгрузкой на реальной БД.
