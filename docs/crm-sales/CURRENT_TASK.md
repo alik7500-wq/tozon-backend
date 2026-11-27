@@ -1,14 +1,13 @@
 # CURRENT_TASK.md
 
-- **ID задачи:** `GAP-05` — Интерфейс управления проектными правами пользователей
-- **Статус:** `DONE` (client `vite build` `PASS`, client Vitest 2 файла 15/15 `PASS`, server PGlite 3 файла 13/13 `PASS`; сквозной browser E2E на staging — `NOT_RUN`)
+- **ID задачи:** `GAP-08` — Точные дата и время задач (`due_at`, `due_date_only`, `Asia/Dushanbe`)
+- **Статус:** `DONE` (`TasksPageDueTime.test.jsx` 3/3 + `vite build` + `076_gap08_task_due_time.test.js` 2/2 + `068` 8/8 + `070` 6/6 + `062` 7/7 `PASS`; браузерный E2E на staging — `NOT_RUN`)
 - **Ветки:**
   - `alik7500-wq/tozon-crm`: `a00`
   - `alik7500-wq/tozon-backend`: `feat/crm-sales-completion`
 - **Что сделано:**
-  - Frontend (`a00`): добавлен `ProjectAccessModal.jsx` и кнопка «Проекты» в `UsersPage.jsx` (только для `ADMIN`): загрузка текущих прав (`GET /api/users/:id` + `GET /api/projects`), переключатель `all_projects_access` («Все проекты»), чекбоксы конкретных проектов, явное состояние «Нет доступа к проектам», блокировка повторного сохранения, сохранение редактируемых значений при ошибке, защита от позднего ответа при смене пользователя, отображение ошибки загрузки без подмены пустым списком.
-  - Тесты: `UsersProjectAccess.test.jsx` (4/4 `PASS`), `075_gap05_project_access_api.test.js` (2/2 `PASS` — запрет `DIRECTOR`/`SALES_MANAGER`, отсутствие автопереназначения лидов и немедленный отзыв доступа в открытой сессии).
-  - Добавлена инструкция администратору по назначению допусков существующим сотрудникам в `HANDOFF_R09.md`.
+  - Frontend (`a00`): добавлен `taskDueTime.js` (`Asia/Dushanbe` конвертация и расчёт просрочки), в `TasksPage.jsx` добавлены два режима срока («Дата и время» и «Только дата»), форма редактирования с сохранением исходного режима/времени и очисткой противоречивых полей при переключении режима, отображение `due_at` / `18:00 Asia/Dushanbe`.
+  - Backend (`feat/crm-sales-completion`): в `TasksRepository` (`tasks.repository.js`) исправлена фильтрация `OVERDUE` (учитывает `due_at` и правило `18:00 Asia/Dushanbe` для `due_date_only`, исключает `COMPLETED`/`CANCELLED`), `due_date` при точном `due_at` вычисляется в `Asia/Dushanbe`, при `due_date_only=true` сбрасывается `due_at=null`.
 
 ## Следующая задача
-- Закрытие оставшихся `P0`-блокеров из [R09_2_REQUIREMENTS_AUDIT.md](file:///d:/tozon-crm/server/docs/crm-sales/R09_2_REQUIREMENTS_AUDIT.md): `GAP-07` (rollback `062`–`074`) и `GAP-08` (`TasksPage` `due_at`).
+- Закрытие последнего `P0`-блокера из [R09_2_REQUIREMENTS_AUDIT.md](file:///d:/tozon-crm/server/docs/crm-sales/R09_2_REQUIREMENTS_AUDIT.md): `GAP-07` (rollback-скрипты для миграций `062`–`074`) перед общим прогоном `R09.3`.

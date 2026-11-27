@@ -51,7 +51,7 @@
 | F-10 | Единая карточка лида (лента, переписки, задачи, объекты, «Оформить сделку») | `leads.router.js`, `leads.repository.js` | `LeadDrawer.jsx` | `vite build` | Build | `IMPLEMENTED` | `NOT_RUN` (browser E2E) | Не пройден полный браузерный E2E сценарий |
 | F-11 | Instagram: права менеджера, вложения, отправка, идемпотентность, UNKNOWN, сверка | `instagram-inbox.router.js`, `067_instagram_send_idempotency.sql` | `InstagramInboxPage.jsx`, `InstagramReplyComposer.jsx`, `InstagramAccounts.jsx` | `Instagram*.test.jsx` (jsdom), R05/R06 server tests | jsdom + unit | `IMPLEMENTED` | `PASS` (jsdom/unit); `BLOCKED` (live Meta) | Заблокирована сквозная проверка на live Meta API (нужен тестовый токен и профиль) |
 | F-12 | Контакты и звонки (разделение попытки, недозвона и разговора; ручная/авто) | `leadDomain.js`, `leads.repository.js`, `calls.router.js` | `LeadDrawer.jsx` | `leadDomain.test.js`, `070` | Unit + PGlite | `IMPLEMENTED` | `PASS` (unit/PGlite); `NOT_RUN` (live Moizvonki) | Требуется проверка callback Moizvonki на staging |
-| F-13 | Точные сроки `due_at`, задачи, первичная задача, отмена при отказе | `060`, `062`, `063`, `tasks.service.js`, `OutboxWorkerService` | `LeadDrawer.jsx`, `TasksPage` | `060`, `062`, `063`, `068`, `070` | PGlite | `PARTIAL` | `PASS` (PGlite backend); `NOT_RUN` (TasksPage UI) | На `TasksPage` не подтверждён/не протестирован ввод точного времени `due_at` (`GAP-08`) |
+| F-13 | Точные сроки `due_at`, задачи, первичная задача, отмена при отказе | `060`, `062`, `063`, `tasks.service.js`, `tasks.repository.js`, `OutboxWorkerService` | `LeadDrawer.jsx`, `TasksPage.jsx`, `taskDueTime.js` | `060`, `062`, `063`, `068`, `070`, `076` (2/2), `TasksPageDueTime.test.jsx` (3/3) | PGlite + jsdom | `IMPLEMENTED` | `PASS` (PGlite/jsdom); `NOT_RUN` (browser E2E) | — |
 | F-14 | SLA (Asia/Dushanbe), паузы, эскалация без дублей | `leadSla.service.js`, `businessTime.js`, `OutboxWorkerService` | `LeadControlView.jsx` | `LeadControlView.test.jsx`, `070` | jsdom + PGlite | `IMPLEMENTED` | `PASS` (jsdom/PGlite); `NOT_RUN` (live) | — |
 | F-15 | Единый критерий покупателя (только `SIGNED`, защита от дублей/расторжения) | `060`, `deals`, `leadDomain.js` | `ClientsPage.jsx`, Deal Wizard | `ClientsPage.buyers.test.jsx`, `DealWizardBuyerEligibility.test.jsx` | jsdom + PGlite | `IMPLEMENTED` | `PASS` (jsdom/PGlite) | — |
 | F-16 | Аналитика: 4 обязательных режима (состояние, события, когорта, план-факт) | `salesAnalytics.service.js`, `managerPerformance.service.js`, `blockPlanFact.service.js` | `SalesAnalyticsPage.jsx`, `SalesManagementDashboard.jsx`, `ManagerPerformanceView.jsx` | `SalesAnalyticsPage.test.jsx`, `SalesManagementDashboard.test.jsx` | jsdom + unit | `PARTIAL` | `NOT_RUN` (live БД сверка) | Когортная воронка и план-факт не сведены в единую сквозную проверку на реальной БД (`GAP-06`) |
@@ -87,7 +87,7 @@
 | A16 | P0 | Перемещение NEW не создаёт первый ответ | `062`, `leadDomain.js` | `LeadKanbanView.jsx` | `062_atomic_stage_transition.test.js` | PGlite | `IMPLEMENTED` | `PASS` (PGlite) | — |
 | A17 | P0 | Повторная фиксация контакта не стирает первый | `leads.repository.js` (`recordFirstContact`) | `LeadDrawer.jsx` | `leadDomain.test.js` | Unit | `IMPLEMENTED` | `PASS` (unit); `NOT_RUN` (live) | — |
 | A18 | P0 | «Не ответил» и успешный разговор | `leadDomain.js`, `OutboxWorkerService` | `LeadDrawer.jsx` | `leadDomain.test.js`, `070` | Unit + PGlite | `IMPLEMENTED` | `PASS` (unit/PGlite) | — |
-| A19 | P0 | Срок задачи внутри дня, точная просрочка | `060` (`due_at`), `leadSla.service.js` | `LeadDrawer.jsx`, `TasksPage` | `060`, `070` | PGlite | `PARTIAL` | `NOT_RUN` (UI TasksPage) | Проверить UI ввода времени на `TasksPage` (`GAP-08`) |
+| A19 | P0 | Срок задачи внутри дня, точная просрочка | `060` (`due_at`), `leadSla.service.js`, `tasks.repository.js` | `LeadDrawer.jsx`, `TasksPage.jsx`, `taskDueTime.js` | `060`, `070`, `076` (2/2), `TasksPageDueTime.test.jsx` (3/3) | PGlite + jsdom | `IMPLEMENTED` | `PASS` (PGlite/jsdom); `NOT_RUN` (browser E2E) | — |
 | A20 | P0 | Ночь, граница дня, рабочий календарь | `businessTime.js`, `leadSla.service.js` | — | `leadSla.test.js` | Unit | `IMPLEMENTED` | `NOT_RUN` (staging TZ check) | — |
 | A21 | P0 | Смена ответственного не обнуляет общую задержку | `leadSla.service.js`, `070` | `LeadControlView.jsx` | `070` | PGlite | `IMPLEMENTED` | `NOT_RUN` (live) | — |
 | A22 | P0 | Встреча/показ назначены, но не состоялись | `062`, `leadDomain.js` | `LeadDrawer.jsx` | `062` | PGlite | `IMPLEMENTED` | `NOT_RUN` (live отчёт) | — |
@@ -179,11 +179,9 @@
 - **Зависимости:** Миграции `060`–`070`.
 - **Задача для исполнителя:** Подготовить и протестировать на PGlite/копии PostgreSQL rollback-процедуру для `062`–`070` с сохранением новых данных.
 
-### `GAP-08` (`P0`) — Не подтверждён UI ввода точного времени `due_at` на `TasksPage` (`F-13` / `A19`)
-- **Последствие:** Точные сроки `due_at` поддержаны на backend и в `LeadDrawer`, но работа с ними на общей `TasksPage` не подтверждена тестом/UI.
-- **Критерий исправления:** На `TasksPage` поддержано отображение/создание/редактирование `due_at` с часовым поясом проекта и покрыто `vitest`-тестом.
-- **Зависимости:** `tasks.router.js`, `TasksPage`.
-- **Задача для исполнителя:** Проверить и при необходимости доработать форму/отображение `due_at` на `TasksPage` + добавить тест.
+### `GAP-08` (`P0`) — **CLOSED в UI + PGlite** (браузерный E2E на staging остаётся `NOT_RUN`) — Точные дата и время задач (`due_at`, `due_date_only`, `Asia/Dushanbe`)
+- **Реализация:** `taskDueTime.js`, `TasksPage.jsx` (режимы «Дата и время» / «Только дата», редактирование, правило `18:00 Asia/Dushanbe`), `tasks.repository.js`.
+- **Доказательство:** `TasksPageDueTime.test.jsx` (3/3 `PASS`, включая `TZ=America/New_York`), `076_gap08_task_due_time.test.js` (2/2 `PASS`), `client vite build` (`PASS`).
 
 ### `GAP-09` (`P1`) — Отсутствует нагрузочный стенд и замеры `N-02` (`A52`)
 - **Последствие:** Нет объективных замеров P95 (≤1.5с / ≤3с / ≤7с) при 2x нагрузке, 2 backend-процессах и 10 сессиях.

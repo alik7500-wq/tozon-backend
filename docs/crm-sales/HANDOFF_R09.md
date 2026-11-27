@@ -17,7 +17,7 @@
 
 ## План оставшейся R09
 1. **`R09.2` — Сверка всех `F/N/A` с кодом (`DONE`):** полный отчёт и реестр `GAP-01`–`GAP-09` зафиксированы в `docs/crm-sales/R09_2_REQUIREMENTS_AUDIT.md`.
-2. **Закрытие `P0`-пробелов (перед `R09.3`/`R09.4`):** `GAP-01`–`GAP-01.3` (`DONE` в PGlite 9/9 + `sales_launch_phase3_6_concurrency` 23/23; 2-процессный тест `verify-gap01-two-process-pg.mjs` на реальной PostgreSQL — `NOT_RUN`), `GAP-05` (`DONE` в UI 4/4 + API PGlite 2/2; browser E2E — `NOT_RUN`), далее `GAP-07` (rollback `062`–`074`), `GAP-08` (`TasksPage` `due_at`).
+2. **Закрытие `P0`-пробелов (перед `R09.3`/`R09.4`):** `GAP-01`–`GAP-01.3` (`DONE` в PGlite 9/9 + `sales_launch_phase3_6_concurrency` 23/23; 2-процессный тест `verify-gap01-two-process-pg.mjs` на реальной PostgreSQL — `NOT_RUN`), `GAP-05` + `GAP-05.1` (`DONE` в UI 6/6 + API PGlite 2/2; browser E2E — `NOT_RUN`), `GAP-08` (`DONE` в UI 3/3 + API PGlite 2/2; browser E2E — `NOT_RUN`), далее `GAP-07` (rollback `062`–`074`).
 
 ## Инструкция администратору: назначение проектных допусков перед выпуском
 1. Войдите под учётной записью `ADMIN` в раздел «Сотрудники и роли доступа».

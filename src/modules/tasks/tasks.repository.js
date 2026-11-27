@@ -1,4 +1,5 @@
 import { getDB, getServiceDB } from '../../db/connection.js';
+import { getBusinessDate } from '../../utils/businessTime.js';
 
 const getSecureDB = () => {
   try {
@@ -40,13 +41,35 @@ export class TasksRepository {
 
     let tasks = data || [];
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = getBusinessDate();
+
+    const nowDate = new Date();
+    const isTaskOverdue = (t) => {
+      if (t.status !== 'OPEN') return false;
+      const dueAtMs = !t.due_date_only && t.due_at ? new Date(t.due_at).getTime() : null;
+      if (dueAtMs !== null && Number.isFinite(dueAtMs)) {
+        return dueAtMs < nowDate.getTime();
+      }
+      if (t.due_date && /^\d{4}-\d{2}-\d{2}$/.test(String(t.due_date).slice(0, 10))) {
+        const cutoffMs = Date.parse(`${String(t.due_date).slice(0, 10)}T18:00:00+05:00`);
+        return Number.isFinite(cutoffMs) ? cutoffMs < nowDate.getTime() : false;
+      }
+      return false;
+    };
+
+    const getTaskBusinessDate = (t) => {
+      if (!t.due_date_only && t.due_at) {
+        const parsed = new Date(t.due_at);
+        if (!Number.isNaN(parsed.getTime())) return getBusinessDate(parsed);
+      }
+      return t.due_date ? String(t.due_date).slice(0, 10) : null;
+    };
 
     // Filter by date categories if requested
     if (filters.dateFilter === 'TODAY') {
-      tasks = tasks.filter((t) => t.due_date === today && t.status === 'OPEN');
+      tasks = tasks.filter((t) => t.status === 'OPEN' && getTaskBusinessDate(t) === today);
     } else if (filters.dateFilter === 'OVERDUE') {
-      tasks = tasks.filter((t) => t.due_date < today && t.status === 'OPEN');
+      tasks = tasks.filter((t) => isTaskOverdue(t));
     } else if (filters.dateFilter === 'COMPLETED') {
       tasks = tasks.filter((t) => t.status === 'COMPLETED');
     }
@@ -62,14 +85,8 @@ export class TasksRepository {
       );
     }
 
-    const nowDate = new Date();
     return tasks.map((t) => {
-      const dueAtMs = t.due_at ? new Date(t.due_at).getTime() : null;
-      const isOverdue = t.status === 'OPEN' && (
-        dueAtMs !== null && Number.isFinite(dueAtMs)
-          ? dueAtMs < nowDate.getTime()
-          : Boolean(t.due_date && t.due_date < today)
-      );
+      const isOverdue = isTaskOverdue(t);
       return {
         ...t,
         client_name: t.client_name || t.leads?.full_name || 'Клиент',
@@ -77,7 +94,7 @@ export class TasksRepository {
         contract_number: t.deals?.contract_number || null,
         assigned_user_name: t.users?.name || 'Ответственный менеджер',
         isOverdue,
-        isToday: t.status === 'OPEN' && t.due_date === today,
+        isToday: t.status === 'OPEN' && getTaskBusinessDate(t) === today,
       };
     });
   }
@@ -103,6 +120,10 @@ export class TasksRepository {
     const db = getSecureDB();
     const now = new Date().toISOString();
 
+    const isDateOnly = Boolean(taskData.due_date_only ?? !taskData.due_at);
+    const normalizedDueAt = !isDateOnly && taskData.due_at ? new Date(taskData.due_at).toISOString() : null;
+    const normalizedDueDate = taskData.due_date || (normalizedDueAt ? getBusinessDate(normalizedDueAt) : getBusinessDate(now));
+
     const insertPayload = {
       lead_id: taskData.lead_id || null,
       deal_id: taskData.deal_id || null,
@@ -115,9 +136,9 @@ export class TasksRepository {
       phone: taskData.phone || null,
       project_name: taskData.project_name || null,
       unit_number: taskData.unit_number ? String(taskData.unit_number) : null,
-      due_date: taskData.due_date || (taskData.due_at ? String(taskData.due_at).split('T')[0] : now.split('T')[0]),
-      due_at: taskData.due_at || null,
-      due_date_only: Boolean(taskData.due_date_only ?? !taskData.due_at),
+      due_date: normalizedDueDate,
+      due_at: normalizedDueAt,
+      due_date_only: isDateOnly,
       timezone: taskData.timezone || 'Asia/Dushanbe',
       rule_key: taskData.rule_key || null,
       event_ref: taskData.event_ref || null,
@@ -168,10 +189,23 @@ export class TasksRepository {
   static async update(id, updateData) {
     const db = getSecureDB();
     const now = new Date().toISOString();
+    const payload = { ...updateData, updated_at: now };
+
+    if (payload.due_date_only === true) {
+      payload.due_at = null;
+      payload.timezone = payload.timezone || 'Asia/Dushanbe';
+    } else if (payload.due_date_only === false && payload.due_at) {
+      const parsed = new Date(payload.due_at);
+      if (!Number.isNaN(parsed.getTime())) {
+        payload.due_at = parsed.toISOString();
+        payload.due_date = payload.due_date || getBusinessDate(parsed);
+        payload.timezone = payload.timezone || 'Asia/Dushanbe';
+      }
+    }
 
     const { data, error } = await db
       .from('tasks')
-      .update({ ...updateData, updated_at: now })
+      .update(payload)
       .eq('id', id)
       .select()
       .single();
