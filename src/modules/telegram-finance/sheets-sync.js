@@ -1,3 +1,4 @@
+import {assertLegacyAutomationAllowed} from '../company-projects/workspace.background.js';
 import crypto from 'node:crypto';
 let lastResult=null;
 const scriptErrors=['SECRET_PROPERTY_MISSING_OR_SHORT','REQUEST_FORMAT_INVALID','REQUEST_TIMESTAMP_EXPIRED','SIGNATURE_MISMATCH'];
@@ -14,6 +15,7 @@ export async function syncSheets(repo, fetchImpl=fetch) {
   if(!sheetSyncConfigured())return;
   const url=process.env.TOZON_SHEETS_WEBHOOK_URL.trim();
   if(!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(url))throw new Error('INVALID_SHEETS_ENDPOINT');
+  await assertLegacyAutomationAllowed({global_export:true});
   const rows=await repo.sheetJobs();
   for(const job of rows.slice(0,1)) {
     const sheet=cashSheets[job.cash_desk_id];
@@ -21,6 +23,7 @@ export async function syncSheets(repo, fetchImpl=fetch) {
     const payload=JSON.stringify({id:job.id,sheet,...job.payload});
     const timestamp=Date.now();
     const signature=crypto.createHmac('sha256',process.env.TOZON_SHEETS_SECRET).update(timestamp+'.'+payload).digest('hex');
+    await assertLegacyAutomationAllowed({global_export:true});
     try {
       const res=await fetchImpl(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({payload,timestamp,signature}),signal:AbortSignal.timeout(45000)});
       if(!res.ok)throw new Error('GOOGLE_HTTP_ERROR');

@@ -1,0 +1,64 @@
+{
+  "environment": "tozon-crm-commercial-test",
+  "database_ref": "yaolkwbnhnacxxjpgiyu",
+  "checked_at_utc": "2026-11-26T18:14:25Z",
+  "project_id": "a1d3af61-af16-4e42-9be1-e6dc645929b3",
+  "readiness": {
+    "revision": 5,
+    "director_present": true,
+    "authority_present": true,
+    "partner_count": 2,
+    "partner_total": 100,
+    "complex_count": 1,
+    "archived_complex_count": 0,
+    "cash_count": 2,
+    "warehouse_count": 1,
+    "deal_scope_issues": 0,
+    "payment_scope_issues": 0,
+    "expense_scope_issues": 0,
+    "template_gaps": 0,
+    "private_bucket": true
+  },
+  "employee": {
+    "id": 4,
+    "active": true,
+    "project_only": true,
+    "roster_enabled": true,
+    "access_enabled": true,
+    "project_role": "MANAGER",
+    "visible_projects": [
+      "Tozon Plaza"
+    ],
+    "own_unit_ids": [
+      3,
+      4
+    ],
+    "foreign_project": "9603983f-6453-4765-aa5e-b136edd5e705",
+    "foreign_units_sqlstate": "42501",
+    "foreign_units_error": "WORKSPACE_ACCESS_DENIED"
+  },
+  "boundaries": {
+    "workspace_rpc_anon_execute": false,
+    "workspace_rpc_authenticated_execute": false,
+    "readiness_rpc_anon_execute": false,
+    "tables_with_rls_and_no_anon_or_authenticated_select": [
+      "company_project_cash_desks",
+      "company_project_leads",
+      "company_project_warehouses",
+      "company_workspace_access",
+      "company_workspace_users"
+    ]
+  },
+  "tests": {
+    "passed": 259,
+    "files": 30,
+    "command": "npx vitest run src/modules/company-projects src/pilot --fileParallelism=false",
+    "fixtures": "local PGlite and mocks"
+  },
+  "hosted_business_data_changed": false,
+  "production_touched": false,
+  "scope_limits": [
+    "Direct hosted SQL checks exercise RPC authorization with the existing test actor, not a new browser HTTP-session test.",
+    "Other real employee roles, partner identities and legal authority, opening balances, printed forms and production migration still need confirmation."
+  ]
+}

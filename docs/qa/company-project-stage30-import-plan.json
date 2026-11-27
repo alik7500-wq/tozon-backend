@@ -1,0 +1,275 @@
+{
+  "format_version": 1,
+  "mode": "OFFLINE_PREFLIGHT_ONLY",
+  "snapshot_at": "2026-11-26T18:45:47.767751+00:00",
+  "source_counts": {
+    "deals": 103,
+    "units": 330,
+    "users": 10,
+    "expenses": 733,
+    "payments": 491,
+    "construction_documents": 16
+  },
+  "execution_ready": false,
+  "users": [
+    {
+      "source_id": 1,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": false,
+      "source_role": "ADMIN",
+      "source_active": true,
+      "target_enabled": false,
+      "copy_credentials": false,
+      "copy_global_permissions": false,
+      "access_action": "TRANSLATE_EXPLICIT_PROJECT_AND_CASH_GRANTS"
+    },
+    {
+      "source_id": 2,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": false,
+      "source_role": "DIRECTOR",
+      "source_active": true,
+      "target_enabled": false,
+      "copy_credentials": false,
+      "copy_global_permissions": false,
+      "access_action": "TRANSLATE_EXPLICIT_PROJECT_AND_CASH_GRANTS"
+    },
+    {
+      "source_id": 3,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": true,
+      "source_role": "SALES_MANAGER",
+      "source_active": true,
+      "target_enabled": false,
+      "copy_credentials": false,
+      "copy_global_permissions": false,
+      "access_action": "TRANSLATE_EXPLICIT_PROJECT_AND_CASH_GRANTS"
+    },
+    {
+      "source_id": 4,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": true,
+      "source_role": "FINANCE_MANAGER",
+      "source_active": true,
+      "target_enabled": false,
+      "copy_credentials": false,
+      "copy_global_permissions": false,
+      "access_action": "TRANSLATE_EXPLICIT_PROJECT_AND_CASH_GRANTS"
+    },
+    {
+      "source_id": 5,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": false,
+      "source_role": "ADMIN",
+      "source_active": true,
+      "target_enabled": false,
+      "copy_credentials": false,
+      "copy_global_permissions": false,
+      "access_action": "TRANSLATE_EXPLICIT_PROJECT_AND_CASH_GRANTS"
+    },
+    {
+      "source_id": 6,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": false,
+      "source_role": "WAREHOUSE_MANAGER",
+      "source_active": true,
+      "target_enabled": false,
+      "copy_credentials": false,
+      "copy_global_permissions": false,
+      "access_action": "TRANSLATE_EXPLICIT_PROJECT_AND_CASH_GRANTS"
+    },
+    {
+      "source_id": 7,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": false,
+      "source_role": "CASHIER",
+      "source_active": true,
+      "target_enabled": false,
+      "copy_credentials": false,
+      "copy_global_permissions": false,
+      "access_action": "TRANSLATE_EXPLICIT_PROJECT_AND_CASH_GRANTS"
+    },
+    {
+      "source_id": 10,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": false,
+      "source_role": "ADMIN",
+      "source_active": true,
+      "target_enabled": false,
+      "copy_credentials": false,
+      "copy_global_permissions": false,
+      "access_action": "TRANSLATE_EXPLICIT_PROJECT_AND_CASH_GRANTS"
+    },
+    {
+      "source_id": 11,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": false,
+      "source_role": "SALES_MANAGER",
+      "source_active": true,
+      "target_enabled": false,
+      "copy_credentials": false,
+      "copy_global_permissions": false,
+      "access_action": "TRANSLATE_EXPLICIT_PROJECT_AND_CASH_GRANTS"
+    },
+    {
+      "source_id": 12,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": false,
+      "source_role": "SALES_MANAGER",
+      "source_active": true,
+      "target_enabled": false,
+      "copy_credentials": false,
+      "copy_global_permissions": false,
+      "access_action": "TRANSLATE_EXPLICIT_PROJECT_AND_CASH_GRANTS"
+    }
+  ],
+  "complexes": [
+    {
+      "source_id": 3,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": true,
+      "source_code": "25601",
+      "accounting_scope": "AB",
+      "company_project_target_id": null,
+      "preserve_demo_history": true
+    },
+    {
+      "source_id": 4,
+      "target_id": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "numeric_id_collision": false,
+      "source_code": "TOZON-PLAZA-2",
+      "accounting_scope": "VG",
+      "company_project_target_id": null,
+      "preserve_demo_history": true
+    }
+  ],
+  "cash_desks": [
+    {
+      "source_id": "ab90800a-73af-4cf7-88c2-397c304e2edf",
+      "target_id": null,
+      "source_code": "SALES_MANAGER",
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "accounting_scope": "AB",
+      "scope_basis": "LEGACY_ACCOUNTING_SCOPE_RULE_REQUIRES_RECONCILIATION"
+    },
+    {
+      "source_id": "6ddf2f64-0a77-4aeb-8daf-a391b2da0141",
+      "target_id": null,
+      "source_code": "MAIN_CASHIER",
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "accounting_scope": "AB",
+      "scope_basis": "LEGACY_ACCOUNTING_SCOPE_RULE_REQUIRES_RECONCILIATION"
+    },
+    {
+      "source_id": "fba621e6-4ebe-4459-8623-19f46d864cc6",
+      "target_id": null,
+      "source_code": "SALES_MANAGER_Dadojon",
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "accounting_scope": "AB",
+      "scope_basis": "LEGACY_ACCOUNTING_SCOPE_RULE_REQUIRES_RECONCILIATION"
+    },
+    {
+      "source_id": "c16e402e-2af2-4f12-9e9a-073d72a9682a",
+      "target_id": null,
+      "source_code": "BANK_ACCOUNT",
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "accounting_scope": "AB",
+      "scope_basis": "LEGACY_ACCOUNTING_SCOPE_RULE_REQUIRES_RECONCILIATION"
+    },
+    {
+      "source_id": "a8ac44fb-8da6-42a8-9243-353202383b58",
+      "target_id": null,
+      "source_code": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "accounting_scope": "AB",
+      "scope_basis": "LEGACY_ACCOUNTING_SCOPE_RULE_REQUIRES_RECONCILIATION"
+    },
+    {
+      "source_id": "0c97291c-ef0a-4646-8e99-b94e5a6fafa3",
+      "target_id": null,
+      "source_code": null,
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "accounting_scope": "AB",
+      "scope_basis": "LEGACY_ACCOUNTING_SCOPE_RULE_REQUIRES_RECONCILIATION"
+    },
+    {
+      "source_id": "6b5c2380-1ab6-4e39-877a-4f4519a5ab65",
+      "target_id": null,
+      "source_code": "TOZON_PLAZA_INVESTMENT",
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "accounting_scope": "AB",
+      "scope_basis": "LEGACY_ACCOUNTING_SCOPE_RULE_REQUIRES_RECONCILIATION"
+    },
+    {
+      "source_id": "97aca997-a964-45de-b9f1-7ec681746b08",
+      "target_id": null,
+      "source_code": "BARTER_TMC_REALIZATION",
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "accounting_scope": "AB",
+      "scope_basis": "LEGACY_ACCOUNTING_SCOPE_RULE_REQUIRES_RECONCILIATION"
+    },
+    {
+      "source_id": "9dc0e06d-5e0b-4bad-8bb7-83161d7a70a2",
+      "target_id": null,
+      "source_code": "TOZON_PLAZA_2_CASH",
+      "action": "ALLOCATE_NEW_ID_WITH_SOURCE_MAP",
+      "accounting_scope": "VG",
+      "scope_basis": "LEGACY_ACCOUNTING_SCOPE_RULE_REQUIRES_RECONCILIATION"
+    }
+  ],
+  "warehouses": [
+    {
+      "source_id": "d0ceffef-06cd-4a34-b2da-be8f4676aac2",
+      "target_id": null,
+      "source_responsible_user_id": 6,
+      "source_document_scopes": [
+        {
+          "count": 16,
+          "status": "POSTED",
+          "project_id": 3,
+          "warehouse_id": "d0ceffef-06cd-4a34-b2da-be8f4676aac2"
+        }
+      ],
+      "action": "MAP_WAREHOUSE_RESPONSIBLE_AND_DOCUMENT_PROJECTS"
+    }
+  ],
+  "financial_policy": {
+    "preserve_all_statuses": true,
+    "count_voided_in_balances": false,
+    "preserve_original_dates_amounts_currencies_rates": true,
+    "preserve_transfer_and_conversion_groups": true,
+    "infer_opening_balance_from_raw_sums": false,
+    "grant_access_from_record_authorship": false
+  },
+  "cross_scope_cash": [
+    {
+      "kind": "PAYMENT",
+      "count": 1,
+      "status": "VOIDED",
+      "project_id": 4,
+      "cash_desk_id": "fba621e6-4ebe-4459-8623-19f46d864cc6"
+    }
+  ],
+  "active_cross_scope_count": 0,
+  "unmapped_deal_count": 0,
+  "remaining_gates": [
+    "EXPORT_FULL_DEPENDENCY_GRAPH_AND_VERIFY_RECORD_HASHES",
+    "REMAP_ALL_FOREIGN_KEYS_IN_A_SEPARATE_STAGING_DATASET",
+    "RECONCILE_TRANSFER_CONVERSION_AND_BARTER_SEMANTICS",
+    "VERIFY_PROJECT_AND_PER_CASH_DESK_ACCESS_WITHOUT_BROADENING",
+    "VERIFY_FROZEN_SIGNERS_AND_TEMPLATE_SCOPES",
+    "APPROVE_BACKED_UP_CUTOVER_WITH_CURRENT_SNAPSHOT"
+  ]
+}

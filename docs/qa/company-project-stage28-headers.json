@@ -1,0 +1,38 @@
+{
+  "checked_at": "2026-11-26T18:16:35.985433+00:00",
+  "responses": [
+    {
+      "path": "/",
+      "status": 200,
+      "cache_control": "no-store"
+    },
+    {
+      "path": "/index.html",
+      "status": 200,
+      "cache_control": "no-store"
+    },
+    {
+      "path": "/crm-version.json",
+      "status": 200,
+      "cache_control": "no-store"
+    },
+    {
+      "path": "/sw.js",
+      "status": 200,
+      "cache_control": "no-store"
+    },
+    {
+      "path": "/login",
+      "status": 200,
+      "cache_control": "public, max-age=0, s-maxage=300"
+    }
+  ],
+  "post_sync_plain_login": {
+    "path": "/login",
+    "method": "GET",
+    "status": 200,
+    "cache_control": "no-store",
+    "cdn_status": "HIT",
+    "checked_at": "2026-11-26T18:17:43.594971+00:00"
+  }
+}

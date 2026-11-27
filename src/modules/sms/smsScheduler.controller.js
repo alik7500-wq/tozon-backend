@@ -1,3 +1,4 @@
+import {refreshProjectReminders} from '../company-projects/workspace.reminders.js';
 import { SmsSettingsRepository } from './smsSettings.repository.js';
 import { AppError } from '../../shared/errors/errorHandler.js';
 import { PaymentReminderDetector } from './paymentReminderDetector.js';
@@ -36,6 +37,7 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
       autoStats = await defaultSmsAutoDispatcher.dispatchPendingAutoReminders();
     }
 
+    const projectReminders=await refreshProjectReminders();
     const durationMs = Date.now() - startTime;
     console.log('[SMS_SCHEDULER] Execution completed', {
       businessDate: stats.businessDate,
@@ -63,13 +65,15 @@ export async function runInternalPaymentReminderScheduler(req, res, next) {
         already_exists: stats.already_exists,
         cancelled_stale: stats.cancelled_stale,
         skipped_paid: stats.skipped_paid,
+        skipped_cancelled: stats.skipped_cancelled,
         skipped_overdue: stats.skipped_overdue,
         skipped_invalid_phone: stats.skipped_invalid_phone,
         skipped_ineligible_deal: stats.skipped_ineligible_deal,
         errors: stats.errors,
         candidatesCount: (stats.candidates || []).length,
         overdueStats: overdueStats,
-        autoDispatcher: autoStats
+        autoDispatcher: autoStats,
+        projectReminders
       }
     });
   } catch (err) {

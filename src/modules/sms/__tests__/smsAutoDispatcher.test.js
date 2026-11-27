@@ -1,3 +1,4 @@
+vi.mock('../../company-projects/workspace.background.js',()=>({assertLegacyAutomationAllowed:vi.fn().mockResolvedValue(undefined)}));
 import { SmsSettingsRepository } from '../smsSettings.repository.js';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { SmsAutoDispatcher } from '../smsAutoDispatcher.js';
@@ -264,4 +265,13 @@ describe('V1.6A AUTO PAYMENT_REMINDER Implementation Tests', () => {
 
     expect(SmsEventsRepository.listPendingAutoEvents).toHaveBeenCalledWith({ limit: 2 });
   });
+  it('holds project events before claiming them even when a context validator is mocked permissive',async()=>{
+    process.env.SMS_PAYMENT_REMINDER_AUTO_ENABLED='true';process.env.SMS_PAYMENT_REMINDER_DETECTOR_ENABLED='true';
+    vi.spyOn(SmsEventsRepository,'listPendingAutoEvents').mockResolvedValue([{id:123,mode:'AUTO',event_type:'PAYMENT_REMINDER',deal_id:1,client_id:1}]);
+    const {assertLegacyAutomationAllowed}=await import('../../company-projects/workspace.background.js');
+    vi.mocked(assertLegacyAutomationAllowed).mockRejectedValueOnce(Object.assign(new Error('Held'),{code:'PROJECT_AUTOMATION_HELD'}));
+    const claim=vi.spyOn(SmsEventsRepository,'atomicStartProcessing');const stats=await dispatcher.dispatchPendingAutoReminders();
+    expect(stats.skipped).toBe(1);expect(claim).not.toHaveBeenCalled();expect(mockSmsService.provider.sendSms).not.toHaveBeenCalled();
+  });
+
 });

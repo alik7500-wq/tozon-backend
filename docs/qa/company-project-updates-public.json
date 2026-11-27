@@ -1,0 +1,44 @@
+{
+  "frontend_commit": "c93886586a3a445e99c6e7fd70f17339182ed78b",
+  "deploy_id": "dep-dbtlpjoae00c73eac7c0",
+  "build_id": "dae973f3191edf691858ea6a1042d025",
+  "shell_manifest_ids_match": true,
+  "main_asset": "/assets/index--DlVbg0B.js",
+  "browser_validation_completed": false,
+  "cache_header_configuration_changed": false,
+  "responses": [
+    {
+      "path": "/index.html?_crm_release_check=1794858289254424400",
+      "status": 200,
+      "cache_control": "public, max-age=0, s-maxage=300",
+      "etag": "W/\"3f3a401963a992c1f50af665fca59acb\"",
+      "last_modified": "Mon, 16 Nov 2026 19:44:02 UTC",
+      "cdn_status": "MISS"
+    },
+    {
+      "path": "/?_crm_release_check=1794858289254424400",
+      "status": 200,
+      "cache_control": "public, max-age=0, s-maxage=300",
+      "etag": "W/\"3f3a401963a992c1f50af665fca59acb\"",
+      "last_modified": "Mon, 16 Nov 2026 19:44:02 UTC",
+      "cdn_status": "MISS"
+    },
+    {
+      "path": "/crm-version.json?_crm_release_check=1794858289254424400",
+      "status": 200,
+      "cache_control": "public, max-age=0, s-maxage=300",
+      "etag": "W/\"b6c695ed7dd2aacc2ffd026cb3b39a8d\"",
+      "last_modified": "Mon, 16 Nov 2026 19:44:02 UTC",
+      "cdn_status": "HIT"
+    },
+    {
+      "path": "/assets/index--DlVbg0B.js",
+      "status": 200,
+      "cache_control": "public, max-age=0, s-maxage=300",
+      "etag": "W/\"8d26552f15c5c20c72e1afa1824144ab\"",
+      "last_modified": "Mon, 16 Nov 2026 19:44:02 UTC",
+      "cdn_status": "MISS"
+    }
+  ],
+  "served_entry_contains_update_confirmation_code": true
+}

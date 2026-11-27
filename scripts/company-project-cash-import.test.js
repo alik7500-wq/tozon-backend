@@ -1,0 +1,68 @@
+import {it,expect,beforeEach,afterEach} from 'vitest';
+import {PGlite} from '@electric-sql/pglite';
+import {readFileSync,readdirSync} from 'node:fs';
+import {cashImportSQL} from './company-project-cash-import.mjs';
+let db;
+const batch='00000000-0000-4000-8000-000000000034';
+beforeEach(async()=>{
+ db=new PGlite();
+ await db.exec(`CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role;CREATE SCHEMA tozon_internal;CREATE SCHEMA tozon_import;
+ CREATE TABLE tozon_import.batches(id uuid PRIMARY KEY,source_ref text);INSERT INTO tozon_import.batches VALUES('${batch}','yeslzrrcwgcqfxhgbrqk');
+ CREATE TABLE public.payments(id integer PRIMARY KEY,document_number text,reference text,customer_pko_number bigint,deal_id integer,operation_type text,settlement_method text,transfer_id uuid,conversion_id uuid,status text,payment_date date,amount_minor bigint);
+ CREATE TABLE public.expenses(id integer PRIMARY KEY,document_number text,reference text,settlement_party_id uuid,settlement_account text CHECK(settlement_account IN ('PAYABLE','ADVANCE_GIVEN','RECEIVABLE','ADVANCE_RECEIVED')),settlement_updated_by integer,currency text,amount_minor bigint,expense_date date,transfer_id uuid,operation_type text,category text,conversion_id uuid,conversion_expense_id integer,status text,voided_at timestamptz);
+ CREATE TABLE public.cash_transfers(id uuid PRIMARY KEY);CREATE TABLE public.barter_realization_results(id uuid PRIMARY KEY);
+ CREATE UNIQUE INDEX crm_payment_document_number ON payments(document_number) WHERE document_number IS NOT NULL;
+ CREATE UNIQUE INDEX crm_expense_document_number ON expenses(document_number) WHERE document_number IS NOT NULL;
+ CREATE UNIQUE INDEX payments_customer_pko_number_key ON payments(customer_pko_number) WHERE customer_pko_number IS NOT NULL;
+ CREATE TABLE public.deals(id integer PRIMARY KEY,lead_id integer,status text,final_price_minor bigint,source_import_batch_id uuid,contract_number text);
+ INSERT INTO deals VALUES(1,1,'SIGNED',1,NULL,'1');
+ CREATE TABLE public.crm_document_settings(id integer,data jsonb);INSERT INTO crm_document_settings VALUES(1,'{}');
+ CREATE TABLE tozon_internal.customer_pko_counter(id integer PRIMARY KEY,last_number bigint);INSERT INTO tozon_internal.customer_pko_counter VALUES(1,1);
+ CREATE TABLE public.construction_parties(id uuid PRIMARY KEY,kind text,active boolean);
+ CREATE TABLE public.construction_settings(id integer,start_date date);INSERT INTO construction_settings VALUES(1,'2026-10-29');
+ CREATE TABLE public.construction_documents(id integer,expense_id integer,payment_id integer,status text);
+ CREATE TABLE public.construction_expense_settlement_audit(expense_id integer,actor_id integer,operation text,before_data jsonb,after_data jsonb);
+ CREATE TABLE public.sms_probe(event text);
+ CREATE FUNCTION tozon_internal.queue_configured_sms(text,text,integer,integer,integer DEFAULT NULL) RETURNS void LANGUAGE sql AS 'INSERT INTO public.sms_probe VALUES($1)';
+ CREATE FUNCTION tozon_internal.is_customer_pko(p jsonb) RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT p->>''deal_id'' IS NOT NULL AND p->>''transfer_id'' IS NULL AND p->>''conversion_id'' IS NULL';
+ INSERT INTO payments(id,document_number,reference,customer_pko_number,deal_id) VALUES(1,'ПКО-1','ПКО-1',1,1);
+ `);
+ const name=readdirSync('supabase/migrations').find(n=>n.endsWith('_company_project_legacy_cash_import.sql'));await db.exec(readFileSync('supabase/migrations/'+name,'utf8'));
+ await db.exec(`CREATE TRIGGER crm_payment_number BEFORE INSERT ON payments FOR EACH ROW EXECUTE FUNCTION tozon_internal.assign_document_number();
+ CREATE TRIGGER zz_customer_pko_number BEFORE INSERT OR UPDATE OR DELETE ON payments FOR EACH ROW EXECUTE FUNCTION tozon_internal.assign_customer_pko_number();
+ CREATE TRIGGER queue_payment_sms AFTER INSERT OR UPDATE ON payments FOR EACH ROW EXECUTE FUNCTION tozon_internal.queue_payment_sms();
+ CREATE TRIGGER construction_validate_expense_settlement BEFORE INSERT OR UPDATE ON expenses FOR EACH ROW EXECUTE FUNCTION public.construction_validate_expense_settlement();
+ CREATE TRIGGER construction_audit_expense_settlement AFTER INSERT OR UPDATE OR DELETE ON expenses FOR EACH ROW EXECUTE FUNCTION public.construction_audit_expense_settlement();`);
+});
+afterEach(async()=>db.close());
+const importPayment=()=>db.query(`INSERT INTO payments(id,document_number,reference,customer_pko_number,deal_id,status,amount_minor,source_import_batch_id) VALUES(1001,'ПКО-1','ПКО-1',1,1,'ACTIVE',100,$1)`,[batch]);
+it('preserves historical receipt numbers alongside native numbers, counter and SMS queue',async()=>{
+ await db.query("SELECT set_config('tozon.import_batch',$1,false)",[batch]);await importPayment();
+ expect((await db.query('SELECT last_number FROM tozon_internal.customer_pko_counter')).rows[0].last_number).toBe(1);
+ expect((await db.query('SELECT count(*)::int n FROM sms_probe')).rows[0].n).toBe(0);
+ expect((await db.query('SELECT count(*)::int n FROM payments WHERE customer_pko_number=1')).rows[0].n).toBe(2);
+ await expect(db.query(`INSERT INTO payments(id,document_number,source_import_batch_id) VALUES(1002,'ПКО-1',$1)`,[batch])).rejects.toThrow();
+ await expect(db.exec('UPDATE payments SET amount_minor=101 WHERE id=1001')).rejects.toThrow('IMPORTED_CASH_HISTORY_READ_ONLY');
+ await expect(db.exec('DELETE FROM payments WHERE id=1001')).rejects.toThrow('IMPORTED_CASH_HISTORY_READ_ONLY');
+ await expect(db.exec('UPDATE payments SET source_import_batch_id=NULL WHERE id=1001')).rejects.toThrow('IMPORT_SOURCE_IMMUTABLE');
+});
+it('refuses forged imports, while native service-role receipts still use ordinary numbering and SMS',async()=>{
+ await expect(importPayment()).rejects.toThrow('OWNER_IMPORT_TRANSACTION_REQUIRED');
+ await db.exec('GRANT USAGE ON SCHEMA public,tozon_internal TO service_role;GRANT ALL ON ALL TABLES IN SCHEMA public,tozon_internal TO service_role;SET ROLE service_role');
+ await db.query("SELECT set_config('tozon.import_batch',$1,false)",[batch]);
+ await expect(importPayment()).rejects.toThrow('OWNER_IMPORT_TRANSACTION_REQUIRED');
+ await db.exec("INSERT INTO payments(id,deal_id,status,amount_minor) VALUES(2,1,'ACTIVE',100)");
+ expect((await db.query('SELECT customer_pko_number FROM payments WHERE id=2')).rows[0].customer_pko_number).toBe(2);
+ expect((await db.query('SELECT count(*)::int n FROM sms_probe')).rows[0].n).toBe(2);
+});
+it('retains legacy employee settlements without generating a new settlement audit, and rejects native equivalents',async()=>{
+ const party='00000000-0000-4000-8000-000000000002';
+ await db.query("INSERT INTO construction_parties VALUES($1,'EMPLOYEE',true)",[party]);
+ const insert=marker=>db.query(`INSERT INTO expenses(id,settlement_party_id,settlement_account,currency,amount_minor,expense_date,source_import_batch_id) VALUES(10,$1,'EMPLOYEE','TJS',100,'2026-10-16',$2)`,[party,marker]);
+ await expect(insert(null)).rejects.toThrow();
+ await db.query("SELECT set_config('tozon.import_batch',$1,false)",[batch]);await insert(batch);
+ expect((await db.query('SELECT count(*)::int n FROM construction_expense_settlement_audit')).rows[0].n).toBe(0);
+});
+it('refuses a production destination before building any payload SQL',()=>{
+ expect(()=>cashImportSQL({targetRef:'yeslzrrcwgcqfxhgbrqk'})).toThrow('TEST_DESTINATION_REQUIRED');
+});
