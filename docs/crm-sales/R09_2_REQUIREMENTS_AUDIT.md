@@ -180,8 +180,8 @@
 - **Задача для исполнителя:** Подготовить и протестировать на PGlite/копии PostgreSQL rollback-процедуру для `062`–`070` с сохранением новых данных.
 
 ### `GAP-08` (`P0`) — **CLOSED в UI + PGlite** (браузерный E2E на staging остаётся `NOT_RUN`) — Точные дата и время задач (`due_at`, `due_date_only`, `Asia/Dushanbe`)
-- **Реализация:** `taskDueTime.js`, `TasksPage.jsx` (режимы «Дата и время» / «Только дата», редактирование, правило `18:00 Asia/Dushanbe`), `tasks.repository.js`.
-- **Доказательство:** `TasksPageDueTime.test.jsx` (3/3 `PASS`, включая `TZ=America/New_York`), `076_gap08_task_due_time.test.js` (2/2 `PASS`), `client vite build` (`PASS`).
+- **Реализация:** `taskDueTime.js`, `TasksPage.jsx` (режимы «Дата и время» / «Только дата», редактирование, валидация до отправки без подмены `09:00`), `tasks.repository.js` (`normalizeTaskDueFields`, 400-валидация, `18:00 Asia/Dushanbe`).
+- **Доказательство:** `TasksPageDueTime.test.jsx` (3/3 `PASS`, включая `TZ=America/New_York`), `076_gap08_task_due_time.test.js` (4/4 `PASS`), `client vite build` (`PASS`).
 
 ### `GAP-09` (`P1`) — Отсутствует нагрузочный стенд и замеры `N-02` (`A52`)
 - **Последствие:** Нет объективных замеров P95 (≤1.5с / ≤3с / ≤7с) при 2x нагрузке, 2 backend-процессах и 10 сессиях.

@@ -1,5 +1,6 @@
 import { getDB, getServiceDB } from '../../db/connection.js';
 import { getBusinessDate } from '../../utils/businessTime.js';
+import { AppError } from '../../shared/errors/errorHandler.js';
 
 const getSecureDB = () => {
   try {
@@ -8,6 +9,92 @@ const getSecureDB = () => {
     return getDB();
   }
 };
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TZ_SUFFIX_RE = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+function assertValidCalendarDate(dateStr) {
+  if (typeof dateStr !== 'string' || !ISO_DATE_RE.test(dateStr)) {
+    throw new AppError('Некорректная календарная дата due_date (ожидается YYYY-MM-DD)', 400);
+  }
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() + 1 !== m || dt.getUTCDate() !== d) {
+    throw new AppError('Некорректная календарная дата due_date', 400);
+  }
+}
+
+function assertValidDueAtWithTz(dueAtVal) {
+  if (typeof dueAtVal !== 'string' || !TZ_SUFFIX_RE.test(dueAtVal.trim())) {
+    throw new AppError('Поле due_at должно содержать однозначный часовой пояс (Z или ±HH:MM)', 400);
+  }
+  const ms = Date.parse(dueAtVal.trim());
+  if (!Number.isFinite(ms)) {
+    throw new AppError('Некорректный формат даты-времени due_at', 400);
+  }
+  return new Date(ms).toISOString();
+}
+
+export function normalizeTaskDueFields(input = {}, existingTask = null, { isCreate = false } = {}) {
+  const hasDueDateOnly = input.due_date_only !== undefined;
+  const hasDueAt = input.due_at !== undefined;
+  const hasDueDate = input.due_date !== undefined;
+  const hasTimezone = input.timezone !== undefined;
+
+  if (!isCreate && !hasDueDateOnly && !hasDueAt && !hasDueDate && !hasTimezone) {
+    return {};
+  }
+
+  if (hasDueDateOnly && typeof input.due_date_only !== 'boolean') {
+    throw new AppError('Поле due_date_only должно быть boolean', 400);
+  }
+  if (hasDueDate && input.due_date !== null) {
+    assertValidCalendarDate(input.due_date);
+  }
+
+  let normalizedInputDueAt;
+  if (hasDueAt) {
+    normalizedInputDueAt = input.due_at === null ? null : assertValidDueAtWithTz(input.due_at);
+  }
+
+  let effectiveDateOnly;
+  if (hasDueDateOnly) {
+    effectiveDateOnly = input.due_date_only;
+  } else if (!isCreate && existingTask) {
+    effectiveDateOnly = Boolean(existingTask.due_date_only ?? !existingTask.due_at);
+  } else {
+    effectiveDateOnly = !(hasDueAt && normalizedInputDueAt !== null);
+  }
+
+  const timezone = input.timezone || existingTask?.timezone || 'Asia/Dushanbe';
+
+  if (effectiveDateOnly) {
+    if (hasDueAt && normalizedInputDueAt !== null) {
+      throw new AppError('Противоречивый режим: при due_date_only=true поле due_at должно быть null', 400);
+    }
+    const resolvedDueDate = hasDueDate
+      ? input.due_date
+      : (existingTask?.due_date !== undefined ? existingTask.due_date : getBusinessDate());
+    return {
+      due_at: null,
+      due_date: resolvedDueDate,
+      due_date_only: true,
+      timezone
+    };
+  }
+
+  const resolvedDueAt = hasDueAt ? normalizedInputDueAt : (existingTask?.due_at ? assertValidDueAtWithTz(existingTask.due_at) : null);
+  if (!resolvedDueAt) {
+    throw new AppError('В точном режиме (due_date_only=false) требуется корректный due_at', 400);
+  }
+
+  return {
+    due_at: resolvedDueAt,
+    due_date: getBusinessDate(resolvedDueAt),
+    due_date_only: false,
+    timezone
+  };
+}
 
 export class TasksRepository {
   static async findAll(filters = {}) {
@@ -120,9 +207,7 @@ export class TasksRepository {
     const db = getSecureDB();
     const now = new Date().toISOString();
 
-    const isDateOnly = Boolean(taskData.due_date_only ?? !taskData.due_at);
-    const normalizedDueAt = !isDateOnly && taskData.due_at ? new Date(taskData.due_at).toISOString() : null;
-    const normalizedDueDate = taskData.due_date || (normalizedDueAt ? getBusinessDate(normalizedDueAt) : getBusinessDate(now));
+    const dueFields = normalizeTaskDueFields(taskData, null, { isCreate: true });
 
     const insertPayload = {
       lead_id: taskData.lead_id || null,
@@ -136,10 +221,7 @@ export class TasksRepository {
       phone: taskData.phone || null,
       project_name: taskData.project_name || null,
       unit_number: taskData.unit_number ? String(taskData.unit_number) : null,
-      due_date: normalizedDueDate,
-      due_at: normalizedDueAt,
-      due_date_only: isDateOnly,
-      timezone: taskData.timezone || 'Asia/Dushanbe',
+      ...dueFields,
       rule_key: taskData.rule_key || null,
       event_ref: taskData.event_ref || null,
       priority: taskData.priority || 'NORMAL',
@@ -189,19 +271,22 @@ export class TasksRepository {
   static async update(id, updateData) {
     const db = getSecureDB();
     const now = new Date().toISOString();
-    const payload = { ...updateData, updated_at: now };
+    const hasAnyDueField = ['due_at', 'due_date', 'due_date_only', 'timezone'].some((k) => updateData[k] !== undefined);
 
-    if (payload.due_date_only === true) {
-      payload.due_at = null;
-      payload.timezone = payload.timezone || 'Asia/Dushanbe';
-    } else if (payload.due_date_only === false && payload.due_at) {
-      const parsed = new Date(payload.due_at);
-      if (!Number.isNaN(parsed.getTime())) {
-        payload.due_at = parsed.toISOString();
-        payload.due_date = payload.due_date || getBusinessDate(parsed);
-        payload.timezone = payload.timezone || 'Asia/Dushanbe';
+    let dueFields = {};
+    if (hasAnyDueField) {
+      const { data: existing, error: findErr } = await db
+        .from('tasks')
+        .select('id, due_at, due_date, due_date_only, timezone')
+        .eq('id', id)
+        .single();
+      if (findErr || !existing) {
+        throw new AppError('Задача не найдена', 404);
       }
+      dueFields = normalizeTaskDueFields(updateData, existing, { isCreate: false });
     }
+
+    const payload = { ...updateData, ...dueFields, updated_at: now };
 
     const { data, error } = await db
       .from('tasks')

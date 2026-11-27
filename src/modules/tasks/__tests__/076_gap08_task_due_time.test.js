@@ -191,4 +191,86 @@ describe('GAP-08 Backend: Tasks API & Repository Exact due_at, Date-Only & Overd
     expect(overdueRes.status).toBe(200);
     expect(overdueRes.body.data.tasks.map((t) => t.title)).toEqual(['Past Exact']);
   });
+
+  it('derives due_date from due_at when contradicting due_date is sent, preserves deadline on title-only edit, updates only due_at, and switches both modes', async () => {
+    const app = createTestApp();
+
+    // 1. due_at + contradicting due_date -> due_at wins in Asia/Dushanbe (2026-11-26T20:00:00Z = 2026-11-27 01:00 TJT)
+    const cRes = await request(app).post('/api/tasks').send({
+      title: 'Граница суток',
+      due_at: '2026-11-26T20:00:00.000Z',
+      due_date: '2026-11-26', // contradicting UTC date
+      due_date_only: false
+    });
+    expect(cRes.status).toBe(201);
+    const id = cRes.body.data.task.id;
+    expect(cRes.body.data.task.due_date).toBe('2026-11-27');
+
+    // 2. Partial update of ONLY title -> preserves due_at, due_date, due_date_only
+    const titleRes = await request(app).put(`/api/tasks/${id}`).send({ title: 'Только заголовок' });
+    expect(titleRes.status).toBe(200);
+    expect(new Date(titleRes.body.data.task.due_at).toISOString()).toBe('2026-11-26T20:00:00.000Z');
+    expect(titleRes.body.data.task.due_date).toBe('2026-11-27');
+    expect(titleRes.body.data.task.due_date_only).toBe(false);
+
+    // 3. Partial update of ONLY due_at on existing exact task -> updates due_at and due_date in Asia/Dushanbe
+    const dueOnlyRes = await request(app).put(`/api/tasks/${id}`).send({ due_at: '2026-11-27T21:00:00.000Z' }); // 2026-11-28 02:00 TJT
+    expect(dueOnlyRes.status).toBe(200);
+    expect(dueOnlyRes.body.data.task.due_date).toBe('2026-11-28');
+    expect(dueOnlyRes.body.data.task.due_date_only).toBe(false);
+
+    // 4. Switch DATETIME -> DATE_ONLY -> DATETIME
+    const toDateOnly = await request(app).put(`/api/tasks/${id}`).send({ due_date_only: true, due_date: '2026-12-05' });
+    expect(toDateOnly.status).toBe(200);
+    expect(toDateOnly.body.data.task.due_at).toBeNull();
+    expect(toDateOnly.body.data.task.due_date_only).toBe(true);
+
+    const toDateTime = await request(app).put(`/api/tasks/${id}`).send({
+      due_date_only: false,
+      due_at: '2026-12-06T10:30:00+05:00'
+    });
+    expect(toDateTime.status).toBe(200);
+    expect(new Date(toDateTime.body.data.task.due_at).toISOString()).toBe('2026-12-06T05:30:00.000Z');
+    expect(toDateTime.body.data.task.due_date).toBe('2026-12-06');
+    expect(toDateTime.body.data.task.due_date_only).toBe(false);
+  });
+
+  it('rejects invalid calendar date, due_at without timezone, string boolean, and contradictory mode with 400 (never 500)', async () => {
+    const app = createTestApp();
+
+    const rInvalidDate = await request(app).post('/api/tasks').send({
+      title: 'Bad date',
+      due_date: '2026-02-30',
+      due_date_only: true
+    });
+    expect(rInvalidDate.status).toBe(400);
+
+    const rNoTz = await request(app).post('/api/tasks').send({
+      title: 'No tz',
+      due_at: '2026-11-27T12:00:00',
+      due_date_only: false
+    });
+    expect(rNoTz.status).toBe(400);
+
+    const rStrBool = await request(app).post('/api/tasks').send({
+      title: 'Str bool',
+      due_date: '2026-11-27',
+      due_date_only: 'false'
+    });
+    expect(rStrBool.status).toBe(400);
+
+    const rContradict = await request(app).post('/api/tasks').send({
+      title: 'Contradict',
+      due_at: '2026-11-27T10:00:00Z',
+      due_date_only: true
+    });
+    expect(rContradict.status).toBe(400);
+
+    const rMissingDueAt = await request(app).post('/api/tasks').send({
+      title: 'Missing due_at',
+      due_date_only: false,
+      due_at: null
+    });
+    expect(rMissingDueAt.status).toBe(400);
+  });
 });
