@@ -119,7 +119,7 @@
 | A48 | P2 | ИИ без записи / при недоступном провайдере | `calls.router.js` | `LeadDrawer.jsx` | — | Static audit | `IMPLEMENTED` | `BLOCKED` / `NOT_RUN` | Показывает «Не настроено»/«NO_RECORDING», но нет автотеста |
 | A49 | P2 | ИИ на разрешённой RU/TJ контрольной выборке | `060`, `calls.router.js` (нет worker) | `LeadDrawer.jsx` | — | Static audit | `NOT_IMPLEMENTED` | `FAIL` (нет worker) + `BLOCKED` (нет ключа/выборки) | Нет фонового обработчика `QUEUED`, получения аудио Moizvonki и вызова OpenAI (`GAP-02`) |
 | A50 | P0 | Регрессия договоров, ПКО/РКО, касс, рассрочки, объектов | Существующие модули не менялись | Существующие модули (9 несвязанных тестов падали в R01) | — | — | `PARTIAL` | `NOT_RUN` (актуальный полный прогон) | Нужен полный прогон после R09.1.1 (`R09.3`) |
-| A51 | P0 | Миграция и откат с сохранением данных | `060`–`070`, `rollback_060`, `app_rollback_060_061` | — | `060`, `061` (PGlite) | PGlite | `PARTIAL` | `NOT_RUN` (062–070 rollback + staging) | Отсутствуют rollback-скрипты для миграций `062`–`070`; нет прогона на копии PostgreSQL (`GAP-07`) |
+| A51 | P0 | Миграция и откат с сохранением данных | `060`–`074`, `app_rollback_060_074_preserve_data.sql`, `R09_GAP07_ROLLBACK_RUNBOOK.md` | — | `060`, `061`, `077_gap07_compatible_rollback.test.js` (PGlite); `verify-gap07-rollback-pg.mjs` (PG) | PGlite; PG (`NOT_RUN`) | `PARTIAL` | `NOT_RUN` (live PG/PostgREST staging) | Совместимый откат и runbook для `060`–`074` реализованы и проверены в PGlite (`GAP-07`); прогон на live PostgreSQL + PostgREST не выполнен без `TEST_DATABASE_URL`/`POSTGREST_URL` |
 | A52 | P1 | Нагрузка и разрыв сети (`N-02`) | — | — | — | Staging load | `NOT_IMPLEMENTED` | `BLOCKED` / `NOT_RUN` | Нет нагрузочного стенда и прогона `N-02` (`GAP-09`) |
 
 ---
@@ -173,11 +173,9 @@
 - **Зависимости:** `salesAnalytics.service.js`, `managerPerformance.service.js`, `salesManagementExport.service.js`.
 - **Задача для исполнителя:** Добавить расчёт медианы/P90/P95 и поэтапной когорты в сервисы отчётов + тесты сходимости с Excel.
 
-### `GAP-07` (`P0`) — Отсутствуют rollback-скрипты для миграций `062`–`070` и staging-прогон отката (`A51`)
-- **Последствие:** При необходимости отката после применения миграций `062`–`070` нет готового, проверенного на копии PostgreSQL плана отката с сохранением пост-релизных данных.
-- **Критерий исправления:** Подготовлены совместимые rollback-скрипты (или задокументированная процедура сохранения данных без разрушения) для `062`–`070` и проверены на копии PostgreSQL.
-- **Зависимости:** Миграции `060`–`070`.
-- **Задача для исполнителя:** Подготовить и протестировать на PGlite/копии PostgreSQL rollback-процедуру для `062`–`070` с сохранением новых данных.
+### `GAP-07` (`P0`) — **CLOSED в PGlite** (прогон на реальной PostgreSQL / PostgREST остаётся `NOT_RUN`) — Совместимый откат приложения с сохранением данных
+- **Реализация:** [app_rollback_060_074_preserve_data.sql](file:///d:/tozon-crm/server/src/db/migrations/app_rollback_060_074_preserve_data.sql), [R09_GAP07_ROLLBACK_RUNBOOK.md](file:///d:/tozon-crm/server/docs/crm-sales/R09_GAP07_ROLLBACK_RUNBOOK.md), [verify-gap07-rollback-pg.mjs](file:///d:/tozon-crm/server/src/scripts/verify-gap07-rollback-pg.mjs).
+- **Доказательство:** `077_gap07_compatible_rollback.test.js` (`PASS` в PGlite: двойной идемпотентный откат, сохранение всех таблиц/связей/`UNKNOWN` Instagram, `SIGNED` vs legacy `WON`, закрытые `GRANT`/`RLS`, повторное обновление).
 
 ### `GAP-08` (`P0`) — **CLOSED в UI + PGlite** (браузерный E2E на staging остаётся `NOT_RUN`) — Точные дата и время задач (`due_at`, `due_date_only`, `Asia/Dushanbe`)
 - **Реализация:** `taskDueTime.js`, `TasksPage.jsx` (режимы «Дата и время» / «Только дата», редактирование, валидация до отправки без подмены `09:00`), `tasks.repository.js` (`normalizeTaskDueFields`, 400-валидация, `18:00 Asia/Dushanbe`).

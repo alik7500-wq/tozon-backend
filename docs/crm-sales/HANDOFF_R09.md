@@ -17,7 +17,7 @@
 
 ## План оставшейся R09
 1. **`R09.2` — Сверка всех `F/N/A` с кодом (`DONE`):** полный отчёт и реестр `GAP-01`–`GAP-09` зафиксированы в `docs/crm-sales/R09_2_REQUIREMENTS_AUDIT.md`.
-2. **Закрытие `P0`-пробелов (перед `R09.3`/`R09.4`):** `GAP-01`–`GAP-01.3` (`DONE` в PGlite 9/9 + `sales_launch_phase3_6_concurrency` 23/23; 2-процессный тест `verify-gap01-two-process-pg.mjs` на реальной PostgreSQL — `NOT_RUN`), `GAP-05` + `GAP-05.1` (`DONE` в UI 6/6 + API PGlite 2/2; browser E2E — `NOT_RUN`), `GAP-08` + `GAP-08.1` (`DONE` в UI 3/3 + API PGlite 4/4; browser E2E — `NOT_RUN`), далее `GAP-07` (rollback `062`–`074`).
+2. **Закрытие `P0`-пробелов (перед `R09.3`/`R09.4`):** `GAP-01`–`GAP-01.3` (`DONE` в PGlite 9/9 + `sales_launch_phase3_6_concurrency` 23/23; `verify-gap01-two-process-pg.mjs` — `NOT_RUN`), `GAP-05` + `GAP-05.1` (`DONE` в UI 6/6 + API PGlite 2/2; browser E2E — `NOT_RUN`), `GAP-08` + `GAP-08.1` (`DONE` в UI 3/3 + API PGlite 4/4; browser E2E — `NOT_RUN`), `GAP-07` (`DONE` в PGlite `077_gap07_compatible_rollback.test.js`, runbook `R09_GAP07_ROLLBACK_RUNBOOK.md`, `verify-gap07-rollback-pg.mjs` — `NOT_RUN`). Все `P0`-блокеры в изолированной среде закрыты.
 
 ## Инструкция администратору: назначение проектных допусков перед выпуском
 1. Войдите под учётной записью `ADMIN` в раздел «Сотрудники и роли доступа».

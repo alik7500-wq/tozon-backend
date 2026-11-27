@@ -1,16 +1,13 @@
 # CURRENT_TASK.md
 
-- **ID задачи:** `GAP-08.1` — Серверная согласованность и валидация сроков задач
-- **Статус:** `DONE` (`TasksPageDueTime.test.jsx` 3/3 + `vite build` + `076_gap08_task_due_time.test.js` 4/4 + `068` 8/8 + `070` 6/6 + `062` 7/7 + `sales_launch_phase3_6_concurrency` 23/23 = 5 файлов, 48/48 `PASS`; браузерный E2E — `NOT_RUN`)
+- **ID задачи:** `GAP-07` — Совместимый откат приложения с сохранением данных (`060`–`074`)
+- **Статус:** `DONE` (`077_gap07_compatible_rollback.test.js` + `060_crm_sales_completion_foundation.test.js` + `060_pre_release_isolation.test.js` `PASS` в PGlite; прогон на реальной PostgreSQL / PostgREST `verify-gap07-rollback-pg.mjs` — `NOT_RUN`)
 - **Ветки:**
-  - `alik7500-wq/tozon-backend`: `feat/crm-sales-completion`
-  - `alik7500-wq/tozon-crm`: `a00`
+  - `alik7500-wq/tozon-backend`: `feat/crm-sales-completion` (базовая точка отката `origin/main`: `261018ef557e54fbcfd0b31475fcb538c164201f`)
 - **Что сделано:**
-  - `TasksRepository` (`tasks.repository.js`): централизована функция `normalizeTaskDueFields` для `create` и `update`:
-    - строгая валидация (`400 AppError`): `due_date_only` только `boolean`, корректная календарная дата `due_date`, `due_at` только с часовым поясом (`Z` или `±HH:MM`), запрет противоречий режимов (`due_date_only=true` с непустым `due_at`, `due_date_only=false` без `due_at`);
-    - в точном режиме `due_at` — авторитетный источник (`due_date` вычисляется из `due_at` в `Asia/Dushanbe`); в режиме «Только дата» `due_at = null`;
-    - частичное обновление (`title`/`description`) сохраняет существующий срок без изменений; частичное обновление срока учитывает сохранённый режим.
-  - Frontend (`taskDueTime.js`, `TasksPage.jsx`): удалена тихая подстановка `'09:00'` при пустом/неверном времени в `dushanbeDateTimeToUtcIso`, добавлена пред-отправочная валидация и inline-ошибка до запроса.
+  - Инвентаризированы миграции `060`–`074`, зафиксированы совместимые сочетания версий приложения и схемы, ограничения и условия безопасного возобновления обработчиков в [R09_GAP07_ROLLBACK_RUNBOOK.md](file:///d:/tozon-crm/server/docs/crm-sales/R09_GAP07_ROLLBACK_RUNBOOK.md).
+  - Добавлен идемпотентный неразрушающий скрипт отката приложения [app_rollback_060_074_preserve_data.sql](file:///d:/tozon-crm/server/src/db/migrations/app_rollback_060_074_preserve_data.sql): отключает фоновые воркеры и правила, освобождает активные `PROCESSING` lease без удаления очереди, выравнивает `leads.status` по `SIGNED`-сделкам (legacy `WON` без `SIGNED` → `NEGOTIATION`), переподтверждает закрытые `GRANT`/`RLS`.
+  - Добавлен полный PGlite-тест цикла `077_gap07_compatible_rollback.test.js` и скрипт для одноразовой PostgreSQL / PostgREST `verify-gap07-rollback-pg.mjs`.
 
 ## Следующая задача
-- Закрытие последнего `P0`-блокера из [R09_2_REQUIREMENTS_AUDIT.md](file:///d:/tozon-crm/server/docs/crm-sales/R09_2_REQUIREMENTS_AUDIT.md): `GAP-07` (rollback-скрипты для миграций `062`–`074`) перед общим прогоном `R09.3`.
+- `R09.3` — Общий прогон и регрессия backend + frontend (все `P0`-блокеры `GAP-01`, `GAP-05`, `GAP-07`, `GAP-08` закрыты в изолированной среде).
